@@ -128,3 +128,11 @@
     @apply font-sans;
   }
 }
+
+/* Placeholder for the note node's rich-text editor (contentEditable). */
+[contenteditable][data-placeholder]:empty:before {
+  content: attr(data-placeholder);
+  pointer-events: none;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}

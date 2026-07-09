@@ -1,0 +1,409 @@
+"use client";
+
+import { useState, type ComponentType, type ReactNode } from "react";
+import {
+  Boxes,
+  ChevronDown,
+  ChevronLeft,
+  FolderKanban,
+  Menu,
+  PackageSearch,
+  PanelLeftClose,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { CanvasEditor } from "@/components/canvas/canvas-editor";
+import { CanvasList } from "@/components/projects/canvas-list";
+import { ProjectHeader } from "@/components/projects/project-header";
+import { ProjectList } from "@/components/projects/project-list";
+import { cn } from "@/lib/utils";
+
+type SectionId = "product" | "supplier" | "project";
+type TabId = "product" | "customer" | "project";
+
+interface MenuItem {
+  label: string;
+  tab: TabId;
+}
+
+interface MenuSection {
+  id: SectionId;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+  tab: TabId;
+  items: MenuItem[];
+}
+
+interface WorkspaceTab {
+  id: TabId;
+  label: string;
+}
+
+const sections: MenuSection[] = [
+  {
+    id: "product",
+    label: "Product",
+    icon: Boxes,
+    tab: "product",
+    items: [
+      { label: "New", tab: "product" },
+      { label: "View / edit", tab: "product" },
+    ],
+  },
+  {
+    id: "supplier",
+    label: "Supplier",
+    icon: PackageSearch,
+    tab: "customer",
+    items: [
+      { label: "New", tab: "customer" },
+      { label: "View / edit", tab: "customer" },
+    ],
+  },
+  {
+    id: "project",
+    label: "Project",
+    icon: FolderKanban,
+    tab: "project",
+    items: [
+      { label: "New", tab: "project" },
+      { label: "View / edit", tab: "project" },
+    ],
+  },
+];
+
+const tabLabels: Record<TabId, string> = {
+  product: "Product",
+  customer: "Customer",
+  project: "Project",
+};
+
+function PlaceholderPanel({ title }: { title: string }) {
+  return (
+    <div className="flex h-full min-h-72 flex-col border border-dashed p-5">
+      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <div className="border p-4">
+          <p className="text-sm font-medium">New</p>
+        </div>
+        <div className="border p-4">
+          <p className="text-sm font-medium">View / edit</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectWorkspacePanel({
+  selectedProjectId,
+  selectedCanvasId,
+  onOpenProject,
+  onOpenCanvas,
+  onBackToProjects,
+  onBackToProjectDetail,
+}: {
+  selectedProjectId: string | null;
+  selectedCanvasId: string | null;
+  onOpenProject: (projectId: string) => void;
+  onOpenCanvas: (canvasId: string) => void;
+  onBackToProjects: () => void;
+  onBackToProjectDetail: () => void;
+}) {
+  if (!selectedProjectId) {
+    return (
+      <ProjectList
+        redirectOnCreate={false}
+        onOpenProject={onOpenProject}
+        onProjectCreated={onOpenProject}
+      />
+    );
+  }
+
+  if (selectedCanvasId) {
+    return (
+      <CanvasEditor
+        projectId={selectedProjectId}
+        canvasId={selectedCanvasId}
+        embedded
+        onBack={onBackToProjectDetail}
+      />
+    );
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-5xl flex-col">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="mb-4 w-fit"
+        onClick={onBackToProjects}
+      >
+        <ChevronLeft />
+        Projects
+      </Button>
+      <ProjectHeader projectId={selectedProjectId} />
+      <div className="mt-8">
+        <CanvasList
+          projectId={selectedProjectId}
+          redirectOnCreate={false}
+          onOpenCanvas={onOpenCanvas}
+          onCanvasCreated={onOpenCanvas}
+        />
+      </div>
+    </div>
+  );
+}
+
+function renderTabContent({
+  tabId,
+  selectedProjectId,
+  selectedCanvasId,
+  onOpenProject,
+  onOpenCanvas,
+  onBackToProjects,
+  onBackToProjectDetail,
+}: {
+  tabId: TabId;
+  selectedProjectId: string | null;
+  selectedCanvasId: string | null;
+  onOpenProject: (projectId: string) => void;
+  onOpenCanvas: (canvasId: string) => void;
+  onBackToProjects: () => void;
+  onBackToProjectDetail: () => void;
+}): ReactNode {
+  if (tabId === "project") {
+    return (
+      <ProjectWorkspacePanel
+        selectedProjectId={selectedProjectId}
+        selectedCanvasId={selectedCanvasId}
+        onOpenProject={onOpenProject}
+        onOpenCanvas={onOpenCanvas}
+        onBackToProjects={onBackToProjects}
+        onBackToProjectDetail={onBackToProjectDetail}
+      />
+    );
+  }
+  if (tabId === "customer") return <PlaceholderPanel title="Customer" />;
+  return <PlaceholderPanel title="Product" />;
+}
+
+export function WorkspaceShell({
+  isSupabaseConfigured,
+  isFalConfigured,
+}: {
+  isSupabaseConfigured: boolean;
+  isFalConfigured: boolean;
+}) {
+  const [expanded, setExpanded] = useState<SectionId | null>(null);
+  const [activeSection, setActiveSection] = useState<SectionId | null>(null);
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
+  const [activeTab, setActiveTab] = useState<TabId | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedCanvasId, setSelectedCanvasId] = useState<string | null>(null);
+  const [isMenuCollapsed, setIsMenuCollapsed] = useState(false);
+
+  function openTab(tabId: TabId) {
+    setTabs((current) =>
+      current.some((tab) => tab.id === tabId)
+        ? current
+        : [...current, { id: tabId, label: tabLabels[tabId] }],
+    );
+    setActiveTab(tabId);
+  }
+
+  function openProjectDetail(projectId: string) {
+    setSelectedProjectId(projectId);
+    setSelectedCanvasId(null);
+    openTab("project");
+  }
+
+  function openCanvasDetail(canvasId: string) {
+    setSelectedCanvasId(canvasId);
+    openTab("project");
+  }
+
+  function backToProjects() {
+    setSelectedProjectId(null);
+    setSelectedCanvasId(null);
+  }
+
+  function selectSection(section: MenuSection) {
+    if (isMenuCollapsed) {
+      setIsMenuCollapsed(false);
+      setExpanded(section.id);
+      setActiveSection(section.id);
+      return;
+    }
+
+    setExpanded((current) => (current === section.id ? null : section.id));
+    setActiveSection(section.id);
+    openTab(section.tab);
+  }
+
+  function closeTab(tabId: TabId) {
+    setTabs((current) => {
+      const next = current.filter((tab) => tab.id !== tabId);
+      if (activeTab === tabId) {
+        setActiveTab(next.at(-1)?.id ?? null);
+      }
+      if (tabId === "project") {
+        setSelectedProjectId(null);
+        setSelectedCanvasId(null);
+      }
+      return next;
+    });
+  }
+
+  return (
+    <main className="bg-background flex min-h-dvh flex-1 flex-col md:flex-row">
+      <aside
+        className={cn(
+          "bg-muted/20 flex shrink-0 flex-col border-b p-3 transition-[width] md:border-r md:border-b-0",
+          isMenuCollapsed ? "md:w-14" : "md:w-[20%]",
+        )}
+      >
+        <div className={cn("mb-4 flex items-start gap-2", isMenuCollapsed && "justify-center")}>
+          {!isMenuCollapsed ? (
+            <div className="min-w-0 flex-1 px-2">
+              <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Welcome
+              </p>
+              <h1 className="mt-1 truncate text-xl font-semibold tracking-tight">
+                Infinite Canvas
+              </h1>
+            </div>
+          ) : null}
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={isMenuCollapsed ? "Expand menu" : "Collapse menu"}
+            onClick={() => setIsMenuCollapsed((value) => !value)}
+          >
+            {isMenuCollapsed ? <Menu /> : <PanelLeftClose />}
+          </Button>
+        </div>
+
+        <nav aria-label="Main menu" className="flex flex-col gap-1">
+          {sections.map((section) => {
+            const Icon = section.icon;
+            const isExpanded = expanded === section.id;
+            const isActive = activeSection === section.id;
+            return (
+              <section key={section.id} className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  title={isMenuCollapsed ? section.label : undefined}
+                  onClick={() => selectSection(section)}
+                  className={cn(
+                    "focus-visible:ring-ring flex h-9 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2",
+                    isMenuCollapsed && "justify-center",
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "text-foreground hover:bg-muted",
+                  )}
+                >
+                  <Icon
+                    className={cn(
+                      "size-4 shrink-0",
+                      isActive ? "text-primary-foreground" : "text-muted-foreground",
+                    )}
+                  />
+                  {!isMenuCollapsed ? (
+                    <>
+                      <span className="min-w-0 flex-1 text-left">{section.label}</span>
+                      <ChevronDown
+                        className={cn(
+                          "size-4 shrink-0 transition-transform",
+                          isExpanded && "rotate-180",
+                        )}
+                      />
+                    </>
+                  ) : null}
+                </button>
+
+                {isExpanded && !isMenuCollapsed ? (
+                  <div className="ml-4 flex flex-col gap-1 border-l pl-2">
+                    {section.items.map((item) => (
+                      <button
+                        key={`${section.id}-${item.label}`}
+                        type="button"
+                        onClick={() => openTab(item.tab)}
+                        className={cn(
+                          "focus-visible:ring-ring flex h-8 items-center rounded-md px-2 text-left text-sm transition-colors outline-none focus-visible:ring-2",
+                          activeTab === item.tab
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground hover:bg-primary hover:text-primary-foreground hover:ring-primary/30 hover:ring-1",
+                        )}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+        </nav>
+
+        {!isMenuCollapsed ? (
+          <div className="text-muted-foreground mt-auto px-2 pt-4 text-xs">
+            {isSupabaseConfigured ? "Supabase connected" : "Local/demo mode"} ·{" "}
+            {isFalConfigured ? "AI on" : "AI off"}
+          </div>
+        ) : null}
+      </aside>
+
+      <section className="flex min-w-0 flex-1 flex-col md:w-[80%]">
+        <div className="flex h-11 shrink-0 items-end gap-1 border-b px-3">
+          {tabs.length > 0 ? (
+            tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
+                    event.preventDefault();
+                    closeTab(tab.id);
+                  }
+                }}
+                className={cn(
+                  "focus-visible:ring-ring h-8 rounded-t-md border border-b-0 px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2",
+                  activeTab === tab.id
+                    ? "bg-background text-foreground"
+                    : "bg-muted/40 text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {tab.label}
+              </button>
+            ))
+          ) : (
+            <span className="text-muted-foreground mb-2 text-sm">Workspace</span>
+          )}
+        </div>
+
+        <div className={cn("min-h-0 flex-1 overflow-auto", selectedCanvasId ? "p-0" : "p-5")}>
+          {activeTab ? (
+            renderTabContent({
+              tabId: activeTab,
+              selectedProjectId,
+              selectedCanvasId,
+              onOpenProject: openProjectDetail,
+              onOpenCanvas: openCanvasDetail,
+              onBackToProjects: backToProjects,
+              onBackToProjectDetail: () => setSelectedCanvasId(null),
+            })
+          ) : (
+            <div className="flex h-full min-h-72 flex-col justify-center">
+              <p className="text-muted-foreground text-sm font-medium">Workspace</p>
+              <h2 className="mt-2 text-3xl font-semibold tracking-tight">Infinite Canvas</h2>
+            </div>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}

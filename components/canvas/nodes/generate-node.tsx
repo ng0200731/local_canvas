@@ -5,23 +5,31 @@ import { type NodeProps } from "@xyflow/react";
 import { Loader2, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { isFalConfigured } from "@/lib/env";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { GenerateCanvasNode } from "@/lib/nodes/types";
-import { useCanvasActions, useConnectionHighlight } from "../canvas-context";
+import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
 import { InputPort, OutputPort } from "./port";
+import { ResizeHandle } from "./resize-handle";
 
 const MODELS = [
   { value: "flux", label: "Flux — text → image" },
   { value: "flux-kontext", label: "Flux Kontext — edit image" },
 ] as const;
 
-export function GenerateNode({ id, data }: NodeProps<GenerateCanvasNode>) {
+const DEFAULT_WIDTH = 288;
+const DEFAULT_HEIGHT = 440;
+
+export function GenerateNode({ id, data, parentId }: NodeProps<GenerateCanvasNode>) {
   const { updateNodeData, spawnImageNode } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
+  const accent = useGroupAccent(parentId);
   const [loading, setLoading] = useState(false);
+  const width = data.width ?? DEFAULT_WIDTH;
+  const height = data.height ?? DEFAULT_HEIGHT;
 
   const model = data.model === "flux-kontext" ? "flux-kontext" : "flux";
   const references = data.references;
@@ -72,8 +80,13 @@ export function GenerateNode({ id, data }: NodeProps<GenerateCanvasNode>) {
 
   return (
     <div
-      style={highlight}
-      className="group bg-card relative flex w-72 flex-col gap-2 rounded-md border p-3 shadow-sm"
+      style={{
+        width,
+        height,
+        ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
+        ...highlight,
+      }}
+      className="group bg-card relative flex flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-md border p-3 shadow-sm"
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.generate} />
@@ -135,16 +148,19 @@ export function GenerateNode({ id, data }: NodeProps<GenerateCanvasNode>) {
         </div>
       </div>
 
-      <Button
-        type="button"
-        size="sm"
-        onClick={onGenerate}
-        disabled={loading || !isFalConfigured}
-        className="w-full"
-      >
-        {loading ? <Loader2 className="animate-spin" /> : <Sparkles />}
-        {loading ? "Generating…" : "Generate"}
-      </Button>
+      <ConfirmDialog
+        title="Generate image?"
+        description="This runs the model and may use API credits."
+        confirmLabel="Generate"
+        destructive={false}
+        onConfirm={() => void onGenerate()}
+        trigger={
+          <Button type="button" size="sm" disabled={loading || !isFalConfigured} className="w-full">
+            {loading ? <Loader2 className="animate-spin" /> : <Sparkles />}
+            {loading ? "Generating…" : "Generate"}
+          </Button>
+        }
+      />
 
       {!isFalConfigured && (
         <p className="text-muted-foreground text-xs">
@@ -155,6 +171,7 @@ export function GenerateNode({ id, data }: NodeProps<GenerateCanvasNode>) {
         <p className="text-destructive text-xs">{data.error}</p>
       )}
       <OutputPort color={NODE_PORT_COLORS.generate} />
+      <ResizeHandle nodeId={id} width={width} height={height} minWidth={260} minHeight={320} />
     </div>
   );
 }

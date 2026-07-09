@@ -7,14 +7,25 @@ import { CreateProjectDialog } from "@/components/projects/create-project-dialog
 import { ProjectCard } from "@/components/projects/project-card";
 import { useProjects } from "@/lib/hooks/use-projects";
 
-export function ProjectList() {
+export function ProjectList({
+  redirectOnCreate = true,
+  onOpenProject,
+  onProjectCreated,
+}: {
+  redirectOnCreate?: boolean;
+  onOpenProject?: (projectId: string) => void;
+  onProjectCreated?: (projectId: string) => void;
+}) {
   const { data: projects, isLoading, isError, error } = useProjects();
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
-        <CreateProjectDialog />
+        <CreateProjectDialog
+          redirectOnCreate={redirectOnCreate}
+          onCreated={(project) => onProjectCreated?.(project.id)}
+        />
       </div>
 
       {isLoading ? (
@@ -30,7 +41,7 @@ export function ProjectList() {
       ) : projects && projects.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((p) => (
-            <ProjectCard key={p.id} project={p} />
+            <ProjectCard key={p.id} project={p} onOpen={onOpenProject} />
           ))}
         </div>
       ) : (
@@ -42,7 +53,10 @@ export function ProjectList() {
               Create your first project to start arranging canvas nodes.
             </p>
           </div>
-          <CreateProjectDialog />
+          <CreateProjectDialog
+            redirectOnCreate={redirectOnCreate}
+            onCreated={(project) => onProjectCreated?.(project.id)}
+          />
         </div>
       )}
     </div>

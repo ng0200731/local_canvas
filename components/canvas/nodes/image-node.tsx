@@ -8,15 +8,22 @@ import { toast } from "sonner";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { ImageCanvasNode } from "@/lib/nodes/types";
 import { uploadImage } from "@/lib/upload";
-import { useCanvasActions, useConnectionHighlight } from "../canvas-context";
+import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
 import { InputPort, OutputPort } from "./port";
+import { ResizeHandle } from "./resize-handle";
 
-export function ImageNode({ id, data }: NodeProps<ImageCanvasNode>) {
+const DEFAULT_WIDTH = 224;
+const DEFAULT_HEIGHT = 160;
+
+export function ImageNode({ id, data, parentId }: NodeProps<ImageCanvasNode>) {
   const { updateNodeData } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
+  const accent = useGroupAccent(parentId);
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const width = data.width ?? DEFAULT_WIDTH;
+  const height = data.height ?? DEFAULT_HEIGHT;
 
   async function handleFile(file: File | undefined | null) {
     if (!file || !file.type.startsWith("image/")) return;
@@ -33,8 +40,13 @@ export function ImageNode({ id, data }: NodeProps<ImageCanvasNode>) {
 
   return (
     <div
-      style={highlight}
-      className="group bg-card relative flex h-40 w-56 flex-col overflow-hidden rounded-md border shadow-sm"
+      style={{
+        width,
+        height,
+        ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
+        ...highlight,
+      }}
+      className="group bg-card relative flex flex-col overflow-hidden rounded-md border shadow-sm"
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.image} />
@@ -57,7 +69,7 @@ export function ImageNode({ id, data }: NodeProps<ImageCanvasNode>) {
               src={data.url}
               alt={data.alt ?? ""}
               draggable={false}
-              className="h-full w-full cursor-pointer object-contain"
+              className="min-h-0 min-w-0 h-full w-full cursor-pointer object-contain"
               onClick={() => inputRef.current?.click()}
             />
             {/* Reference drag handle: drag onto a Generate node's reference slot.
@@ -99,6 +111,7 @@ export function ImageNode({ id, data }: NodeProps<ImageCanvasNode>) {
         />
       </div>
       <OutputPort color={NODE_PORT_COLORS.image} />
+      <ResizeHandle nodeId={id} width={width} height={height} minWidth={120} minHeight={120} />
     </div>
   );
 }

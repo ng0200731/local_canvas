@@ -19,8 +19,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCreateProject } from "@/lib/hooks/use-projects";
+import type { Project } from "@/lib/store";
 
-export function CreateProjectDialog() {
+export function CreateProjectDialog({
+  redirectOnCreate = true,
+  onCreated,
+}: {
+  redirectOnCreate?: boolean;
+  onCreated?: (project: Project) => void;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -38,7 +45,10 @@ export function CreateProjectDialog() {
       reset();
       setOpen(false);
       toast.success("Project created");
-      router.push(`/projects/${project.id}`);
+      onCreated?.(project);
+      if (redirectOnCreate) {
+        router.push(`/projects/${project.id}`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create project");
     }

@@ -19,8 +19,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCreateCanvas } from "@/lib/hooks/use-canvases";
+import type { Canvas } from "@/lib/store";
 
-export function CreateCanvasDialog({ projectId }: { projectId: string }) {
+export function CreateCanvasDialog({
+  projectId,
+  redirectOnCreate = true,
+  onCreated,
+}: {
+  projectId: string;
+  redirectOnCreate?: boolean;
+  onCreated?: (canvas: Canvas) => void;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -34,7 +43,10 @@ export function CreateCanvasDialog({ projectId }: { projectId: string }) {
       setOpen(false);
       setName("");
       toast.success("Canvas created");
-      router.push(`/projects/${projectId}/canvases/${canvas.id}`);
+      onCreated?.(canvas);
+      if (redirectOnCreate) {
+        router.push(`/projects/${projectId}/canvases/${canvas.id}`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create canvas");
     }

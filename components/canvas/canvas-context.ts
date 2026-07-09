@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, type CSSProperties } from "react";
+import { useReactFlow } from "@xyflow/react";
 
 import { DEFAULT_EDGE_COLOR } from "@/lib/nodes/ports";
 
@@ -13,6 +14,8 @@ export interface CanvasActions {
   deleteNode: (id: string) => void;
   /** Remove a single wire (edge) between nodes. */
   deleteEdge: (id: string) => void;
+  /** Resize a node (px). Keeps the top-left corner fixed under nodeOrigin [0.5,0.5]. */
+  resizeNode: (id: string, width: number, height: number) => void;
 }
 
 export const CanvasActionsContext = createContext<CanvasActions | null>(null);
@@ -23,6 +26,18 @@ export function useCanvasActions(): CanvasActions {
     throw new Error("useCanvasActions must be used within CanvasActionsContext");
   }
   return ctx;
+}
+
+/**
+ * Returns the accent color of this node's parent group (if any), so a grouped
+ * node can paint an outline matching its group. Reads the live store; the node
+ * re-renders when its own `parentId` changes (attach/detach).
+ */
+export function useGroupAccent(parentId?: string | null): string | null {
+  const { getNode } = useReactFlow();
+  if (!parentId) return null;
+  const parent = getNode(parentId);
+  return (parent?.data?.color as string | undefined) ?? null;
 }
 
 /**

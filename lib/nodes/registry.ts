@@ -16,27 +16,43 @@ function uid(): string {
   return `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Distinct accent colors cycled through so each group (and its children) is easy to tell apart. */
+const GROUP_COLORS = [
+  "#ef4444",
+  "#3b82f6",
+  "#22c55e",
+  "#a855f7",
+  "#f59e0b",
+  "#ec4899",
+  "#14b8a6",
+  "#8b5cf6",
+];
+
+function pickGroupColor(): string {
+  return GROUP_COLORS[Math.floor(Math.random() * GROUP_COLORS.length)];
+}
+
 export const NODE_META: Record<NodeType, NodeMeta> = {
   note: {
     type: "note",
     label: "Note",
     description: "A text note",
-    palette: true,
+    palette: false,
     defaultData: () => ({ text: "" }),
   },
   image: {
     type: "image",
     label: "Image",
     description: "Display an image",
-    palette: true,
+    palette: false,
     defaultData: () => ({ url: null }),
   },
   group: {
     type: "group",
     label: "Group",
     description: "A grouping box",
-    palette: true,
-    defaultData: () => ({ label: "Group" }),
+    palette: false,
+    defaultData: () => ({ label: "Group", color: pickGroupColor() }),
   },
   generate: {
     type: "generate",
@@ -49,6 +65,41 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
       references: [],
       status: "idle",
       resultUrl: null,
+    }),
+  },
+  suppler: {
+    type: "suppler",
+    label: "Suppler",
+    description: "Supply context or inputs",
+    palette: true,
+    defaultData: () => ({
+      title: "Suppler",
+      notes: "",
+      status: "draft",
+    }),
+  },
+  action: {
+    type: "action",
+    label: "Action",
+    description: "Track a workflow action",
+    palette: true,
+    defaultData: () => ({
+      title: "Action",
+      notes: "",
+      status: "manual",
+    }),
+  },
+  pantone: {
+    type: "pantone",
+    label: "Pantone",
+    description: "Find Pantone library colors",
+    palette: true,
+    defaultData: () => ({
+      query: "",
+      code: null,
+      name: null,
+      hex: null,
+      catalog: null,
     }),
   },
 };

@@ -16,6 +16,10 @@ const BASE_STYLE = {
   width: 12,
   height: 12,
   border: "2px solid var(--color-card, #ffffff)",
+  // Keep dots above node content (e.g. an image-node's <img>, which is
+  // positioned and would otherwise paint over them). The highlight patch
+  // raises this further when a dot is active.
+  zIndex: 10,
 } as const;
 
 /** Enlarge + glow ring in `color`. Applied to a dot whenever it is highlighted. */
@@ -68,7 +72,7 @@ export function InputPort({ color }: { color: string }) {
       type="source"
       position={Position.Left}
       {...hoverProps}
-      style={{ ...BASE_STYLE, background: color, ...highlight }}
+      style={{ ...BASE_STYLE, transform: "translate(0, -50%)", background: color, ...highlight }}
     />
   );
 }
@@ -81,7 +85,12 @@ export function OutputPort({ color }: { color: string }) {
       type="source"
       position={Position.Right}
       {...hoverProps}
-      style={{ ...BASE_STYLE, background: color, ...highlight }}
+      style={{
+        ...BASE_STYLE,
+        transform: "translate(-100%, -50%)",
+        background: color,
+        ...highlight,
+      }}
     />
   );
 }

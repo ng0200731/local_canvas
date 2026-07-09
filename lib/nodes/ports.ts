@@ -9,6 +9,9 @@ export const NODE_PORT_COLORS: Record<NodeType, string> = {
   image: "#10b981", // green
   group: "#94a3b8", // slate
   generate: "#a855f7", // purple
+  suppler: "#0ea5e9", // sky
+  action: "#f43f5e", // rose
+  pantone: "#f97316", // orange
 };
 
 /** Fallback color for wires whose source type is unknown. */

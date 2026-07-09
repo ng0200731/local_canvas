@@ -1,6 +1,15 @@
 "use client";
 
-import { Image as ImageIcon, Sparkles, Square, StickyNote, type LucideIcon } from "lucide-react";
+import {
+  Image as ImageIcon,
+  Package,
+  Palette,
+  Sparkles,
+  Square,
+  StickyNote,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 
 import { NODE_META, PALETTE_NODE_TYPES } from "@/lib/nodes/registry";
 import type { NodeType } from "@/lib/nodes/types";
@@ -10,6 +19,9 @@ const ICONS: Record<NodeType, LucideIcon> = {
   image: ImageIcon,
   group: Square,
   generate: Sparkles,
+  suppler: Package,
+  action: Zap,
+  pantone: Palette,
 };
 
 export function NodePalette({ onAdd }: { onAdd: (type: NodeType) => void }) {

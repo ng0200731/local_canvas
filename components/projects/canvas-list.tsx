@@ -12,7 +12,30 @@ import { useCanvases, useDeleteCanvas } from "@/lib/hooks/use-canvases";
 import { formatDate } from "@/lib/format";
 import type { Canvas } from "@/lib/store";
 
-function CanvasCard({ canvas, projectId }: { canvas: Canvas; projectId: string }) {
+function CanvasSummary({ canvas }: { canvas: Canvas }) {
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <FileImage className="text-muted-foreground size-4 shrink-0" />
+        <span className="truncate font-medium">{canvas.name}</span>
+      </div>
+      <span className="text-muted-foreground text-xs">
+        {canvas.content.nodes.length} node
+        {canvas.content.nodes.length === 1 ? "" : "s"} · Updated {formatDate(canvas.updatedAt)}
+      </span>
+    </>
+  );
+}
+
+function CanvasCard({
+  canvas,
+  projectId,
+  onOpen,
+}: {
+  canvas: Canvas;
+  projectId: string;
+  onOpen?: (canvasId: string) => void;
+}) {
   const del = useDeleteCanvas(projectId);
 
   async function onDelete() {
@@ -22,19 +45,22 @@ function CanvasCard({ canvas, projectId }: { canvas: Canvas; projectId: string }
 
   return (
     <div className="group hover:bg-muted/40 relative flex flex-col gap-2 rounded-lg border p-4 transition-colors">
-      <Link
-        href={`/projects/${projectId}/canvases/${canvas.id}`}
-        className="flex flex-col gap-2 pr-8"
-      >
-        <div className="flex items-center gap-2">
-          <FileImage className="text-muted-foreground size-4 shrink-0" />
-          <span className="truncate font-medium">{canvas.name}</span>
-        </div>
-        <span className="text-muted-foreground text-xs">
-          {canvas.content.nodes.length} node
-          {canvas.content.nodes.length === 1 ? "" : "s"} · Updated {formatDate(canvas.updatedAt)}
-        </span>
-      </Link>
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={() => onOpen(canvas.id)}
+          className="flex flex-col gap-2 pr-8 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <CanvasSummary canvas={canvas} />
+        </button>
+      ) : (
+        <Link
+          href={`/projects/${projectId}/canvases/${canvas.id}`}
+          className="flex flex-col gap-2 pr-8"
+        >
+          <CanvasSummary canvas={canvas} />
+        </Link>
+      )}
       <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
         <ConfirmDialog
           title="Delete canvas?"
@@ -51,14 +77,28 @@ function CanvasCard({ canvas, projectId }: { canvas: Canvas; projectId: string }
   );
 }
 
-export function CanvasList({ projectId }: { projectId: string }) {
+export function CanvasList({
+  projectId,
+  redirectOnCreate = true,
+  onOpenCanvas,
+  onCanvasCreated,
+}: {
+  projectId: string;
+  redirectOnCreate?: boolean;
+  onOpenCanvas?: (canvasId: string) => void;
+  onCanvasCreated?: (canvasId: string) => void;
+}) {
   const { data: canvases, isLoading, isError, error } = useCanvases(projectId);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Canvases</h2>
-        <CreateCanvasDialog projectId={projectId} />
+        <CreateCanvasDialog
+          projectId={projectId}
+          redirectOnCreate={redirectOnCreate}
+          onCreated={(canvas) => onCanvasCreated?.(canvas.id)}
+        />
       </div>
 
       {isLoading ? (
@@ -74,7 +114,7 @@ export function CanvasList({ projectId }: { projectId: string }) {
       ) : canvases && canvases.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {canvases.map((c) => (
-            <CanvasCard key={c.id} canvas={c} projectId={projectId} />
+            <CanvasCard key={c.id} canvas={c} projectId={projectId} onOpen={onOpenCanvas} />
           ))}
         </div>
       ) : (
