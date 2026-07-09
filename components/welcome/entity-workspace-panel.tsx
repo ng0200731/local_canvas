@@ -809,8 +809,8 @@ function ProductWorkspacePanel() {
           </div>
 
           <div
-            role="button"
             tabIndex={0}
+            aria-label="Product image upload area"
             onPaste={handlePaste}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDrop}
