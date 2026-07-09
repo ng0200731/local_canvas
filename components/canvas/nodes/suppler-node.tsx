@@ -12,7 +12,7 @@ const STATUS_OPTIONS = [
   { value: "blocked", label: "Blocked" },
 ] as const;
 
-export function SupplerNode({ id, data, parentId }: NodeProps<SupplerCanvasNode>) {
+export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerCanvasNode>) {
   return (
     <WorkflowNode
       id={id}
@@ -22,6 +22,7 @@ export function SupplerNode({ id, data, parentId }: NodeProps<SupplerCanvasNode>
       icon={<Package className="size-4" />}
       data={data}
       statusOptions={STATUS_OPTIONS}
+      selected={selected}
     />
   );
 }

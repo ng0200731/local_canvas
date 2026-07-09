@@ -2,6 +2,7 @@
 
 import { type NodeProps } from "@xyflow/react";
 
+import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { NoteCanvasNode } from "@/lib/nodes/types";
 import { useConnectionHighlight, useGroupAccent } from "../canvas-context";
@@ -13,7 +14,7 @@ import { ResizeHandle } from "./resize-handle";
 const DEFAULT_WIDTH = 224;
 const DEFAULT_HEIGHT = 128;
 
-export function NoteNode({ id, data, parentId }: NodeProps<NoteCanvasNode>) {
+export function NoteNode({ id, data, parentId, selected }: NodeProps<NoteCanvasNode>) {
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
   const width = data.width ?? DEFAULT_WIDTH;
@@ -27,7 +28,10 @@ export function NoteNode({ id, data, parentId }: NodeProps<NoteCanvasNode>) {
         ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
         ...highlight,
       }}
-      className="group relative flex flex-col rounded-md border border-amber-200 bg-amber-50 p-2 shadow-sm dark:border-amber-900/50 dark:bg-amber-950/30"
+      className={cn(
+        "group relative flex flex-col rounded-lg border border-amber-200 bg-amber-50/90 p-2 shadow-md dark:border-amber-900/50 dark:bg-amber-950/30",
+        selected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
+      )}
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.note} />

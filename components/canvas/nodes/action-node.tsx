@@ -12,7 +12,7 @@ const STATUS_OPTIONS = [
   { value: "done", label: "Done" },
 ] as const;
 
-export function ActionNode({ id, data, parentId }: NodeProps<ActionCanvasNode>) {
+export function ActionNode({ id, data, parentId, selected }: NodeProps<ActionCanvasNode>) {
   return (
     <WorkflowNode
       id={id}
@@ -22,6 +22,7 @@ export function ActionNode({ id, data, parentId }: NodeProps<ActionCanvasNode>) 
       icon={<Zap className="size-4" />}
       data={data}
       statusOptions={STATUS_OPTIONS}
+      selected={selected}
     />
   );
 }

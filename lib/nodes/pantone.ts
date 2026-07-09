@@ -8,8 +8,7 @@ export const PANTONE_METALLICS_COATED_DATA_URL = "/data/pantone-metallics-coated
 export const PANTONE_PREMIUM_METALLICS_COATED_DATA_URL =
   "/data/pantone-premium-metallics-coated.json";
 export const PANTONE_PASTELS_NEONS_COATED_DATA_URL = "/data/pantone-pastels-neons-coated.json";
-export const PANTONE_PASTELS_NEONS_UNCOATED_DATA_URL =
-  "/data/pantone-pastels-neons-uncoated.json";
+export const PANTONE_PASTELS_NEONS_UNCOATED_DATA_URL = "/data/pantone-pastels-neons-uncoated.json";
 export const PANTONE_BRIDGE_COATED_DATA_URL = "/data/pantone-color-bridge-coated.json";
 export const PANTONE_BRIDGE_UNCOATED_DATA_URL = "/data/pantone-color-bridge-uncoated.json";
 export const PANTONE_DATA_SOURCES = {
@@ -195,10 +194,6 @@ export function normalizePantoneQuery(value: string): string {
   return removePantoneSuffixes(tokenizePantoneText(value)).join(" ");
 }
 
-function normalizeName(value: string): string {
-  return removePantoneSuffixes(tokenizePantoneText(value)).join(" ");
-}
-
 function extractFhiPantoneCode(value: string): string | null {
   const compact = value.replace(/\bpantone\b/gi, "").replace(/\b(tcx|tpg|tpn|c|u)\b/gi, "");
   const dashed = compact.match(/\b\d{2}-\d{4}\b/);
@@ -215,9 +210,7 @@ function comparePantoneColors(a: PantoneColor, b: PantoneColor): number {
 }
 
 export function getPantoneCatalogLabel(catalog: PantoneCatalog): string {
-  return (
-    PANTONE_LIBRARY_SOURCES.find((source) => source.catalog === catalog)?.label ?? "Pantone"
-  );
+  return PANTONE_LIBRARY_SOURCES.find((source) => source.catalog === catalog)?.label ?? "Pantone";
 }
 
 function parsePantoneRecordDataset(raw: unknown, catalog: PantoneCatalog): PantoneColor[] {
@@ -271,10 +264,14 @@ export function parsePantoneSolidCoatedDataset(raw: unknown): PantoneColor[] {
   return parsePantoneArrayLibraryDataset(raw, "solid-coated");
 }
 
-function parsePantoneLibraryDataset(
+export function parsePantoneLibraryDatasetForTest(
   raw: unknown,
-  source: PantoneLibrarySource,
+  catalog: PantoneCatalog,
 ): PantoneColor[] {
+  return parsePantoneArrayLibraryDataset(raw, catalog);
+}
+
+function parsePantoneLibraryDataset(raw: unknown, source: PantoneLibrarySource): PantoneColor[] {
   return source.format === "record"
     ? parsePantoneRecordDataset(raw, source.catalog)
     : parsePantoneArrayLibraryDataset(raw, source.catalog);
@@ -395,7 +392,10 @@ export function findPantoneColor(
     if (exactCode) return exactCode;
   }
 
-  const exactName = colors.find((color) => normalizeName(color.name) === normalized);
+  const suffixAwareName = tokenizePantoneText(query).join(" ");
+  const exactName = colors.find(
+    (color) => tokenizePantoneText(color.name).join(" ") === suffixAwareName,
+  );
   if (exactName) return exactName;
 
   return searchPantoneColors(colors, query, 1)[0] ?? null;

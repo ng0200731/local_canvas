@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import {
   contrastTextForHex,
@@ -36,6 +37,12 @@ function persistedCatalog(value: unknown): PantoneCatalog {
     : "fhi-tcx";
 }
 
+function persistedCatalogFilter(value: unknown): PantoneCatalog | null {
+  return typeof value === "string" && PANTONE_CATALOGS.has(value as PantoneCatalog)
+    ? (value as PantoneCatalog)
+    : null;
+}
+
 function persistedColor(data: PantoneCanvasNode["data"]): PantoneColor | null {
   if (!data.code || !data.name || !data.hex || !data.hex.startsWith("#")) return null;
   const hex = data.hex as `#${string}`;
@@ -59,7 +66,12 @@ function persistedColor(data: PantoneCanvasNode["data"]): PantoneColor | null {
   };
 }
 
-export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>) {
+export function PantoneNode({
+  id,
+  data,
+  parentId,
+  selected: isNodeSelected,
+}: NodeProps<PantoneCanvasNode>) {
   const { updateNodeData } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
@@ -68,6 +80,7 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
   const [copied, setCopied] = useState(false);
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
+  const catalogFilter = persistedCatalogFilter(data.catalogFilter);
 
   useEffect(() => {
     let active = true;
@@ -87,15 +100,25 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
     };
   }, []);
 
+  const searchableColors = useMemo(
+    () => (catalogFilter ? colors.filter((color) => color.catalog === catalogFilter) : colors),
+    [colors, catalogFilter],
+  );
+
   const selected = useMemo(() => {
-    const fromSearch = findPantoneColor(colors, data.query);
-    return fromSearch ?? persistedColor(data);
-  }, [colors, data]);
+    const fromSearch = findPantoneColor(searchableColors, data.query);
+    const persisted = persistedColor(data);
+    if (fromSearch) return fromSearch;
+    if (persisted && (!catalogFilter || persisted.catalog === catalogFilter)) return persisted;
+    return null;
+  }, [searchableColors, data, catalogFilter]);
 
   const suggestions = useMemo(
     () =>
-      searchPantoneColors(colors, data.query, 5).filter((color) => color.code !== selected?.code),
-    [colors, data.query, selected?.code],
+      searchPantoneColors(searchableColors, data.query, 5).filter(
+        (color) => color.code !== selected?.code || color.catalog !== selected.catalog,
+      ),
+    [searchableColors, data.query, selected],
   );
 
   function defaultQueryForColor(color: PantoneColor): string {
@@ -120,13 +143,30 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
   }
 
   function handleQueryChange(query: string) {
-    const match = findPantoneColor(colors, query);
+    const match = findPantoneColor(searchableColors, query);
     updateNodeData(id, {
       query,
       code: match?.code ?? null,
       name: match?.name ?? null,
       hex: match?.hex ?? null,
       catalog: match?.catalog ?? null,
+    });
+  }
+
+  function handleCatalogFilterChange(value: string) {
+    const nextFilter = persistedCatalogFilter(value);
+    const nextColors = nextFilter ? colors.filter((color) => color.catalog === nextFilter) : colors;
+    const match = data.query.trim() ? findPantoneColor(nextColors, data.query) : null;
+    updateNodeData(id, {
+      catalogFilter: nextFilter,
+      ...(data.query.trim()
+        ? {
+            code: match?.code ?? null,
+            name: match?.name ?? null,
+            hex: match?.hex ?? null,
+            catalog: match?.catalog ?? null,
+          }
+        : {}),
     });
   }
 
@@ -147,7 +187,10 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
         ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
         ...highlight,
       }}
-      className="group bg-card relative flex flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-md border p-3 shadow-sm"
+      className={cn(
+        "group bg-card relative flex flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-lg border p-3 shadow-md",
+        isNodeSelected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
+      )}
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.pantone} />
@@ -155,6 +198,20 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
         <Palette className="size-4" />
         Pantone
       </div>
+
+      <select
+        value={catalogFilter ?? "all"}
+        onChange={(event) => handleCatalogFilterChange(event.target.value)}
+        className="nodrag bg-background focus-visible:border-ring focus-visible:ring-ring/30 h-8 w-full rounded-md border px-2 text-xs outline-none focus-visible:ring-2"
+        aria-label="Pantone series"
+      >
+        <option value="all">All Pantone libraries</option>
+        {PANTONE_LIBRARY_SOURCES.map((source) => (
+          <option key={source.catalog} value={source.catalog}>
+            {source.label}
+          </option>
+        ))}
+      </select>
 
       <Input
         value={data.query}
@@ -218,7 +275,7 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
                 key={color.code}
                 type="button"
                 onClick={() => applyColor(color)}
-                className="nodrag hover:bg-muted grid h-7 grid-cols-[1rem_5.25rem_1fr] items-center gap-2 rounded-md px-1.5 text-left text-xs transition-colors"
+                className="nodrag focus-visible:ring-ring hover:bg-muted grid h-7 grid-cols-[1rem_5.25rem_1fr] items-center gap-2 rounded-md px-1.5 text-left text-xs transition-colors outline-none focus-visible:ring-2"
               >
                 <span
                   className="size-4 rounded-sm border"
@@ -226,7 +283,10 @@ export function PantoneNode({ id, data, parentId }: NodeProps<PantoneCanvasNode>
                   aria-hidden="true"
                 />
                 <span className="truncate font-medium">{color.code}</span>
-                <span className="text-muted-foreground truncate">{color.displayName}</span>
+                <span className="text-muted-foreground truncate">
+                  {color.displayName}
+                  {!catalogFilter ? ` · ${catalogLabel(color.catalog)}` : ""}
+                </span>
               </button>
             ))}
           </div>

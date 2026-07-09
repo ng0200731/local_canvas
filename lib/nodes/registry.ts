@@ -47,6 +47,17 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     palette: false,
     defaultData: () => ({ url: null }),
   },
+  imageInput: {
+    type: "imageInput",
+    label: "Input",
+    description: "Named image input",
+    palette: true,
+    defaultData: () => ({
+      alias: "image",
+      imageUrl: null,
+      storagePath: null,
+    }),
+  },
   group: {
     type: "group",
     label: "Group",
@@ -65,6 +76,16 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
       references: [],
       status: "idle",
       resultUrl: null,
+    }),
+  },
+  imageOutput: {
+    type: "imageOutput",
+    label: "Output",
+    description: "Generated image result",
+    palette: true,
+    defaultData: () => ({
+      resultUrl: null,
+      status: "idle",
     }),
   },
   suppler: {
@@ -100,6 +121,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
       name: null,
       hex: null,
       catalog: null,
+      catalogFilter: null,
     }),
   },
 };

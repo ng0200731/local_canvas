@@ -58,13 +58,13 @@ export function CreateProjectDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button size="sm">
+          <Button size="sm" className="shadow-sm">
             <Plus /> New project
           </Button>
         }
       />
-      <DialogContent>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={onSubmit} className="flex flex-col gap-5">
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
             <DialogDescription>A project groups one or more canvases.</DialogDescription>
@@ -83,7 +83,7 @@ export function CreateProjectDialog({
           <DialogFooter>
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={create.isPending || !name.trim()}>
-              {create.isPending ? "Creating…" : "Create"}
+              {create.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </form>

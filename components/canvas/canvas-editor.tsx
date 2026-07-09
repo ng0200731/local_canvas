@@ -32,9 +32,10 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronLeft, Save } from "lucide-react";
+import { ChevronLeft, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -53,18 +54,27 @@ import { getCanvasStore } from "@/lib/store";
 import { createNode } from "@/lib/nodes/registry";
 import { colorForNodeType, DEFAULT_EDGE_COLOR, EDGE_WIDTH } from "@/lib/nodes/ports";
 import type { CanvasContent, CanvasEdge, CanvasNode, NodeType } from "@/lib/nodes/types";
-import { CanvasActionsContext, ConnectionHighlightContext } from "./canvas-context";
+import {
+  CanvasActionsContext,
+  ConnectionHighlightContext,
+  type ConnectedInputReference,
+} from "./canvas-context";
 import { NodePalette } from "./node-palette";
 import { DeletableEdge } from "./edges/canvas-edge";
 import { ActionNode } from "./nodes/action-node";
 import { GenerateNode } from "./nodes/generate-node";
 import { GroupNode } from "./nodes/group-node";
+import { InputNode } from "./nodes/input-node";
 import { ImageNode } from "./nodes/image-node";
 import { NoteNode } from "./nodes/note-node";
+import { OutputNode } from "./nodes/output-node";
 import { PantoneNode } from "./nodes/pantone-node";
 import { SupplerNode } from "./nodes/suppler-node";
 
 const AUTOSAVE_DEBOUNCE_MS = 600;
+const NEW_NODE_DISPLACEMENT = 32;
+const POSITION_EPSILON = 1;
+const MAX_PLACEMENT_PROBES = 40;
 
 /**
  * Reorder so each parent appears before its children. React Flow paints nodes in
@@ -108,6 +118,133 @@ function rectOf(
   return { x: abs.x, y: abs.y, w, h, cx: abs.x + w / 2, cy: abs.y + h / 2 };
 }
 
+function isSamePosition(a: XYPosition, b: XYPosition): boolean {
+  return Math.abs(a.x - b.x) < POSITION_EPSILON && Math.abs(a.y - b.y) < POSITION_EPSILON;
+}
+
+function findNewNodePosition(base: XYPosition, nodes: CanvasNode[]): XYPosition {
+  const isOccupied = (position: XYPosition) =>
+    nodes.some((node) => !node.parentId && isSamePosition(node.position, position));
+
+  for (let step = 0; step <= MAX_PLACEMENT_PROBES; step += 1) {
+    const position =
+      step === 0
+        ? base
+        : {
+            x: base.x + NEW_NODE_DISPLACEMENT * step,
+            y: base.y + NEW_NODE_DISPLACEMENT * step,
+          };
+    if (!isOccupied(position)) return position;
+  }
+
+  return {
+    x: base.x + NEW_NODE_DISPLACEMENT * (MAX_PLACEMENT_PROBES + 1),
+    y: base.y + NEW_NODE_DISPLACEMENT * (MAX_PLACEMENT_PROBES + 1),
+  };
+}
+
+function appendSelectedNode(nodes: CanvasNode[], node: CanvasNode): CanvasNode[] {
+  return nodes
+    .map((n) => (n.selected ? { ...n, selected: false } : n))
+    .concat({
+      ...node,
+      selected: true,
+    });
+}
+
+function findConnectedOutputNodeId(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  generateNodeId: string,
+): string | null {
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const));
+
+  for (const edge of edges) {
+    const otherNodeId =
+      edge.source === generateNodeId
+        ? edge.target
+        : edge.target === generateNodeId
+          ? edge.source
+          : null;
+
+    if (otherNodeId && nodesById.get(otherNodeId)?.type === "imageOutput") {
+      return otherNodeId;
+    }
+  }
+
+  return null;
+}
+
+function findConnectedInputReferences(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  nodeId: string,
+): ConnectedInputReference[] {
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const));
+  const seen = new Set<string>();
+  const references: ConnectedInputReference[] = [];
+
+  for (const edge of edges) {
+    const otherNodeId =
+      edge.source === nodeId ? edge.target : edge.target === nodeId ? edge.source : null;
+    if (!otherNodeId || seen.has(otherNodeId)) continue;
+
+    const node = nodesById.get(otherNodeId);
+    if (!node) continue;
+
+    if (node.type === "imageInput") {
+      const imageUrl = typeof node.data.imageUrl === "string" ? node.data.imageUrl : null;
+      if (!imageUrl) continue;
+
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : "image";
+
+      seen.add(otherNodeId);
+      references.push({ nodeId: otherNodeId, kind: "image", alias, label: alias, imageUrl });
+      continue;
+    }
+
+    if (node.type === "pantone") {
+      const swatchHex =
+        typeof node.data.hex === "string" && node.data.hex.startsWith("#") ? node.data.hex : null;
+      if (!swatchHex) continue;
+
+      const name = typeof node.data.name === "string" && node.data.name.trim()
+        ? node.data.name.trim()
+        : null;
+      const code = typeof node.data.code === "string" && node.data.code.trim()
+        ? node.data.code.trim()
+        : null;
+      const alias = name ?? code ?? "pantone";
+      const label = name
+        ? name
+            .split("-")
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" ")
+        : (code ?? "Pantone");
+
+      seen.add(otherNodeId);
+      references.push({
+        nodeId: otherNodeId,
+        kind: "pantone",
+        alias,
+        label,
+        swatchHex,
+      });
+    }
+  }
+
+  return references;
+}
+
+function normalizeNodeType(node: CanvasNode): CanvasNode {
+  if ((node.type as string) !== "output") return node;
+  return { ...node, type: "imageOutput" };
+}
+
 function Editor({
   projectId,
   canvasId,
@@ -146,7 +283,7 @@ function Editor({
   useEffect(() => {
     if (canvas && !loadedRef.current) {
       loadedRef.current = true;
-      setNodes(reorderChildrenAfterParents(canvas.content.nodes));
+      setNodes(reorderChildrenAfterParents(canvas.content.nodes.map(normalizeNodeType)));
       // Force the custom (deletable) edge type so the remove button renders.
       // Older edges were saved before dots had explicit ids — backfill
       // sourceHandle/targetHandle (right=source, left=target under the old
@@ -169,6 +306,16 @@ function Editor({
       );
     },
     [setNodes],
+  );
+
+  const getConnectedInputReferences = useCallback(
+    (nodeId: string) => findConnectedInputReferences(nodes, edges, nodeId),
+    [edges, nodes],
+  );
+
+  const hasConnectedOutputNode = useCallback(
+    (generateNodeId: string) => findConnectedOutputNodeId(nodes, edges, generateNodeId) !== null,
+    [edges, nodes],
   );
 
   function openSaveDialog() {
@@ -374,17 +521,34 @@ function Editor({
     [connectionSourceId, connectionTargetId, connectionTargetDot, connectionColor],
   );
 
-  const spawnImageNode = useCallback(
-    (parentId: string, url: string, meta: { prompt: string; model: string }) => {
-      setNodes((nds) => {
-        const parent = nds.find((n) => n.id === parentId);
-        const position = parent
-          ? { x: parent.position.x + 320, y: parent.position.y }
-          : { x: 0, y: 0 };
-        const node = createNode("image", position);
-        node.data = { url };
-        return nds.concat(node);
+  const updateConnectedOutputData = useCallback(
+    (generateNodeId: string, patch: Record<string, unknown>) => {
+      const outputNodeId = findConnectedOutputNodeId(nodes, edges, generateNodeId);
+      if (!outputNodeId) return false;
+
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === outputNodeId ? { ...node, data: { ...node.data, ...patch } } : node,
+        ),
+      );
+
+      return true;
+    },
+    [edges, nodes, setNodes],
+  );
+
+  const writeGeneratedImageToOutput = useCallback(
+    (generateNodeId: string, url: string, meta: { prompt: string; model: string }) => {
+      const updated = updateConnectedOutputData(generateNodeId, {
+        resultUrl: url,
+        prompt: meta.prompt,
+        model: meta.model,
+        status: "done",
+        error: undefined,
       });
+
+      if (!updated) return false;
+
       void getCanvasStore().recordImage({
         canvasId,
         source: "generated",
@@ -392,8 +556,10 @@ function Editor({
         prompt: meta.prompt,
         model: meta.model,
       });
+
+      return true;
     },
-    [setNodes, canvasId],
+    [canvasId, updateConnectedOutputData],
   );
 
   const deleteNode = useCallback(
@@ -431,6 +597,12 @@ function Editor({
     [setEdges],
   );
 
+  const deleteAll = useCallback(() => {
+    setNodes([]);
+    setEdges([]);
+    toast.success("Canvas cleared");
+  }, [setNodes, setEdges]);
+
   const resizeNode = useCallback(
     (id: string, width: number, height: number) => {
       setNodes((nds) =>
@@ -461,7 +633,10 @@ function Editor({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
-      setNodes((nds) => nds.concat(createNode(type, position)));
+      setNodes((nds) => {
+        const node = createNode(type, findNewNodePosition(position, nds));
+        return appendSelectedNode(nds, node);
+      });
     },
     [screenToFlowPosition, setNodes],
   );
@@ -475,7 +650,10 @@ function Editor({
         x: event.clientX,
         y: event.clientY,
       });
-      setNodes((nds) => nds.concat(createNode(type, position)));
+      setNodes((nds) => {
+        const node = createNode(type, findNewNodePosition(position, nds));
+        return appendSelectedNode(nds, node);
+      });
     },
     [screenToFlowPosition, setNodes],
   );
@@ -484,8 +662,10 @@ function Editor({
     () => ({
       note: NoteNode,
       image: ImageNode,
+      imageInput: InputNode,
       group: GroupNode,
       generate: GenerateNode,
+      imageOutput: OutputNode,
       suppler: SupplerNode,
       action: ActionNode,
       pantone: PantoneNode,
@@ -505,17 +685,37 @@ function Editor({
   const edgeTypes = useMemo<EdgeTypes>(() => ({ deletable: DeletableEdge }), []);
 
   const actions = useMemo(
-    () => ({ updateNodeData, spawnImageNode, deleteNode, deleteEdge, resizeNode }),
-    [updateNodeData, spawnImageNode, deleteNode, deleteEdge, resizeNode],
+    () => ({
+      updateNodeData,
+      getConnectedInputReferences,
+      hasConnectedOutputNode,
+      updateConnectedOutputData,
+      writeGeneratedImageToOutput,
+      deleteNode,
+      deleteEdge,
+      resizeNode,
+    }),
+    [
+      updateNodeData,
+      getConnectedInputReferences,
+      hasConnectedOutputNode,
+      updateConnectedOutputData,
+      writeGeneratedImageToOutput,
+      deleteNode,
+      deleteEdge,
+      resizeNode,
+    ],
   );
 
   return (
     <div
       className={
-        embedded ? "flex h-[calc(100dvh-6rem)] flex-col" : "flex h-[calc(100dvh-3.5rem)] flex-col"
+        embedded
+          ? "bg-background flex h-[calc(100dvh-6rem)] flex-col"
+          : "bg-background flex h-[calc(100dvh-3.5rem)] flex-col"
       }
     >
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+      <div className="bg-background/90 supports-[backdrop-filter]:bg-background/70 flex h-14 shrink-0 items-center gap-2 border-b px-3 backdrop-blur">
         {onBack ? (
           <Button size="icon-sm" variant="ghost" aria-label="Back to project" onClick={onBack}>
             <ChevronLeft />
@@ -533,18 +733,43 @@ function Editor({
         {isLoading || !canvas ? (
           <Skeleton className="h-5 w-40" />
         ) : (
-          <span className="text-sm font-medium">{canvas.name}</span>
+          <div className="min-w-0">
+            <p className="text-muted-foreground text-[0.7rem] font-medium tracking-wide uppercase">
+              Canvas
+            </p>
+            <span className="block truncate text-sm font-semibold">{canvas.name}</span>
+          </div>
         )}
-        <Button
-          type="button"
-          size="sm"
-          className="ml-auto"
-          disabled={isLoading || !canvas || saving}
-          onClick={openSaveDialog}
-        >
-          <Save />
-          Save canvas
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <ConfirmDialog
+            title="Delete all nodes?"
+            description="This removes every node and wire from this canvas."
+            confirmLabel="Delete all"
+            onConfirm={deleteAll}
+            trigger={
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={isLoading || !canvas || (nodes.length === 0 && edges.length === 0)}
+                className="shadow-sm"
+              >
+                <Trash2 />
+                Delete all
+              </Button>
+            }
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="shadow-sm"
+            disabled={isLoading || !canvas || saving}
+            onClick={openSaveDialog}
+          >
+            <Save />
+            Save canvas
+          </Button>
+        </div>
       </div>
 
       <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
@@ -584,7 +809,7 @@ function Editor({
             <div className="relative flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
               {isLoading || !canvas ? (
                 <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
-                  Loading canvas…
+                  Loading canvas...
                 </div>
               ) : (
                 <ReactFlow
@@ -608,9 +833,14 @@ function Editor({
                   defaultEdgeOptions={defaultEdgeOptions}
                   deleteKeyCode={["Delete", "Backspace"]}
                   fitView
-                  className="bg-muted/30"
+                  className="bg-background"
                 >
-                  <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+                  <Background
+                    variant={BackgroundVariant.Dots}
+                    gap={24}
+                    size={1}
+                    color="color-mix(in oklch, var(--muted-foreground), transparent 62%)"
+                  />
                   <Controls />
                   <MiniMap pannable zoomable />
                 </ReactFlow>

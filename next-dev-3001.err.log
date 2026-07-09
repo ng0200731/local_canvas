@@ -1,0 +1,8 @@
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:3000
+- PID:          15900
+- Dir:          D:\project\trial-2026-infinite-canvas
+- Log:          .next\dev\logs\next-development.log
+
+Run taskkill /PID 15900 /F to stop it.

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 
+import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { NodeType } from "@/lib/nodes/types";
 import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
@@ -30,6 +31,7 @@ interface WorkflowNodeProps {
   icon: ReactNode;
   data: WorkflowNodeData;
   statusOptions: readonly WorkflowStatusOption[];
+  selected?: boolean;
 }
 
 const DEFAULT_WIDTH = 248;
@@ -43,6 +45,7 @@ export function WorkflowNode({
   icon,
   data,
   statusOptions,
+  selected = false,
 }: WorkflowNodeProps) {
   const { updateNodeData } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
@@ -59,7 +62,10 @@ export function WorkflowNode({
         ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
         ...highlight,
       }}
-      className="group bg-card relative flex flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-md border p-3 shadow-sm"
+      className={cn(
+        "group bg-card relative flex flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-lg border p-3 shadow-md",
+        selected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
+      )}
     >
       <NodeDeleteButton id={id} />
       <InputPort color={color} />
@@ -71,18 +77,18 @@ export function WorkflowNode({
         value={data.title}
         placeholder={`${label} title`}
         onChange={(e) => updateNodeData(id, { title: e.target.value })}
-        className="bg-background focus-visible:border-ring h-8 w-full rounded-md border px-2 text-sm outline-none"
+        className="bg-background focus-visible:border-ring focus-visible:ring-ring/30 h-8 w-full rounded-md border px-2 text-sm outline-none focus-visible:ring-2"
       />
       <textarea
         value={data.notes}
         placeholder="Notes"
         onChange={(e) => updateNodeData(id, { notes: e.target.value })}
-        className="bg-background focus-visible:border-ring min-h-16 flex-1 resize-none rounded-md border p-2 text-sm outline-none"
+        className="bg-background focus-visible:border-ring focus-visible:ring-ring/30 min-h-16 flex-1 resize-none rounded-md border p-2 text-sm outline-none focus-visible:ring-2"
       />
       <select
         value={data.status}
         onChange={(e) => updateNodeData(id, { status: e.target.value })}
-        className="bg-background focus-visible:border-ring h-8 w-full rounded-md border px-2 text-xs outline-none"
+        className="bg-background focus-visible:border-ring focus-visible:ring-ring/30 h-8 w-full rounded-md border px-2 text-xs outline-none focus-visible:ring-2"
       >
         {statusOptions.map((option) => (
           <option key={option.value} value={option.value}>

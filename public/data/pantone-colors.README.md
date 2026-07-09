@@ -7,12 +7,16 @@ https://github.com/Margaret2/pantone-colors/blob/master/pantone-numbers.json.
 colors with HEX and RGB codes" table:
 https://webtemple.design/resources/all-pantone-c-colors-with-hex-and-rgb-codes
 
+`pantone-solid-uncoated.json` is parsed from a public Solid Uncoated HEX/RGB
+table:
+https://force4u.cocolog-nifty.com/skywalker/2009/09/pantone-u-panto.html
+
 For a larger Solid Coated Lab/ACB source, see:
 https://github.com/aj90909/unofficial-pantone-solid-coated-2024-v5
 
 The values are approximate web HEX values for Pantone Fashion, Home + Interiors
-and Solid Coated codes. Do not treat them as official print-critical Pantone
-matches.
+and Solid Coated/Uncoated codes. Do not treat them as official print-critical
+Pantone matches.
 
 ## Optional licensed library imports
 
@@ -20,7 +24,6 @@ The app also loads these library files. The optional files are checked in as
 empty arrays (`[]`) so every library endpoint exists; replace them with licensed
 Pantone data when available:
 
-- `pantone-solid-uncoated.json`
 - `pantone-fhi-tpg.json`
 - `pantone-metallics-coated.json`
 - `pantone-premium-metallics-coated.json`
@@ -32,9 +35,7 @@ Pantone data when available:
 Use this JSON shape for optional libraries:
 
 ```json
-[
-  { "code": "Example 100 U", "name": "Example 100 U", "hex": "ffffff" }
-]
+[{ "code": "Example 100 U", "name": "Example 100 U", "hex": "ffffff" }]
 ```
 
 `code` is optional; when omitted, `name` is used as the lookup code. Only add

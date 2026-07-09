@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FileImage, Trash2 } from "lucide-react";
+import { ArrowUpRight, FileImage, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,13 +15,20 @@ import type { Canvas } from "@/lib/store";
 function CanvasSummary({ canvas }: { canvas: Canvas }) {
   return (
     <>
-      <div className="flex items-center gap-2">
-        <FileImage className="text-muted-foreground size-4 shrink-0" />
-        <span className="truncate font-medium">{canvas.name}</span>
+      <div className="flex items-start gap-3">
+        <span className="bg-secondary text-secondary-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
+          <FileImage className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium">{canvas.name}</span>
+          <span className="text-muted-foreground mt-1 block text-xs">
+            {canvas.content.nodes.length} node
+            {canvas.content.nodes.length === 1 ? "" : "s"} - Updated {formatDate(canvas.updatedAt)}
+          </span>
+        </span>
       </div>
-      <span className="text-muted-foreground text-xs">
-        {canvas.content.nodes.length} node
-        {canvas.content.nodes.length === 1 ? "" : "s"} · Updated {formatDate(canvas.updatedAt)}
+      <span className="text-primary mt-auto inline-flex items-center gap-1 text-xs font-medium">
+        Open canvas <ArrowUpRight className="size-3.5" />
       </span>
     </>
   );
@@ -44,24 +51,24 @@ function CanvasCard({
   }
 
   return (
-    <div className="group hover:bg-muted/40 relative flex flex-col gap-2 rounded-lg border p-4 transition-colors">
+    <div className="group bg-card hover:border-primary/30 relative flex min-h-28 flex-col gap-3 rounded-lg border p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       {onOpen ? (
         <button
           type="button"
           onClick={() => onOpen(canvas.id)}
-          className="flex flex-col gap-2 pr-8 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="focus-visible:ring-ring flex flex-1 flex-col gap-3 rounded-md pr-9 text-left outline-none focus-visible:ring-2"
         >
           <CanvasSummary canvas={canvas} />
         </button>
       ) : (
         <Link
           href={`/projects/${projectId}/canvases/${canvas.id}`}
-          className="flex flex-col gap-2 pr-8"
+          className="focus-visible:ring-ring flex flex-1 flex-col gap-3 rounded-md pr-9 outline-none focus-visible:ring-2"
         >
           <CanvasSummary canvas={canvas} />
         </Link>
       )}
-      <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="absolute top-3 right-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
         <ConfirmDialog
           title="Delete canvas?"
           description="This permanently deletes the canvas."
@@ -91,9 +98,14 @@ export function CanvasList({
   const { data: canvases, isLoading, isError, error } = useCanvases(projectId);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Canvases</h2>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Project assets
+          </p>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight">Canvases</h2>
+        </div>
         <CreateCanvasDialog
           projectId={projectId}
           redirectOnCreate={redirectOnCreate}
@@ -104,11 +116,11 @@ export function CanvasList({
       {isLoading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 2 }).map((_, i) => (
-            <Skeleton key={i} className="h-20 rounded-lg" />
+            <Skeleton key={i} className="h-28 rounded-lg" />
           ))}
         </div>
       ) : isError ? (
-        <p className="text-destructive text-sm">
+        <p className="border-destructive/30 bg-destructive/10 text-destructive rounded-lg border p-4 text-sm">
           Failed to load canvases: {error instanceof Error ? error.message : "unknown error"}
         </p>
       ) : canvases && canvases.length > 0 ? (
@@ -118,9 +130,19 @@ export function CanvasList({
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-16 text-center">
+        <div className="bg-card flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-8 text-center shadow-sm">
+          <div className="bg-secondary text-secondary-foreground flex size-11 items-center justify-center rounded-lg">
+            <FileImage className="size-5" />
+          </div>
           <p className="font-medium">No canvases yet</p>
-          <p className="text-muted-foreground text-sm">Create a canvas to start arranging nodes.</p>
+          <p className="text-muted-foreground max-w-sm text-sm">
+            Create a canvas to start arranging notes, references, colors, and generation nodes.
+          </p>
+          <CreateCanvasDialog
+            projectId={projectId}
+            redirectOnCreate={redirectOnCreate}
+            onCreated={(canvas) => onCanvasCreated?.(canvas.id)}
+          />
         </div>
       )}
     </div>

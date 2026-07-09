@@ -2,7 +2,16 @@ import type { Edge, Node } from "@xyflow/react";
 import type { PantoneCatalog } from "./pantone";
 
 /** Registered canvas node type identifiers (kept in sync with the registry). */
-export type NodeType = "note" | "image" | "group" | "generate" | "suppler" | "action" | "pantone";
+export type NodeType =
+  | "note"
+  | "image"
+  | "group"
+  | "imageInput"
+  | "generate"
+  | "imageOutput"
+  | "suppler"
+  | "action"
+  | "pantone";
 
 // ── Per-type node data ───────────────────────────────────────────────────
 // Each carries an index signature so the type satisfies React Flow v12's
@@ -18,6 +27,16 @@ export interface NoteNodeData {
 export interface ImageNodeData {
   url: string | null;
   alt?: string;
+  /** Node size in pixels; set by the resize handle. Absent = type default. */
+  width?: number;
+  height?: number;
+  [key: string]: unknown;
+}
+
+export interface InputNodeData {
+  alias: string;
+  imageUrl: string | null;
+  storagePath?: string | null;
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
   height?: number;
@@ -40,6 +59,18 @@ export interface GenerateNodeData {
   references: string[];
   status: "idle" | "loading" | "error" | "done";
   resultUrl: string | null;
+  error?: string;
+  /** Node size in pixels; set by the resize handle. Absent = type default. */
+  width?: number;
+  height?: number;
+  [key: string]: unknown;
+}
+
+export interface OutputNodeData {
+  resultUrl: string | null;
+  prompt?: string;
+  model?: string;
+  status: "idle" | "loading" | "error" | "done";
   error?: string;
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
@@ -73,6 +104,7 @@ export interface PantoneNodeData {
   name: string | null;
   hex: string | null;
   catalog?: PantoneCatalog | null;
+  catalogFilter?: PantoneCatalog | null;
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
   height?: number;
@@ -93,8 +125,10 @@ export const EMPTY_CANVAS_CONTENT: CanvasContent = { nodes: [], edges: [] };
 // ── Per-type node shapes for typed components ────────────────────────────
 export type NoteCanvasNode = Node<NoteNodeData, "note">;
 export type ImageCanvasNode = Node<ImageNodeData, "image">;
+export type InputCanvasNode = Node<InputNodeData, "imageInput">;
 export type GroupCanvasNode = Node<GroupNodeData, "group">;
 export type GenerateCanvasNode = Node<GenerateNodeData, "generate">;
+export type OutputCanvasNode = Node<OutputNodeData, "imageOutput">;
 export type SupplerCanvasNode = Node<SupplerNodeData, "suppler">;
 export type ActionCanvasNode = Node<ActionNodeData, "action">;
 export type PantoneCanvasNode = Node<PantoneNodeData, "pantone">;

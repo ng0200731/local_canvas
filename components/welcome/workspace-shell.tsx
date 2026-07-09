@@ -6,9 +6,11 @@ import {
   ChevronDown,
   ChevronLeft,
   FolderKanban,
+  Layers3,
   Menu,
   PackageSearch,
   PanelLeftClose,
+  Users,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -16,10 +18,11 @@ import { CanvasEditor } from "@/components/canvas/canvas-editor";
 import { CanvasList } from "@/components/projects/canvas-list";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { ProjectList } from "@/components/projects/project-list";
+import { EntityWorkspacePanel } from "@/components/welcome/entity-workspace-panel";
 import { cn } from "@/lib/utils";
 
-type SectionId = "product" | "supplier" | "project";
-type TabId = "product" | "customer" | "project";
+type SectionId = "customer" | "product" | "supplier" | "project";
+type TabId = "customer" | "product" | "supplier" | "project";
 
 interface MenuItem {
   label: string;
@@ -41,6 +44,16 @@ interface WorkspaceTab {
 
 const sections: MenuSection[] = [
   {
+    id: "customer",
+    label: "Customer",
+    icon: Users,
+    tab: "customer",
+    items: [
+      { label: "New", tab: "customer" },
+      { label: "View / edit", tab: "customer" },
+    ],
+  },
+  {
     id: "product",
     label: "Product",
     icon: Boxes,
@@ -54,10 +67,10 @@ const sections: MenuSection[] = [
     id: "supplier",
     label: "Supplier",
     icon: PackageSearch,
-    tab: "customer",
+    tab: "supplier",
     items: [
-      { label: "New", tab: "customer" },
-      { label: "View / edit", tab: "customer" },
+      { label: "New", tab: "supplier" },
+      { label: "View / edit", tab: "supplier" },
     ],
   },
   {
@@ -73,26 +86,11 @@ const sections: MenuSection[] = [
 ];
 
 const tabLabels: Record<TabId, string> = {
-  product: "Product",
-  customer: "Customer",
+  customer: "Customer +",
+  product: "Product +",
+  supplier: "Supplier +",
   project: "Project",
 };
-
-function PlaceholderPanel({ title }: { title: string }) {
-  return (
-    <div className="flex h-full min-h-72 flex-col border border-dashed p-5">
-      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
-        <div className="border p-4">
-          <p className="text-sm font-medium">New</p>
-        </div>
-        <div className="border p-4">
-          <p className="text-sm font-medium">View / edit</p>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ProjectWorkspacePanel({
   selectedProjectId,
@@ -131,12 +129,12 @@ function ProjectWorkspacePanel({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col">
+    <div className="mx-auto flex w-full max-w-6xl flex-col">
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="mb-4 w-fit"
+        className="mb-5 w-fit"
         onClick={onBackToProjects}
       >
         <ChevronLeft />
@@ -184,8 +182,9 @@ function renderTabContent({
       />
     );
   }
-  if (tabId === "customer") return <PlaceholderPanel title="Customer" />;
-  return <PlaceholderPanel title="Product" />;
+  if (tabId === "customer") return <EntityWorkspacePanel kind="customer" />;
+  if (tabId === "supplier") return <EntityWorkspacePanel kind="supplier" />;
+  return <EntityWorkspacePanel kind="product" />;
 }
 
 export function WorkspaceShell({
@@ -259,19 +258,22 @@ export function WorkspaceShell({
     <main className="bg-background flex min-h-dvh flex-1 flex-col md:flex-row">
       <aside
         className={cn(
-          "bg-muted/20 flex shrink-0 flex-col border-b p-3 transition-[width] md:border-r md:border-b-0",
-          isMenuCollapsed ? "md:w-14" : "md:w-[20%]",
+          "bg-sidebar text-sidebar-foreground flex shrink-0 flex-col border-b p-3 transition-[width] md:border-r md:border-b-0",
+          isMenuCollapsed ? "md:w-16" : "md:w-72",
         )}
       >
-        <div className={cn("mb-4 flex items-start gap-2", isMenuCollapsed && "justify-center")}>
+        <div className={cn("mb-5 flex items-start gap-2", isMenuCollapsed && "justify-center")}>
           {!isMenuCollapsed ? (
-            <div className="min-w-0 flex-1 px-2">
-              <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                Welcome
-              </p>
-              <h1 className="mt-1 truncate text-xl font-semibold tracking-tight">
-                Infinite Canvas
-              </h1>
+            <div className="flex min-w-0 flex-1 items-center gap-3 px-1">
+              <span className="bg-sidebar-primary text-sidebar-primary-foreground flex size-9 shrink-0 items-center justify-center rounded-lg">
+                <Layers3 className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                  Studio
+                </p>
+                <h1 className="truncate text-lg font-semibold tracking-tight">Infinite Canvas</h1>
+              </div>
             </div>
           ) : null}
           <Button
@@ -298,17 +300,17 @@ export function WorkspaceShell({
                   title={isMenuCollapsed ? section.label : undefined}
                   onClick={() => selectSection(section)}
                   className={cn(
-                    "focus-visible:ring-ring flex h-9 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2",
+                    "focus-visible:ring-ring flex h-10 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2",
                     isMenuCollapsed && "justify-center",
                     isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "text-foreground hover:bg-muted",
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                   )}
                 >
                   <Icon
                     className={cn(
                       "size-4 shrink-0",
-                      isActive ? "text-primary-foreground" : "text-muted-foreground",
+                      isActive ? "text-sidebar-primary-foreground" : "text-muted-foreground",
                     )}
                   />
                   {!isMenuCollapsed ? (
@@ -325,7 +327,7 @@ export function WorkspaceShell({
                 </button>
 
                 {isExpanded && !isMenuCollapsed ? (
-                  <div className="ml-4 flex flex-col gap-1 border-l pl-2">
+                  <div className="border-sidebar-border ml-4 flex flex-col gap-1 border-l pl-2">
                     {section.items.map((item) => (
                       <button
                         key={`${section.id}-${item.label}`}
@@ -334,8 +336,8 @@ export function WorkspaceShell({
                         className={cn(
                           "focus-visible:ring-ring flex h-8 items-center rounded-md px-2 text-left text-sm transition-colors outline-none focus-visible:ring-2",
                           activeTab === item.tab
-                            ? "bg-muted text-foreground"
-                            : "text-muted-foreground hover:bg-primary hover:text-primary-foreground hover:ring-primary/30 hover:ring-1",
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                            : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                         )}
                       >
                         {item.label}
@@ -349,15 +351,22 @@ export function WorkspaceShell({
         </nav>
 
         {!isMenuCollapsed ? (
-          <div className="text-muted-foreground mt-auto px-2 pt-4 text-xs">
-            {isSupabaseConfigured ? "Supabase connected" : "Local/demo mode"} ·{" "}
-            {isFalConfigured ? "AI on" : "AI off"}
+          <div className="border-sidebar-border bg-background/50 mt-auto flex flex-col gap-2 rounded-lg border p-3 text-xs">
+            <span className="text-muted-foreground font-medium">Runtime</span>
+            <div className="flex flex-wrap gap-2">
+              <span className="bg-sidebar-accent rounded-md px-2 py-1">
+                {isSupabaseConfigured ? "Cloud sync" : "Local mode"}
+              </span>
+              <span className="bg-sidebar-accent rounded-md px-2 py-1">
+                {isFalConfigured ? "AI enabled" : "AI disabled"}
+              </span>
+            </div>
           </div>
         ) : null}
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col md:w-[80%]">
-        <div className="flex h-11 shrink-0 items-end gap-1 border-b px-3">
+      <section className="flex min-w-0 flex-1 flex-col">
+        <div className="bg-background/80 supports-[backdrop-filter]:bg-background/65 flex h-12 shrink-0 items-end gap-1 border-b px-4 backdrop-blur">
           {tabs.length > 0 ? (
             tabs.map((tab) => (
               <button
@@ -371,21 +380,21 @@ export function WorkspaceShell({
                   }
                 }}
                 className={cn(
-                  "focus-visible:ring-ring h-8 rounded-t-md border border-b-0 px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2",
+                  "focus-visible:ring-ring h-9 rounded-t-md border border-b-0 px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2",
                   activeTab === tab.id
-                    ? "bg-background text-foreground"
-                    : "bg-muted/40 text-muted-foreground hover:bg-muted",
+                    ? "bg-background text-foreground shadow-sm"
+                    : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
                 {tab.label}
               </button>
             ))
           ) : (
-            <span className="text-muted-foreground mb-2 text-sm">Workspace</span>
+            <span className="text-muted-foreground mb-3 text-sm font-medium">Workspace</span>
           )}
         </div>
 
-        <div className={cn("min-h-0 flex-1 overflow-auto", selectedCanvasId ? "p-0" : "p-5")}>
+        <div className={cn("min-h-0 flex-1 overflow-auto", selectedCanvasId ? "p-0" : "p-6")}>
           {activeTab ? (
             renderTabContent({
               tabId: activeTab,
@@ -397,9 +406,14 @@ export function WorkspaceShell({
               onBackToProjectDetail: () => setSelectedCanvasId(null),
             })
           ) : (
-            <div className="flex h-full min-h-72 flex-col justify-center">
-              <p className="text-muted-foreground text-sm font-medium">Workspace</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight">Infinite Canvas</h2>
+            <div className="mx-auto flex h-full min-h-96 w-full max-w-4xl flex-col justify-center">
+              <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                Workspace
+              </p>
+              <h2 className="mt-2 text-4xl font-semibold tracking-tight">Infinite Canvas</h2>
+              <p className="text-muted-foreground mt-3 max-w-xl text-sm leading-6">
+                Choose an area from the sidebar to create, review, or open project canvases.
+              </p>
             </div>
           )}
         </div>

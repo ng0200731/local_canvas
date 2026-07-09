@@ -11,8 +11,8 @@ export function DemoBanner() {
   if (!usingLocalStore || dismissed) return null;
 
   return (
-    <div className="flex items-center justify-center gap-3 border-b bg-amber-100 px-4 py-2 text-center text-xs text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
-      <span>
+    <div className="bg-accent/65 text-accent-foreground flex items-center justify-center gap-3 border-b px-4 py-2 text-center text-xs">
+      <span className="leading-5">
         <strong>Demo mode:</strong> projects are saved in this browser only. Add Supabase keys (
         <code>.env.local</code>) to sync to the cloud.
       </span>
@@ -20,7 +20,7 @@ export function DemoBanner() {
         type="button"
         aria-label="Dismiss"
         onClick={() => setDismissed(true)}
-        className="shrink-0 opacity-70 hover:opacity-100"
+        className="focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity outline-none hover:opacity-100 focus-visible:ring-2"
       >
         <X className="size-3.5" />
       </button>

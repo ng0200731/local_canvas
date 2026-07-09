@@ -5,11 +5,39 @@ import { useReactFlow } from "@xyflow/react";
 
 import { DEFAULT_EDGE_COLOR } from "@/lib/nodes/ports";
 
+export interface ConnectedImageReference {
+  nodeId: string;
+  kind: "image";
+  alias: string;
+  label: string;
+  imageUrl: string;
+}
+
+export interface ConnectedPantoneReference {
+  nodeId: string;
+  kind: "pantone";
+  alias: string;
+  label: string;
+  swatchHex: string;
+}
+
+export type ConnectedInputReference = ConnectedImageReference | ConnectedPantoneReference;
+
 export interface CanvasActions {
   /** Patch a node's data object (shallow merge). */
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
-  /** Spawn an image node next to `parentId` carrying `url` (e.g. a generation result). */
-  spawnImageNode: (parentId: string, url: string, meta: { prompt: string; model: string }) => void;
+  /** Return image inputs connected to a node, used as named generation references. */
+  getConnectedInputReferences: (nodeId: string) => ConnectedInputReference[];
+  /** True when a Generate node is connected to an Output node. */
+  hasConnectedOutputNode: (generateNodeId: string) => boolean;
+  /** Patch the Output node connected to a Generate node. Returns false when no Output is wired. */
+  updateConnectedOutputData: (generateNodeId: string, patch: Record<string, unknown>) => boolean;
+  /** Store a generated image URL on the connected Output node and record it in image history. */
+  writeGeneratedImageToOutput: (
+    generateNodeId: string,
+    url: string,
+    meta: { prompt: string; model: string },
+  ) => boolean;
   /** Remove a node and any wires connected to it. */
   deleteNode: (id: string) => void;
   /** Remove a single wire (edge) between nodes. */

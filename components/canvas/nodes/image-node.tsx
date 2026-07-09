@@ -5,6 +5,7 @@ import { type NodeProps } from "@xyflow/react";
 import { ImageIcon, Link2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { ImageCanvasNode } from "@/lib/nodes/types";
 import { uploadImage } from "@/lib/upload";
@@ -16,7 +17,7 @@ import { ResizeHandle } from "./resize-handle";
 const DEFAULT_WIDTH = 224;
 const DEFAULT_HEIGHT = 160;
 
-export function ImageNode({ id, data, parentId }: NodeProps<ImageCanvasNode>) {
+export function ImageNode({ id, data, parentId, selected }: NodeProps<ImageCanvasNode>) {
   const { updateNodeData } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
@@ -46,7 +47,10 @@ export function ImageNode({ id, data, parentId }: NodeProps<ImageCanvasNode>) {
         ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
         ...highlight,
       }}
-      className="group bg-card relative flex flex-col overflow-hidden rounded-md border shadow-sm"
+      className={cn(
+        "group bg-card relative flex flex-col overflow-hidden rounded-lg border shadow-md",
+        selected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
+      )}
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.image} />
@@ -69,7 +73,7 @@ export function ImageNode({ id, data, parentId }: NodeProps<ImageCanvasNode>) {
               src={data.url}
               alt={data.alt ?? ""}
               draggable={false}
-              className="min-h-0 min-w-0 h-full w-full cursor-pointer object-contain"
+              className="h-full min-h-0 w-full min-w-0 cursor-pointer object-contain"
               onClick={() => inputRef.current?.click()}
             />
             {/* Reference drag handle: drag onto a Generate node's reference slot.
@@ -78,7 +82,7 @@ export function ImageNode({ id, data, parentId }: NodeProps<ImageCanvasNode>) {
               type="button"
               draggable
               title="Drag onto a Generate node to use as a reference image"
-              className="nodrag bg-background/80 absolute top-1 right-1 flex size-6 cursor-grab items-center justify-center rounded backdrop-blur-sm active:cursor-grabbing"
+              className="nodrag bg-background/85 focus-visible:ring-ring absolute top-2 right-2 flex size-7 cursor-grab items-center justify-center rounded-md border shadow-sm backdrop-blur-sm outline-none focus-visible:ring-2 active:cursor-grabbing"
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/ica-image-url", data.url!);
                 e.dataTransfer.effectAllowed = "link";
@@ -93,7 +97,7 @@ export function ImageNode({ id, data, parentId }: NodeProps<ImageCanvasNode>) {
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className="text-muted-foreground hover:text-foreground flex flex-col items-center gap-1"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-h-24 min-w-28 flex-col items-center justify-center gap-1 rounded-md transition-colors outline-none focus-visible:ring-2"
           >
             <ImageIcon className="size-6" />
             <span className="px-2 text-center text-xs">Click or drop an image</span>

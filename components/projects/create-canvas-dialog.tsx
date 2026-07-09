@@ -56,13 +56,13 @@ export function CreateCanvasDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
         render={
-          <Button size="sm">
+          <Button size="sm" className="shadow-sm">
             <Plus /> New canvas
           </Button>
         }
       />
-      <DialogContent>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={onSubmit} className="flex flex-col gap-5">
           <DialogHeader>
             <DialogTitle>New canvas</DialogTitle>
             <DialogDescription>An infinite canvas where you arrange nodes.</DialogDescription>
@@ -81,7 +81,7 @@ export function CreateCanvasDialog({
           <DialogFooter>
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={create.isPending || !name.trim()}>
-              {create.isPending ? "Creating…" : "Create"}
+              {create.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </form>

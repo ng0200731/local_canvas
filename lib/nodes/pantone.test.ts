@@ -4,6 +4,7 @@ import {
   findPantoneColor,
   normalizePantoneQuery,
   parsePantoneDataset,
+  parsePantoneLibraryDatasetForTest,
   parsePantoneSolidCoatedDataset,
   searchPantoneColors,
 } from "./pantone";
@@ -18,6 +19,10 @@ const colors = parsePantoneDataset({
     { name: "Warm Red C", hex: "F9423A" },
     { name: "Rubine Red C", hex: "CE0058" },
   ]),
+  parsePantoneLibraryDatasetForTest(
+    [{ code: "Red 032 U", name: "Red 032 U", hex: "F65058" }],
+    "solid-uncoated",
+  ),
 );
 
 describe("pantone color helpers", () => {
@@ -39,6 +44,12 @@ describe("pantone color helpers", () => {
     expect(findPantoneColor(colors, "Red 032 C")?.hex).toBe("#ef3340");
     expect(findPantoneColor(colors, "Red032C")?.code).toBe("Red 032 C");
     expect(findPantoneColor(colors, "032")?.code).toBe("Red 032 C");
+  });
+
+  it("finds Solid Uncoated colors and prefers U suffix matches", () => {
+    const result = findPantoneColor(colors, "Red 032 U");
+    expect(result?.code).toBe("Red 032 U");
+    expect(result?.catalog).toBe("solid-uncoated");
   });
 
   it("fuzzily tolerates close Solid Coated names", () => {

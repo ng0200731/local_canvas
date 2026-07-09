@@ -7,8 +7,10 @@ import type { NodeType } from "./types";
 export const NODE_PORT_COLORS: Record<NodeType, string> = {
   note: "#f59e0b", // amber
   image: "#10b981", // green
+  imageInput: "#06b6d4", // cyan
   group: "#94a3b8", // slate
   generate: "#a855f7", // purple
+  imageOutput: "#84cc16", // lime
   suppler: "#0ea5e9", // sky
   action: "#f43f5e", // rose
   pantone: "#f97316", // orange

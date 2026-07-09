@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Folder, Trash2 } from "lucide-react";
+import { ArrowUpRight, Folder, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,43 +25,60 @@ export function ProjectCard({
   }
 
   return (
-    <div className="group hover:bg-muted/40 relative flex flex-col gap-2 rounded-lg border p-4 transition-colors">
+    <div className="group bg-card hover:border-primary/30 relative flex min-h-32 flex-col gap-3 rounded-lg border p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       {onOpen ? (
         <button
           type="button"
           onClick={() => onOpen(project.id)}
-          className="flex flex-col gap-2 pr-8 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="focus-visible:ring-ring flex flex-1 flex-col gap-3 rounded-md pr-9 text-left outline-none focus-visible:ring-2"
         >
-          <div className="flex items-center gap-2">
-            <Folder className="text-muted-foreground size-4 shrink-0" />
-            <span className="truncate font-medium">{project.name}</span>
+          <div className="flex items-start gap-3">
+            <span className="bg-accent text-accent-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
+              <Folder className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{project.name}</span>
+              <span className="text-muted-foreground mt-1 block text-xs">
+                Updated {formatDate(project.updatedAt)}
+              </span>
+            </span>
           </div>
           {project.description && (
-            <span className="text-muted-foreground line-clamp-1 text-xs">
+            <span className="text-muted-foreground line-clamp-2 text-sm leading-5">
               {project.description}
             </span>
           )}
-          <span className="text-muted-foreground text-xs">
-            Updated {formatDate(project.updatedAt)}
+          <span className="text-primary mt-auto inline-flex items-center gap-1 text-xs font-medium">
+            Open project <ArrowUpRight className="size-3.5" />
           </span>
         </button>
       ) : (
-        <Link href={`/projects/${project.id}`} className="flex flex-col gap-2 pr-8">
-          <div className="flex items-center gap-2">
-            <Folder className="text-muted-foreground size-4 shrink-0" />
-            <span className="truncate font-medium">{project.name}</span>
+        <Link
+          href={`/projects/${project.id}`}
+          className="focus-visible:ring-ring flex flex-1 flex-col gap-3 rounded-md pr-9 outline-none focus-visible:ring-2"
+        >
+          <div className="flex items-start gap-3">
+            <span className="bg-accent text-accent-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
+              <Folder className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{project.name}</span>
+              <span className="text-muted-foreground mt-1 block text-xs">
+                Updated {formatDate(project.updatedAt)}
+              </span>
+            </span>
           </div>
           {project.description && (
-            <span className="text-muted-foreground line-clamp-1 text-xs">
+            <span className="text-muted-foreground line-clamp-2 text-sm leading-5">
               {project.description}
             </span>
           )}
-          <span className="text-muted-foreground text-xs">
-            Updated {formatDate(project.updatedAt)}
+          <span className="text-primary mt-auto inline-flex items-center gap-1 text-xs font-medium">
+            Open project <ArrowUpRight className="size-3.5" />
           </span>
         </Link>
       )}
-      <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="absolute top-3 right-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
         <ConfirmDialog
           title="Delete project?"
           description="This permanently deletes the project and all of its canvases."
