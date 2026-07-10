@@ -69,4 +69,67 @@ describe("localCanvasStore", () => {
     expect(await localCanvasStore.getProject("nope")).toBeNull();
     expect(await localCanvasStore.getCanvas("nope")).toBeNull();
   });
+
+  it("does not duplicate inline image payloads in image metadata", async () => {
+    const dataUrl = `data:image/png;base64,${"a".repeat(10_000)}`;
+
+    const record = await localCanvasStore.recordImage({
+      source: "generated",
+      url: dataUrl,
+      prompt: "A test image",
+      model: "test-model",
+    });
+
+    expect(record.url).toBe(dataUrl);
+    expect(localStorage.getItem("ica:images")).toBeNull();
+  });
+
+  it("removes legacy inline payloads when recording an inline image", async () => {
+    localStorage.setItem(
+      "ica:images",
+      JSON.stringify([
+        {
+          id: "legacy-inline",
+          canvasId: null,
+          source: "generated",
+          url: "data:image/png;base64,legacy",
+          storagePath: null,
+          prompt: null,
+          model: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "remote",
+          canvasId: null,
+          source: "generated",
+          url: "https://example.com/image.png",
+          storagePath: null,
+          prompt: null,
+          model: null,
+          createdAt: "2026-01-02T00:00:00.000Z",
+        },
+      ]),
+    );
+
+    await localCanvasStore.recordImage({
+      source: "generated",
+      url: "data:image/png;base64,new",
+    });
+
+    const stored = JSON.parse(localStorage.getItem("ica:images") ?? "[]") as Array<{
+      id: string;
+    }>;
+    expect(stored).toEqual([
+      {
+        id: "remote",
+        canvasId: null,
+        source: "generated",
+        url: "https://example.com/image.png",
+        storagePath: null,
+        prompt: null,
+        model: null,
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+    ]);
+  });
 });

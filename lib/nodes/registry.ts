@@ -1,3 +1,4 @@
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "@/lib/image-generation-models";
 import type { CanvasNode, NodeType } from "./types";
 
 export interface NodeMeta {
@@ -72,7 +73,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     palette: true,
     defaultData: () => ({
       prompt: "",
-      model: "flux",
+      model: DEFAULT_IMAGE_GENERATION_MODEL,
       references: [],
       status: "idle",
       resultUrl: null,

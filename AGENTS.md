@@ -9,7 +9,7 @@ Guidance for any AI (or human) working in this repo. Follow these exactly.
 - **`@xyflow/react` v12** — the canvas
 - **Zustand** — client canvas/UI state · **TanStack Query v5** — server state
 - **Supabase** (`@supabase/ssr` server + `@supabase/supabase-js` browser) — auth, Postgres, Storage
-- **Fal.ai** (`@fal-ai/serverless-client`, server-only) — image generation
+- **Xiangsu AI** (server-only REST client) — image generation
 - **Zod** — validation at every boundary · **Vitest** — pure-logic tests
 - Package manager: **pnpm**
 
@@ -19,7 +19,7 @@ Guidance for any AI (or human) working in this repo. Follow these exactly.
 2. **Validate at every boundary** with Zod: env vars (`lib/env.ts`), API request bodies, external API responses.
 3. **Tailwind only.** No inline CSS, no CSS modules (except `app/globals.css` for theme tokens). Use shadcn/ui primitives; compose, don't fork them.
 4. **Reusable components, no duplication.** If you're about to write something twice, extract it.
-5. **Keep secrets server-side.** API keys (`FAL_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) live only in Route Handlers / Server Components / Server Actions — never in client code and never `NEXT_PUBLIC_`.
+5. **Keep secrets server-side.** API keys (`XIANGSU_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) live only in Route Handlers / Server Components / Server Actions — never in client code and never `NEXT_PUBLIC_`.
 6. **Separate business logic from UI.** Pure logic (serialization, validation, store adapters) lives in `lib/`, fully typed and unit-testable. Components stay presentational + thin hooks.
 7. **Typed interfaces everywhere.** Define explicit interfaces/types for props, store shapes, and node data.
 8. **Always render states:** loading, empty, error. Use optimistic updates for mutations.

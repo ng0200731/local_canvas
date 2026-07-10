@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import type { ImageGenerationModelId } from "@/lib/image-generation-models";
 import type { PantoneCatalog } from "./pantone";
 
 /** Registered canvas node type identifiers (kept in sync with the registry). */
@@ -55,7 +56,7 @@ export interface GroupNodeData {
 
 export interface GenerateNodeData {
   prompt: string;
-  model: string;
+  model: ImageGenerationModelId;
   references: string[];
   status: "idle" | "loading" | "error" | "done";
   resultUrl: string | null;

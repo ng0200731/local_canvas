@@ -21,7 +21,7 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 | ------------------------------------------------------------ | ----------------------------------------------------------- |
 | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Enables auth + cloud Postgres persistence + Storage uploads |
 | `SUPABASE_SERVICE_ROLE_KEY`                                  | Server-only admin access (storage deletes, etc.)            |
-| `FAL_KEY`                                                    | Enables AI image generation via Fal.ai                      |
+| `XIANGSU_API_KEY`                                            | Enables server-side image generation via Xiangsu AI         |
 | `NEXT_PUBLIC_APP_URL`                                        | Public app URL (defaults to `http://localhost:3000`)        |
 
 ## Enabling Supabase
@@ -35,8 +35,8 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 
 ## Enabling AI generation
 
-1. Get a key at https://fal.ai/dashboard/keys.
-2. Add `FAL_KEY=...` to `.env.local`.
+1. Obtain a Xiangsu API key and rotate any key that has been exposed publicly.
+2. Add `XIANGSU_API_KEY=...` to `.env.local`.
 3. Restart. Generate nodes now produce images.
 
 ## Scripts

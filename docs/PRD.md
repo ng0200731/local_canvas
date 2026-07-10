@@ -16,8 +16,8 @@ polished, shareable ComfyUI/Krea for the web.
 4. **Nodes** — `Note`, `Image`, `Group`, and `Generate` (prompt + model + reference slots).
 5. **Image upload** — upload images to a node; drag an image onto a Generate node's
    reference slot.
-6. **AI generation** — Generate node calls Fal.ai (text-to-image via Flux, image-to-image
-   via Flux Kontext) server-side; result becomes an Image node.
+6. **AI generation** — Generate node calls Xiangsu AI server-side with a selectable
+   image model; the result is written to a connected Output node.
 
 ## Explicitly out of scope (future milestones)
 
@@ -30,8 +30,8 @@ polished, shareable ComfyUI/Krea for the web.
 
 - **New user:** sign up → land on empty dashboard → create a project → open a canvas →
   drop a Generate node → type a prompt → generate → image appears.
-- **Reference-image flow:** drop an Image node, upload an image → drag the image handle
-  onto a Generate node's reference slot → generate an edit/variation.
+- **Reference-image flow:** connect or drop up to 14 image references, describe the
+  desired edit/composition, and generate a result guided by those images.
 - **Persistence:** edits autosave; reloading restores the canvas (localStorage in demo
   mode, Supabase Postgres when configured).
 
@@ -39,6 +39,6 @@ polished, shareable ComfyUI/Krea for the web.
 
 - Signup / login; create + delete a project; open a canvas.
 - Add, drag, resize nodes; connect image → generate reference.
-- Upload an image; generate an image from a prompt and from a reference image.
+- Upload an image; generate from a prompt alone or from connected reference images.
 - Reload → canvas state is restored.
 - App runs with **zero env keys** (local mode) and upgrades cleanly as keys are added.

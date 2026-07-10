@@ -19,13 +19,15 @@ matching key in `.env.local`.
 - [ ] Type in a Note node; the text persists after a full page reload (autosave → localStorage).
 - [ ] **Image node**: click or drop an image file → it appears (resized); reload persists it.
 - [ ] Drag an Image node’s reference handle (top-right link icon) onto a **Generate** node’s reference slot → it’s listed there.
-- [ ] **Generate** node: with no `FAL_KEY`, the Generate button is disabled with a hint.
+- [ ] **Generate** node: with no `XIANGSU_API_KEY`, generation returns a clear setup error.
 - [ ] Delete a project from the dashboard → its canvases are gone too.
 
-## With `FAL_KEY` 🔑
+## With `XIANGSU_API_KEY`
 
-- [ ] Generate node (text → image): enter a prompt, Generate → an image node appears next to it.
-- [ ] Generate node (Kontext edit): add a reference image, prompt an edit → result image appears.
+- [ ] Generate node: all supplied aliases appear; text/video entries are visible but disabled.
+- [ ] Generate node: select an image model, enter a prompt, connect Output, then Generate.
+- [ ] Output node: generated image appears with drag-reference and download actions.
+- [ ] Generate node: connected/dropped reference images are forwarded to image generation.
 
 ## With Supabase keys 🔑 (run `supabase/migrations/0001_init.sql` first)
 

@@ -189,10 +189,10 @@ function renderTabContent({
 
 export function WorkspaceShell({
   isSupabaseConfigured,
-  isFalConfigured,
+  isImageGenerationConfigured,
 }: {
   isSupabaseConfigured: boolean;
-  isFalConfigured: boolean;
+  isImageGenerationConfigured: boolean;
 }) {
   const [expanded, setExpanded] = useState<SectionId | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId | null>(null);
@@ -358,7 +358,7 @@ export function WorkspaceShell({
                 {isSupabaseConfigured ? "Cloud sync" : "Local mode"}
               </span>
               <span className="bg-sidebar-accent rounded-md px-2 py-1">
-                {isFalConfigured ? "AI enabled" : "AI disabled"}
+                {isImageGenerationConfigured ? "AI enabled" : "AI disabled"}
               </span>
             </div>
           </div>

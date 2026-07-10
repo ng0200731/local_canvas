@@ -64,7 +64,15 @@ function usePortHighlight(position: "left" | "right", ownColor: string) {
   };
 }
 
-export function InputPort({ color }: { color: string }) {
+export function InputPort({
+  color,
+  top = "2%",
+  zIndex,
+}: {
+  color: string;
+  top?: CSSProperties["top"];
+  zIndex?: number;
+}) {
   const { style: highlight, hoverProps } = usePortHighlight("left", color);
   return (
     <Handle
@@ -74,7 +82,8 @@ export function InputPort({ color }: { color: string }) {
       {...hoverProps}
       style={{
         ...BASE_STYLE,
-        top: "2%",
+        top,
+        ...(zIndex === undefined ? {} : { zIndex }),
         transform: "translate(0, 0)",
         background: color,
         ...highlight,

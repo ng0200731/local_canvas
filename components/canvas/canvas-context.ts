@@ -6,6 +6,7 @@ import { useReactFlow } from "@xyflow/react";
 import { DEFAULT_EDGE_COLOR } from "@/lib/nodes/ports";
 
 export interface ConnectedImageReference {
+  edgeId: string;
   nodeId: string;
   kind: "image";
   alias: string;
@@ -14,6 +15,7 @@ export interface ConnectedImageReference {
 }
 
 export interface ConnectedPantoneReference {
+  edgeId: string;
   nodeId: string;
   kind: "pantone";
   alias: string;

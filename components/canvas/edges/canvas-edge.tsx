@@ -36,11 +36,12 @@ export function DeletableEdge({
         <button
           type="button"
           aria-label="Delete connection"
+          title="Delete connection"
           onClick={(e) => {
             e.stopPropagation();
             deleteEdge(id);
           }}
-          className="nodrag nopan bg-background text-muted-foreground hover:text-destructive pointer-events-auto absolute flex size-4 items-center justify-center rounded-full border opacity-60 shadow-sm transition-opacity hover:opacity-100"
+          className="nodrag nopan bg-background text-muted-foreground hover:text-destructive pointer-events-auto absolute z-20 flex size-5 items-center justify-center rounded-full border shadow-sm transition-colors"
           style={{
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
           }}

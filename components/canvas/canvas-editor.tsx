@@ -26,6 +26,7 @@ import {
   useReactFlow,
   type Connection,
   type EdgeTypes,
+  type FinalConnectionState,
   type NodeChange,
   type NodeTypes,
   type OnConnectStartParams,
@@ -50,6 +51,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCanvas } from "@/lib/hooks/use-canvas";
+import { normalizeImageGenerationModel } from "@/lib/image-generation-models";
 import { getCanvasStore } from "@/lib/store";
 import { createNode } from "@/lib/nodes/registry";
 import {
@@ -87,6 +89,37 @@ type HoverTarget = {
   kind: "node" | "edge";
   id: string;
 } | null;
+
+interface ClientPoint {
+  x: number;
+  y: number;
+}
+
+interface NodeConnectionTarget {
+  nodeId: string;
+}
+
+function getClientPoint(event: MouseEvent | TouchEvent): ClientPoint | null {
+  if ("changedTouches" in event) {
+    const touch = event.changedTouches[0] ?? event.touches[0];
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+
+  return { x: event.clientX, y: event.clientY };
+}
+
+function findNodeConnectionTarget(
+  point: ClientPoint,
+  sourceNodeId: string,
+): NodeConnectionTarget | null {
+  const element = document.elementFromPoint(point.x, point.y);
+  const nodeElement = element?.closest<HTMLElement>(".react-flow__node");
+  const nodeId = nodeElement?.getAttribute("data-id");
+
+  if (!nodeElement || !nodeId || nodeId === sourceNodeId) return null;
+
+  return nodeElement.querySelector('[data-handleid="left"]') ? { nodeId } : null;
+}
 
 /**
  * Reorder so each parent appears before its children. React Flow paints nodes in
@@ -214,7 +247,14 @@ function findConnectedInputReferences(
           : "image";
 
       seen.add(otherNodeId);
-      references.push({ nodeId: otherNodeId, kind: "image", alias, label: alias, imageUrl });
+      references.push({
+        edgeId: edge.id,
+        nodeId: otherNodeId,
+        kind: "image",
+        alias,
+        label: alias,
+        imageUrl,
+      });
       continue;
     }
 
@@ -238,6 +278,7 @@ function findConnectedInputReferences(
 
       seen.add(otherNodeId);
       references.push({
+        edgeId: edge.id,
         nodeId: otherNodeId,
         kind: "pantone",
         alias,
@@ -251,8 +292,19 @@ function findConnectedInputReferences(
 }
 
 function normalizeNodeType(node: CanvasNode): CanvasNode {
-  if ((node.type as string) !== "output") return node;
-  return { ...node, type: "imageOutput" };
+  const normalizedType = (node.type as string) === "output" ? "imageOutput" : node.type;
+  if (normalizedType !== "generate") {
+    return normalizedType === node.type ? node : { ...node, type: normalizedType };
+  }
+
+  return {
+    ...node,
+    type: normalizedType,
+    data: {
+      ...node.data,
+      model: normalizeImageGenerationModel(node.data.model),
+    },
+  };
 }
 
 function Editor({
@@ -370,19 +422,24 @@ function Editor({
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const content: CanvasContent = { nodes, edges };
-      void getCanvasStore().saveCanvasContent(canvasId, content);
+      void getCanvasStore()
+        .saveCanvasContent(canvasId, content)
+        .catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : "Failed to autosave canvas");
+        });
     }, AUTOSAVE_DEBOUNCE_MS);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [nodes, edges, canvasId]);
 
-  const onConnect = useCallback(
+  const addCanvasConnection = useCallback(
     (connection: Connection) => {
       setEdges((eds) =>
         addEdge(
           {
             ...connection,
+            targetHandle: "left",
             type: "deletable",
             style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
           },
@@ -396,6 +453,8 @@ function Editor({
     [setEdges],
   );
 
+  const onConnect = addCanvasConnection;
+
   const onConnectStart = useCallback(
     (_event: MouseEvent | TouchEvent, { nodeId }: OnConnectStartParams) => {
       // Light up the node the wire is coming from (both its dots); clear stale target.
@@ -406,11 +465,37 @@ function Editor({
     [],
   );
 
-  const onConnectEnd = useCallback(() => {
-    setConnectionSourceId(null);
-    setConnectionTargetId(null);
-    setConnectionTargetDot(null);
-  }, []);
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+      // React Flow completes exact handle drops before this callback. When the
+      // pointer is instead released over a highlighted node body, connect to
+      // that node's left/input port so the saved edge remains fully anchored.
+      if (
+        connectionState.fromHandle &&
+        !connectionState.toHandle &&
+        connectionState.isValid !== false
+      ) {
+        const point = getClientPoint(event);
+        const target = point
+          ? findNodeConnectionTarget(point, connectionState.fromHandle.nodeId)
+          : null;
+
+        if (target) {
+          addCanvasConnection({
+            source: connectionState.fromHandle.nodeId,
+            sourceHandle: connectionState.fromHandle.id ?? null,
+            target: target.nodeId,
+            targetHandle: "left",
+          });
+        }
+      }
+
+      setConnectionSourceId(null);
+      setConnectionTargetId(null);
+      setConnectionTargetDot(null);
+    },
+    [addCanvasConnection],
+  );
 
   useEffect(
     () => () => {
@@ -510,21 +595,18 @@ function Editor({
     [getNodes, getInternalNode, setNodes, onNodesChange],
   );
 
-  // While dragging a wire, highlight whichever node the pointer is over (node
-  // ring) and, when it's over a specific dot, that dot too. Loose mode lets any
-  // dot connect to any dot, so we report the hovered dot's side directly. Hit-
-  // tests the DOM so it tracks exactly what's on screen regardless of zoom/pan.
+  // While dragging a wire, highlight whichever node the pointer is over and its
+  // left/input port, which receives node-body drops. Hit-testing the DOM keeps
+  // this aligned with the visible node geometry regardless of zoom and pan.
   useEffect(() => {
     if (!connectionSourceId) return;
     const handlePointerMove = (event: PointerEvent) => {
-      const element = document.elementFromPoint(event.clientX, event.clientY);
-      const nodeEl = element?.closest<HTMLElement>(".react-flow__node");
-      const handleEl = element?.closest<HTMLElement>(".react-flow__handle");
-      const nodeId = nodeEl?.getAttribute("data-id") ?? null;
-      const handlePos = handleEl?.getAttribute("data-handlepos");
-      const targetId = nodeId && nodeId !== connectionSourceId ? nodeId : null;
-      const dot: "left" | "right" | null =
-        targetId && (handlePos === "left" || handlePos === "right") ? handlePos : null;
+      const target = findNodeConnectionTarget(
+        { x: event.clientX, y: event.clientY },
+        connectionSourceId,
+      );
+      const targetId = target?.nodeId ?? null;
+      const dot = target ? "left" : null;
       setConnectionTargetId((prev) => (prev === targetId ? prev : targetId));
       setConnectionTargetDot((prev) => (prev === dot ? prev : dot));
     };
@@ -570,13 +652,17 @@ function Editor({
 
       if (!updated) return false;
 
-      void getCanvasStore().recordImage({
-        canvasId,
-        source: "generated",
-        url,
-        prompt: meta.prompt,
-        model: meta.model,
-      });
+      void getCanvasStore()
+        .recordImage({
+          canvasId,
+          source: "generated",
+          url,
+          prompt: meta.prompt,
+          model: meta.model,
+        })
+        .catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : "Failed to record generated image");
+        });
 
       return true;
     },

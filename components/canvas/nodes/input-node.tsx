@@ -12,6 +12,7 @@ import { FolderOpen, ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -136,12 +137,26 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
       >
         {imageUrl ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <ImagePreviewDialog
               src={imageUrl}
               alt={`${alias} input`}
-              draggable={false}
-              className="h-full min-h-0 w-full min-w-0 object-contain"
+              title={`@${alias} input image`}
+              trigger={
+                <button
+                  type="button"
+                  className="nodrag nopan focus-visible:ring-ring h-full min-h-0 w-full min-w-0 cursor-zoom-in overflow-hidden rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                  aria-label={`Enlarge @${alias} input image`}
+                  title="Enlarge image"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    draggable={false}
+                    className="h-full min-h-0 w-full min-w-0 object-contain"
+                  />
+                </button>
+              }
             />
             <ConfirmDialog
               title="Remove image?"
@@ -160,7 +175,7 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
                   variant="destructive"
                   aria-label="Remove input image"
                   title="Remove input image"
-                  className="nodrag absolute top-2 right-2 shadow-sm"
+                  className="nodrag nopan absolute top-2 right-2 z-10 shadow-sm"
                 >
                   <X />
                 </Button>

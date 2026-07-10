@@ -22,6 +22,10 @@ const KEYS = {
   images: "ica:images",
 } as const;
 
+function isInlineImageUrl(url: string): boolean {
+  return url.startsWith("data:image/");
+}
+
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   const raw = window.localStorage.getItem(key);
@@ -184,7 +188,18 @@ export const localCanvasStore: CanvasStore = {
       model: input.model ?? null,
       createdAt: nowISO(),
     };
-    write(KEYS.images, [record, ...images]);
+
+    // Inline images already live in canvas node data. Duplicating their
+    // multi-megabyte payloads in image metadata quickly exhausts localStorage.
+    const metadataImages = images.filter((image) => !isInlineImageUrl(image.url));
+    if (isInlineImageUrl(record.url)) {
+      if (metadataImages.length !== images.length) {
+        write(KEYS.images, metadataImages);
+      }
+      return delay(record);
+    }
+
+    write(KEYS.images, [record, ...metadataImages]);
     return delay(record);
   },
 };
