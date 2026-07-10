@@ -96,12 +96,16 @@ function extensionForMimeType(mimeType: string): string {
 }
 
 function blobFromDataUrl(url: string): Blob {
-  const match = url.match(/^data:([^;,]+)(;base64)?,(.*)$/s);
-  if (!match) throw new Error("Reference image data URL is invalid.");
+  const commaIndex = url.indexOf(",");
+  if (!url.startsWith("data:") || commaIndex < 0) {
+    throw new Error("Reference image data URL is invalid.");
+  }
 
-  const mimeType = match[1] ?? "application/octet-stream";
-  const isBase64 = Boolean(match[2]);
-  const payload = match[3] ?? "";
+  const metadata = url.slice("data:".length, commaIndex);
+  const metadataParts = metadata.split(";");
+  const mimeType = metadataParts[0] || "application/octet-stream";
+  const isBase64 = metadataParts.includes("base64");
+  const payload = url.slice(commaIndex + 1);
   const bytes = isBase64
     ? Buffer.from(payload, "base64")
     : Buffer.from(decodeURIComponent(payload), "utf8");

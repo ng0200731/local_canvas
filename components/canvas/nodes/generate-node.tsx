@@ -121,7 +121,9 @@ function hasImageUrl(reference: ConnectedInputReference): reference is Connected
   return reference.kind === "image" && typeof reference.imageUrl === "string";
 }
 
-function toGenerationReference(reference: ConnectedInputReference): ImageGenerationReference | null {
+function toGenerationReference(
+  reference: ConnectedInputReference,
+): ImageGenerationReference | null {
   if (reference.kind === "image") {
     return {
       kind: "image",
@@ -300,7 +302,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     const nextMention = caret === null ? null : mentionAtCaret(value, caret);
     setMention(
       nextMention &&
-        connectedReferences.some((reference) => aliasMatchesQuery(reference.alias, nextMention.query))
+        connectedReferences.some((reference) =>
+          aliasMatchesQuery(reference.alias, nextMention.query),
+        )
         ? nextMention
         : null,
     );
@@ -361,7 +365,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       return;
     }
 
-    const outputReady = updateConnectedOutputData(id, { status: "idle", error: undefined });
+    const outputReady = updateConnectedOutputData(id, {
+      status: "loading",
+      error: undefined,
+    });
     if (!outputReady) {
       toast.error("Connect an Output node before generating");
       return;

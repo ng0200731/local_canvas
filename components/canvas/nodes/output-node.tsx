@@ -83,7 +83,9 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
       </div>
 
       <div className="bg-muted/40 relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border">
-        {resultUrl ? (
+        {data.status === "loading" ? (
+          <Loader2 className="text-muted-foreground size-6 animate-spin" />
+        ) : resultUrl ? (
           <>
             <ImagePreviewDialog
               src={resultUrl}
