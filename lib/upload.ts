@@ -74,3 +74,12 @@ export async function uploadImage(file: File): Promise<UploadResult> {
   const { data } = supabase.storage.from("uploads").getPublicUrl(path);
   return { url: data.publicUrl, storagePath: path };
 }
+
+/** Converts a provider result (data URL or remote URL) into durable app storage. */
+export async function persistGeneratedImage(url: string): Promise<UploadResult> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to read the generated image.");
+  const blob = await response.blob();
+  const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
+  return uploadImage(new File([blob], `generated.${extension}`, { type: blob.type || "image/png" }));
+}

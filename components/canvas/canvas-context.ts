@@ -49,7 +49,7 @@ export interface CanvasActions {
   writeGeneratedImageToOutput: (
     generateNodeId: string,
     url: string,
-    meta: { prompt: string; model: string },
+    meta: { prompt: string; model: string; storagePath: string | null },
   ) => boolean;
   /** Remove a node and any wires connected to it. */
   deleteNode: (id: string) => void;

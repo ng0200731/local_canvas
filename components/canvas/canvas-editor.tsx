@@ -780,7 +780,7 @@ function Editor({
   );
 
   const writeGeneratedImageToOutput = useCallback(
-    (generateNodeId: string, url: string, meta: { prompt: string; model: string }) => {
+    (generateNodeId: string, url: string, meta: { prompt: string; model: string; storagePath: string | null }) => {
       const updated = updateConnectedOutputData(generateNodeId, {
         resultUrl: url,
         prompt: meta.prompt,
@@ -796,6 +796,7 @@ function Editor({
           canvasId,
           source: "generated",
           url,
+          storagePath: meta.storagePath,
           prompt: meta.prompt,
           model: meta.model,
         })

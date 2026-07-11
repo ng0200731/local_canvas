@@ -1,2 +1,247 @@
 $ next dev "--port" "3000"
 [browser] [React Flow]: It looks like you've created a new nodeTypes or edgeTypes object. If this wasn't on purpose please define the nodeTypes/edgeTypes outside of the component or memoize them. Help: https://reactflow.dev/error#002
+[browser] [React Flow]: It looks like you've created a new nodeTypes or edgeTypes object. If this wasn't on purpose please define the nodeTypes/edgeTypes outside of the component or memoize them. Help: https://reactflow.dev/error#002
+[browser] [React Flow]: It looks like you've created a new nodeTypes or edgeTypes object. If this wasn't on purpose please define the nodeTypes/edgeTypes outside of the component or memoize them. Help: https://reactflow.dev/error#002
+[browser] [React Flow]: It looks like you've created a new nodeTypes or edgeTypes object. If this wasn't on purpose please define the nodeTypes/edgeTypes outside of the component or memoize them. Help: https://reactflow.dev/error#002
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.saveCanvasContent (lib/store/supabaseCanvasStore.ts:354:25)
+    at async saveCanvas (components/canvas/canvas-editor.tsx:529:7)
+  352 |     async saveCanvasContent(id, content) {
+  353 |       const validContent = parseCanvasContent(content);
+> 354 |       const { error } = await supabase.rpc("replace_canvas_graph", {
+      |                         ^
+  355 |         p_canvas_id: id,
+  356 |         p_content: validContent,
+  357 |         p_edges: validContent.edges, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] [React Flow]: It looks like you've created a new nodeTypes or edgeTypes object. If this wasn't on purpose please define the nodeTypes/edgeTypes outside of the component or memoize them. Help: https://reactflow.dev/error#002
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listProjects (lib/store/supabaseCanvasStore.ts:248:31)
+  246 |     // ── Projects ────────────────────────────────────────────────────────
+  247 |     async listProjects() {
+> 248 |       const { data, error } = await supabase
+      |                               ^
+  249 |         .from("projects")
+  250 |         .select("id, name, description, created_at, updated_at")
+  251 |         .order("updated_at", { ascending: false }); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listProjects (lib/store/supabaseCanvasStore.ts:248:31)
+  246 |     // ── Projects ────────────────────────────────────────────────────────
+  247 |     async listProjects() {
+> 248 |       const { data, error } = await supabase
+      |                               ^
+  249 |         .from("projects")
+  250 |         .select("id, name, description, created_at, updated_at")
+  251 |         .order("updated_at", { ascending: false }); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listSuppliers (lib/store/supabaseWorkspaceRecordStore.ts:177:24)
+  175 |       const userId = await getCurrentUserId();
+  176 |       const { data, error } = await supabase.rpc("upsert_customer_record", {
+> 177 |         p_customer_id: id,
+      |                        ^
+  178 |         p_company_name: parsed.company.companyName,
+  179 |         p_customer_type: parsed.company.type,
+  180 |         p_email_domain_suffix: parsed.company.emailDomainSuffix, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listCustomers (lib/store/supabaseWorkspaceRecordStore.ts:146:1)
+  144 |     updatedAt: row.updated_at,
+  145 |   };
+> 146 | }
+      | ^
+  147 |
+  148 | export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
+  149 |   const supabase = getSupabaseBrowserClient(); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listSuppliers (lib/store/supabaseWorkspaceRecordStore.ts:177:24)
+  175 |       const userId = await getCurrentUserId();
+  176 |       const { data, error } = await supabase.rpc("upsert_customer_record", {
+> 177 |         p_customer_id: id,
+      |                        ^
+  178 |         p_company_name: parsed.company.companyName,
+  179 |         p_customer_type: parsed.company.type,
+  180 |         p_email_domain_suffix: parsed.company.emailDomainSuffix, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listCustomers (lib/store/supabaseWorkspaceRecordStore.ts:146:1)
+  144 |     updatedAt: row.updated_at,
+  145 |   };
+> 146 | }
+      | ^
+  147 |
+  148 | export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
+  149 |   const supabase = getSupabaseBrowserClient(); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listProjects (lib/store/supabaseCanvasStore.ts:248:31)
+  246 |     // ── Projects ────────────────────────────────────────────────────────
+  247 |     async listProjects() {
+> 248 |       const { data, error } = await supabase
+      |                               ^
+  249 |         .from("projects")
+  250 |         .select("id, name, description, created_at, updated_at")
+  251 |         .order("updated_at", { ascending: false }); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listSuppliers (lib/store/supabaseWorkspaceRecordStore.ts:177:24)
+  175 |       const userId = await getCurrentUserId();
+  176 |       const { data, error } = await supabase.rpc("upsert_customer_record", {
+> 177 |         p_customer_id: id,
+      |                        ^
+  178 |         p_company_name: parsed.company.companyName,
+  179 |         p_customer_type: parsed.company.type,
+  180 |         p_email_domain_suffix: parsed.company.emailDomainSuffix, (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listCustomers (lib/store/supabaseWorkspaceRecordStore.ts:146:1)
+  144 |     updatedAt: row.updated_at,
+  145 |   };
+> 146 | }
+      | ^
+  147 |
+  148 | export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
+  149 |   const supabase = getSupabaseBrowserClient(); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)
+[browser] Fetch request failed: TypeError: Failed to fetch
+    at window.fetch (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3144)
+    at async Object.listProjects (lib/store/supabaseCanvasStore.ts:248:31)
+  246 |     // ── Projects ────────────────────────────────────────────────────────
+  247 |     async listProjects() {
+> 248 |       const { data, error } = await supabase
+      |                               ^
+  249 |         .from("projects")
+  250 |         .select("id, name, description, created_at, updated_at")
+  251 |         .order("updated_at", { ascending: false }); (chrome-extension://odphnbhiddhdpoccbialllejaajemdio/scripts/inspector.js:7:3407)

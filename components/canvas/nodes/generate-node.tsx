@@ -34,6 +34,7 @@ import {
   normalizeImageGenerationModel,
 } from "@/lib/image-generation-models";
 import { isStaleGenerationConfigurationError } from "@/lib/generation-errors";
+import { persistGeneratedImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { GenerateCanvasNode } from "@/lib/nodes/types";
@@ -471,15 +472,17 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         const error = imageGenerationErrorSchema.safeParse(json);
         throw new Error(error.success ? error.data.error : "Generation failed");
       }
+      const persisted = await persistGeneratedImage(parsed.data.url);
       updateNodeData(id, {
         status: "done",
-        resultUrl: parsed.data.url,
+        resultUrl: persisted.url,
         model: parsed.data.model,
         error: undefined,
       });
-      const outputWritten = writeGeneratedImageToOutput(id, parsed.data.url, {
+      const outputWritten = writeGeneratedImageToOutput(id, persisted.url, {
         prompt,
         model: parsed.data.model,
+        storagePath: persisted.storagePath,
       });
       if (!outputWritten) {
         throw new Error("Output node was disconnected before generation finished");
