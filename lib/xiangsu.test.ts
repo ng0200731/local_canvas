@@ -114,35 +114,29 @@ describe("Xiangsu image generator", () => {
     expect(prompt).toContain("Preserve every detail from @sweater");
   });
 
-  it("keeps non-GPT image models on the generation endpoint with image URL blocks", async () => {
+  it("uses the native Gemini endpoint and parses its inline image", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ data: [{ b64_json: "aW1hZ2U=" }] }));
+      .mockResolvedValue(Response.json({ candidates: [{ content: { parts: [
+        { inlineData: { mimeType: "image/png", data: "aW1hZ2U=" } },
+      ] } }] }));
     const generate = createXiangsuImageGenerator({ apiKey: "secret", fetcher });
 
-    await generate({
+    await expect(generate({
       model: "gemini-3.1-flash-image-preview",
       prompt: "change @sweater color to @Yellow C",
       references: [
         { kind: "image", alias: "sweater", url: sweaterDataUrl },
         { kind: "pantone", alias: "Yellow C", label: "Yellow C", hex: "#fedd00" },
       ],
+    })).resolves.toEqual({
+      url: "data:image/png;base64,aW1hZ2U=", model: "gemini-3.1-flash-image-preview",
     });
-
-    const [url, request] = fetcher.mock.calls[0];
-    const body = JSON.parse(String(request?.body)) as {
-      prompt: string;
-      content: Array<
-        | { type: "text"; text: string }
-        | { type: "image_url"; image_url: { url: string } }
-      >;
-      image_urls: string[];
-    };
-
-    expect(url).toBe("https://www.xiangsuai.cn/v1/images/generations");
-    expect(body.image_urls[0]).toBe(sweaterDataUrl);
-    expect(body.image_urls[1]).toMatch(/^data:image\/png;base64/);
-    expect(body.content[1]).toEqual({ type: "image_url", image_url: { url: sweaterDataUrl } });
+    const [url, request] = fetcher.mock.calls.at(-1) ?? [];
+    expect(url).toBe("https://www.xiangsuai.cn/v1beta/models/gemini-3.1-flash-image-preview:generateContent");
+    expect((request?.headers as Record<string, string>).Authorization).toBe("Bearer secret");
+    const body = JSON.parse(String(request?.body)) as { generationConfig: { imageConfig: { imageSize: string } } };
+    expect(body.generationConfig.imageConfig.imageSize).toBe("1K");
   });
 
   it("accepts a remote image URL", async () => {

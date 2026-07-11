@@ -14,6 +14,10 @@ export const IMAGE_GENERATION_MODEL_IDS = [
 export const imageGenerationModelIdSchema = z.enum(IMAGE_GENERATION_MODEL_IDS);
 export type ImageGenerationModelId = z.infer<typeof imageGenerationModelIdSchema>;
 
+/** Models confirmed to work with Xiangsu's image generation endpoint. */
+export const XIANGSU_IMAGE_MODEL_IDS = IMAGE_GENERATION_MODEL_IDS;
+export const xiangsuImageModelIdSchema = z.enum(XIANGSU_IMAGE_MODEL_IDS);
+
 export const imageGenerationResponseSchema = z.object({
   url: z.string().min(1),
   model: imageGenerationModelIdSchema,
@@ -57,7 +61,7 @@ export const imageGenerationReferenceSchema = z.discriminatedUnion("kind", [
 export type ImageGenerationReference = z.infer<typeof imageGenerationReferenceSchema>;
 
 export const imageGenerationRequestSchema = z.object({
-  model: imageGenerationModelIdSchema,
+  model: xiangsuImageModelIdSchema,
   prompt: z.string().min(1).max(2000),
   references: z
     .array(imageGenerationReferenceSchema)
@@ -298,7 +302,7 @@ export const MODEL_CATALOG_GROUPS: readonly ModelCatalogGroup[] = [
 export const MODEL_CATALOG = MODEL_CATALOG_GROUPS.flatMap((group) => group.entries);
 
 export function normalizeImageGenerationModel(value: unknown): ImageGenerationModelId {
-  const parsed = imageGenerationModelIdSchema.safeParse(value);
+  const parsed = xiangsuImageModelIdSchema.safeParse(value);
   return parsed.success ? parsed.data : DEFAULT_IMAGE_GENERATION_MODEL;
 }
 

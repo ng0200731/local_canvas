@@ -9,13 +9,13 @@ import {
 } from "@/lib/image-generation-models";
 
 describe("image generation model catalog", () => {
-  it("uses gpt-image-2 as the default and enables every image model ID", () => {
+  it("enables every provider-supported image model", () => {
     expect(DEFAULT_IMAGE_GENERATION_MODEL).toBe("gpt-image-2");
     expect(
-      IMAGE_GENERATION_MODEL_IDS.every(
+      IMAGE_GENERATION_MODEL_IDS.filter(
         (id) => MODEL_CATALOG.find((entry) => entry.id === id)?.enabled,
       ),
-    ).toBe(true);
+    ).toEqual(IMAGE_GENERATION_MODEL_IDS);
   });
 
   it("shows text and video aliases but disables them", () => {

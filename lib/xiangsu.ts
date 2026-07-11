@@ -7,10 +7,12 @@ import type {
   ImageGenerationModelId,
   ImageGenerationReference,
 } from "@/lib/image-generation-models";
+import { xiangsuImageModelIdSchema } from "@/lib/image-generation-models";
 import { compileReferencePrompt } from "@/lib/reference-prompt";
 
 const XIANGSU_GENERATION_URL = "https://www.xiangsuai.cn/v1/images/generations";
 const XIANGSU_EDIT_URL = "https://www.xiangsuai.cn/v1/images/edits";
+const XIANGSU_GEMINI_BASE_URL = "https://www.xiangsuai.cn/v1beta/models";
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 const providerImageSchema = z
@@ -24,6 +26,13 @@ const providerImageSchema = z
 
 const providerSuccessSchema = z.object({
   data: z.array(providerImageSchema).min(1),
+});
+
+const geminiSuccessSchema = z.object({
+  candidates: z.array(z.object({ content: z.object({ parts: z.array(z.object({
+    inlineData: z.object({ mimeType: z.string(), data: z.string().min(1) }).optional(),
+    inline_data: z.object({ mime_type: z.string(), data: z.string().min(1) }).optional(),
+  }).passthrough()) }) })).min(1),
 });
 
 const providerErrorSchema = z.object({
@@ -88,6 +97,26 @@ function isGptImageModel(model: ImageGenerationModelId): boolean {
   return model.startsWith("gpt-image");
 }
 
+function isGeminiImageModel(model: ImageGenerationModelId): boolean {
+  return model.startsWith("gemini-");
+}
+
+function geminiImageSize(model: ImageGenerationModelId): "1K" | "2K" | "4K" {
+  if (model.endsWith("-4K")) return "4K";
+  if (model.endsWith("-2K")) return "2K";
+  return "1K";
+}
+
+async function geminiParts(prompt: string, imageUrls: readonly string[], fetcher: typeof fetch) {
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+  for (const url of imageUrls) {
+    const blob = await blobFromReferenceUrl(url, fetcher);
+    const data = Buffer.from(await blob.arrayBuffer()).toString("base64");
+    parts.push({ inline_data: { mime_type: blob.type || "image/png", data } });
+  }
+  return parts;
+}
+
 function extensionForMimeType(mimeType: string): string {
   if (mimeType.includes("png")) return "png";
   if (mimeType.includes("jpeg") || mimeType.includes("jpg")) return "jpg";
@@ -145,13 +174,26 @@ export function createXiangsuImageGenerator({
       throw new Error("AI generation is disabled. Set XIANGSU_API_KEY in .env.local.");
     }
 
+    if (!xiangsuImageModelIdSchema.safeParse(input.model).success) {
+      throw new Error("This model is not supported by Xiangsu image generation. Use GPT Image 2.");
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const compiled = compileReferencePrompt(input.prompt, input.references);
 
     try {
-      const response =
-        compiled.imageUrls.length > 0 && isGptImageModel(input.model)
+      const response = isGeminiImageModel(input.model)
+        ? await fetcher(`${XIANGSU_GEMINI_BASE_URL}/${input.model}:generateContent`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: await geminiParts(compiled.prompt, compiled.imageUrls, fetcher) }],
+              generationConfig: { imageConfig: { aspectRatio: "1:1", imageSize: geminiImageSize(input.model) } },
+            }),
+            signal: controller.signal,
+          })
+        : compiled.imageUrls.length > 0 && isGptImageModel(input.model)
           ? await (async () => {
               const form = new FormData();
               form.append("model", input.model);
@@ -200,6 +242,21 @@ export function createXiangsuImageGenerator({
       if (!response.ok) {
         const message = providerErrorMessage(payload) ?? "The image provider rejected the request.";
         throw new Error(sanitizeMessage(message, apiKey));
+      }
+
+      if (isGeminiImageModel(input.model)) {
+        const parsedGemini = geminiSuccessSchema.safeParse(payload);
+        if (!parsedGemini.success) throw new Error("The Gemini provider did not return an image.");
+        const imagePart = parsedGemini.data.candidates[0].content.parts.find(
+          (part) => part.inlineData || part.inline_data,
+        );
+        const inline = imagePart?.inlineData
+          ? { mimeType: imagePart.inlineData.mimeType, data: imagePart.inlineData.data }
+          : imagePart?.inline_data
+            ? { mimeType: imagePart.inline_data.mime_type, data: imagePart.inline_data.data }
+            : null;
+        if (!inline) throw new Error("The Gemini provider did not return an image.");
+        return { url: `data:${inline.mimeType};base64,${inline.data}`, model: input.model };
       }
 
       const parsed = providerSuccessSchema.safeParse(payload);
