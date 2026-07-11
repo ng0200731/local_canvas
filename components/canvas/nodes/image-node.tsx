@@ -2,9 +2,10 @@
 
 import { useRef, useState } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { ImageIcon, Link2, Loader2 } from "lucide-react";
+import { ImageIcon, Link2, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
+import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { ImageCanvasNode } from "@/lib/nodes/types";
@@ -68,14 +69,36 @@ export function ImageNode({ id, data, parentId, selected }: NodeProps<ImageCanva
       >
         {data.url ? (
           <>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <ImagePreviewDialog
               src={data.url}
               alt={data.alt ?? ""}
-              draggable={false}
-              className="h-full min-h-0 w-full min-w-0 cursor-pointer object-contain"
-              onClick={() => inputRef.current?.click()}
+              title="Image node preview"
+              trigger={
+                <button
+                  type="button"
+                  className="nodrag nopan focus-visible:ring-ring h-full min-h-0 w-full min-w-0 cursor-zoom-in overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                  aria-label="Enlarge image"
+                  title="Enlarge image"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={data.url}
+                    alt=""
+                    draggable={false}
+                    className="h-full min-h-0 w-full min-w-0 object-contain"
+                  />
+                </button>
+              }
             />
+            <button
+              type="button"
+              aria-label="Replace image"
+              title="Replace image"
+              className="nodrag nopan bg-background/85 focus-visible:ring-ring absolute top-2 left-2 flex size-7 items-center justify-center rounded-md border shadow-sm backdrop-blur-sm outline-none focus-visible:ring-2"
+              onClick={() => inputRef.current?.click()}
+            >
+              <Upload className="size-3.5" />
+            </button>
             {/* Reference drag handle: drag onto a Generate node's reference slot.
                 `nodrag` tells React Flow not to move the node from this element. */}
             <button

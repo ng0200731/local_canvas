@@ -19,7 +19,12 @@ import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { InputCanvasNode } from "@/lib/nodes/types";
 import { uploadImage } from "@/lib/upload";
-import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
+import {
+  useCanvasActions,
+  useConnectionHighlight,
+  useGroupAccent,
+  useReferenceHover,
+} from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
 import { InputPort, OutputPort } from "./port";
 import { ResizeHandle } from "./resize-handle";
@@ -40,6 +45,7 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
   const { updateNodeData } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
+  const { hoveredReferenceNodeId } = useReferenceHover();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const width = data.width ?? DEFAULT_WIDTH;
@@ -85,6 +91,7 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
 
   const imageUrl = data.imageUrl;
   const alias = data.alias.trim() || "image";
+  const isReferenceHovered = hoveredReferenceNodeId === id;
 
   return (
     <div
@@ -97,6 +104,8 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
       onPaste={handlePaste}
       className={cn(
         "group bg-card relative flex flex-col gap-2 overflow-hidden rounded-lg border p-3 shadow-md",
+        isReferenceHovered &&
+          "ring-offset-background shadow-lg ring-2 ring-yellow-400 ring-offset-2",
         selected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
       )}
     >

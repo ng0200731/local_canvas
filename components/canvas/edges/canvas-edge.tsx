@@ -18,8 +18,10 @@ export function DeletableEdge({
   sourcePosition,
   targetPosition,
   style,
+  data,
 }: EdgeProps) {
   const { deleteEdge } = useCanvasActions();
+  const isFlowing = data?.flow === true;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -31,7 +33,13 @@ export function DeletableEdge({
 
   return (
     <>
-      <BaseEdge id={id} path={edgePath} style={style} interactionWidth={18} />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        className={isFlowing ? "canvas-edge-flow" : undefined}
+        style={style}
+        interactionWidth={18}
+      />
       <EdgeLabelRenderer>
         <button
           type="button"

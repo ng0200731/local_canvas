@@ -10,8 +10,9 @@ pnpm install
 pnpm dev          # http://localhost:3000
 ```
 
-Without any keys you get: local projects/canvases (localStorage), no auth, no AI
-generation. The canvas, notes, image uploads (as data URLs), and persistence all work.
+Without any keys you get: local projects/canvases (browser storage), no auth, no AI
+generation. This is only demo mode. For durable multi-device saves, enable
+Supabase so canvases are written to Postgres.
 
 ## Environment
 
@@ -30,8 +31,20 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 2. Project Settings → API → copy the **URL** and **anon** key into `.env.local`
    (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`). Add the
    **service_role** key as `SUPABASE_SERVICE_ROLE_KEY`.
-3. Run the SQL migration in `supabase/migrations/` via the Supabase SQL editor (or CLI).
+3. Run every SQL migration in `supabase/migrations/` in filename order via the
+   Supabase SQL editor or CLI.
 4. Restart `pnpm dev`. Auth, projects, and canvases now persist to Postgres.
+
+Canvas persistence uses structured database tables:
+
+- `projects` and `canvases` store the workspace and canvas records.
+- `canvas_nodes` stores each editable canvas node with type, position, data,
+  parent, and order.
+- `canvas_edges` stores each editable wire with source, target, handles, data,
+  and order.
+- `canvases.content` remains a JSONB compatibility mirror of `{ nodes, edges }`.
+  The app saves through `replace_canvas_graph(...)`, which updates the mirror
+  and replaces node/edge rows atomically.
 
 ## Enabling AI generation
 

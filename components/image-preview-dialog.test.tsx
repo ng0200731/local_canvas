@@ -4,6 +4,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 
+function createPointerEvent(
+  type: string,
+  init: { clientX: number; clientY: number; pointerId: number },
+): Event {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: init.clientX,
+    clientY: init.clientY,
+  });
+  Object.defineProperty(event, "pointerId", { value: init.pointerId });
+  return event;
+}
+
 describe("ImagePreviewDialog", () => {
   let container: HTMLDivElement;
 
@@ -60,6 +74,60 @@ describe("ImagePreviewDialog", () => {
     });
 
     expect(document.querySelector<HTMLImageElement>('img[alt="Test preview"]')).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("zooms the enlarged image with the mouse wheel", async () => {
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ImagePreviewDialog
+          src="data:image/png;base64,aW1hZ2U="
+          alt="Zoom preview"
+          title="Zoom image"
+          trigger={<button type="button">Open zoom preview</button>}
+        />,
+      );
+    });
+
+    const openButton = document.querySelector<HTMLButtonElement>("button");
+
+    await act(async () => {
+      openButton?.click();
+    });
+
+    const image = document.querySelector<HTMLImageElement>('img[alt="Zoom preview"]');
+    expect(image).not.toBeNull();
+    expect(document.body.textContent).toContain("Scroll to zoom");
+    expect(document.body.textContent).toContain("Drag to pan");
+    expect(document.body.textContent).toContain("100%");
+
+    await act(async () => {
+      image?.parentElement?.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(document.body.textContent).toContain("120%");
+    expect(image?.style.transform).toBe("translate(0px, 0px) scale(1.2)");
+
+    await act(async () => {
+      image?.parentElement?.dispatchEvent(
+        createPointerEvent("pointerdown", { clientX: 50, clientY: 60, pointerId: 1 }),
+      );
+      image?.parentElement?.dispatchEvent(
+        createPointerEvent("pointermove", { clientX: 80, clientY: 90, pointerId: 1 }),
+      );
+      image?.parentElement?.dispatchEvent(
+        createPointerEvent("pointerup", { clientX: 80, clientY: 90, pointerId: 1 }),
+      );
+    });
+
+    expect(image?.style.transform).toBe("translate(30px, 30px) scale(1.2)");
 
     await act(async () => {
       root.unmount();

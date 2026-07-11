@@ -8,6 +8,7 @@ import {
   useState,
   type DragEvent,
   type FormEvent,
+  type SetStateAction,
 } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,10 +22,13 @@ import {
   ReactFlow,
   ReactFlowProvider,
   addEdge,
+  applyEdgeChanges,
+  applyNodeChanges,
   useEdgesState,
   useNodesState,
   useReactFlow,
   type Connection,
+  type EdgeChange,
   type EdgeTypes,
   type FinalConnectionState,
   type NodeChange,
@@ -66,6 +70,8 @@ import { cn } from "@/lib/utils";
 import {
   CanvasActionsContext,
   ConnectionHighlightContext,
+  ReferenceHoverContext,
+  type ConnectedOutputState,
   type ConnectedInputReference,
 } from "./canvas-context";
 import { NodePalette } from "./node-palette";
@@ -220,6 +226,31 @@ function findConnectedOutputNodeId(
   return null;
 }
 
+function outputStatus(value: unknown): ConnectedOutputState["status"] {
+  return value === "idle" || value === "loading" || value === "error" || value === "done"
+    ? value
+    : "idle";
+}
+
+function findConnectedOutputState(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  generateNodeId: string,
+): ConnectedOutputState | null {
+  const outputNodeId = findConnectedOutputNodeId(nodes, edges, generateNodeId);
+  const outputNode = outputNodeId ? nodes.find((node) => node.id === outputNodeId) : undefined;
+  if (!outputNode) return null;
+
+  return {
+    nodeId: outputNode.id,
+    resultUrl: typeof outputNode.data.resultUrl === "string" ? outputNode.data.resultUrl : null,
+    prompt: typeof outputNode.data.prompt === "string" ? outputNode.data.prompt : undefined,
+    model: typeof outputNode.data.model === "string" ? outputNode.data.model : undefined,
+    status: outputStatus(outputNode.data.status),
+    error: typeof outputNode.data.error === "string" ? outputNode.data.error : undefined,
+  };
+}
+
 function findConnectedInputReferences(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -319,11 +350,16 @@ function Editor({
   onBack?: () => void;
 }) {
   const { data: canvas, isLoading } = useCanvas(canvasId);
-  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<CanvasEdge>([]);
+  const [nodes, setNodes] = useNodesState<CanvasNode>([]);
+  const [edges, setEdges] = useEdgesState<CanvasEdge>([]);
+  const nodesRef = useRef<CanvasNode[]>([]);
+  const edgesRef = useRef<CanvasEdge[]>([]);
   const loadedRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { screenToFlowPosition, getNodes, getInternalNode } = useReactFlow();
+  const { screenToFlowPosition, getNodes, getInternalNode } = useReactFlow<
+    CanvasNode,
+    CanvasEdge
+  >();
   const queryClient = useQueryClient();
   const [saveOpen, setSaveOpen] = useState(false);
   const [canvasName, setCanvasName] = useState("");
@@ -337,6 +373,7 @@ function Editor({
   const [connectionTargetId, setConnectionTargetId] = useState<string | null>(null);
   const [connectionTargetDot, setConnectionTargetDot] = useState<"left" | "right" | null>(null);
   const [hoverTarget, setHoverTarget] = useState<HoverTarget>(null);
+  const [hoveredReferenceNodeId, setHoveredReferenceNodeId] = useState<string | null>(null);
 
   // ComfyUI style: the in-progress wire and both highlight rings share the
   // source node's type color.
@@ -344,16 +381,56 @@ function Editor({
     ? colorForNodeType(nodes.find((n) => n.id === connectionSourceId)?.type)
     : DEFAULT_EDGE_COLOR;
 
+  const setCanvasNodes = useCallback(
+    (action: SetStateAction<CanvasNode[]>) => {
+      const nextNodes =
+        typeof action === "function"
+          ? (action as (previous: CanvasNode[]) => CanvasNode[])(nodesRef.current)
+          : action;
+      nodesRef.current = nextNodes;
+      setNodes(nextNodes);
+    },
+    [setNodes],
+  );
+
+  const setCanvasEdges = useCallback(
+    (action: SetStateAction<CanvasEdge[]>) => {
+      const nextEdges =
+        typeof action === "function"
+          ? (action as (previous: CanvasEdge[]) => CanvasEdge[])(edgesRef.current)
+          : action;
+      edgesRef.current = nextEdges;
+      setEdges(nextEdges);
+    },
+    [setEdges],
+  );
+
+  const getCurrentCanvasContent = useCallback(
+    (): CanvasContent => ({
+      nodes: nodesRef.current,
+      edges: edgesRef.current,
+    }),
+    [],
+  );
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    edgesRef.current = edges;
+  }, [edges]);
+
   // Load the canvas content once it arrives.
   useEffect(() => {
     if (canvas && !loadedRef.current) {
       loadedRef.current = true;
-      setNodes(reorderChildrenAfterParents(canvas.content.nodes.map(normalizeNodeType)));
+      setCanvasNodes(reorderChildrenAfterParents(canvas.content.nodes.map(normalizeNodeType)));
       // Force the custom (deletable) edge type so the remove button renders.
       // Older edges were saved before dots had explicit ids — backfill
       // sourceHandle/targetHandle (right=source, left=target under the old
       // model) so they keep attaching instead of going limp.
-      setEdges(
+      setCanvasEdges(
         canvas.content.edges.map((e) => ({
           ...e,
           type: "deletable",
@@ -363,15 +440,15 @@ function Editor({
         })),
       );
     }
-  }, [canvas, setNodes, setEdges]);
+  }, [canvas, setCanvasNodes, setCanvasEdges]);
 
   const updateNodeData = useCallback(
     (id: string, patch: Record<string, unknown>) => {
-      setNodes((nds) =>
+      setCanvasNodes((nds) =>
         nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
       );
     },
-    [setNodes],
+    [setCanvasNodes],
   );
 
   const getConnectedInputReferences = useCallback(
@@ -381,6 +458,11 @@ function Editor({
 
   const hasConnectedOutputNode = useCallback(
     (generateNodeId: string) => findConnectedOutputNodeId(nodes, edges, generateNodeId) !== null,
+    [edges, nodes],
+  );
+
+  const getConnectedOutputState = useCallback(
+    (generateNodeId: string) => findConnectedOutputState(nodes, edges, generateNodeId),
     [edges, nodes],
   );
 
@@ -400,7 +482,7 @@ function Editor({
     setSaving(true);
     try {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      const content: CanvasContent = { nodes, edges };
+      const content = getCurrentCanvasContent();
       await getCanvasStore().renameCanvas(canvasId, name);
       await getCanvasStore().saveCanvasContent(canvasId, content);
       await Promise.all([
@@ -421,7 +503,7 @@ function Editor({
     if (!loadedRef.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const content: CanvasContent = { nodes, edges };
+      const content = getCurrentCanvasContent();
       void getCanvasStore()
         .saveCanvasContent(canvasId, content)
         .catch((error: unknown) => {
@@ -431,11 +513,11 @@ function Editor({
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [nodes, edges, canvasId]);
+  }, [nodes, edges, canvasId, getCurrentCanvasContent]);
 
   const addCanvasConnection = useCallback(
     (connection: Connection) => {
-      setEdges((eds) =>
+      setCanvasEdges((eds) =>
         addEdge(
           {
             ...connection,
@@ -450,7 +532,7 @@ function Editor({
       setConnectedNotice(true);
       connectedNoticeTimer.current = setTimeout(() => setConnectedNotice(false), 3000);
     },
-    [setEdges],
+    [setCanvasEdges],
   );
 
   const onConnect = addCanvasConnection;
@@ -549,7 +631,7 @@ function Editor({
       }
       if (reparent.size === 0) return;
 
-      setNodes((nds) => {
+      setCanvasNodes((nds) => {
         const next = nds.map((n) => {
           const r = reparent.get(n.id);
           if (!r) return n;
@@ -561,7 +643,7 @@ function Editor({
         return reorderChildrenAfterParents(next);
       });
     },
-    [getNodes, getInternalNode, setNodes],
+    [getNodes, getInternalNode, setCanvasNodes],
   );
 
   // Release children to the canvas when their group is removed via React Flow's
@@ -580,7 +662,7 @@ function Editor({
           }
         }
         if (releases.size > 0) {
-          setNodes((nds) =>
+          setCanvasNodes((nds) =>
             nds.map((n) => {
               if (!releases.has(n.id)) return n;
               const detached = { ...n };
@@ -590,9 +672,16 @@ function Editor({
           );
         }
       }
-      onNodesChange(changes);
+      setCanvasNodes((currentNodes) => applyNodeChanges(changes, currentNodes));
     },
-    [getNodes, getInternalNode, setNodes, onNodesChange],
+    [getNodes, getInternalNode, setCanvasNodes],
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange<CanvasEdge>[]) => {
+      setCanvasEdges((currentEdges) => applyEdgeChanges(changes, currentEdges));
+    },
+    [setCanvasEdges],
   );
 
   // While dragging a wire, highlight whichever node the pointer is over and its
@@ -624,12 +713,20 @@ function Editor({
     [connectionSourceId, connectionTargetId, connectionTargetDot, connectionColor],
   );
 
+  const referenceHover = useMemo(
+    () => ({
+      hoveredReferenceNodeId,
+      setHoveredReferenceNodeId,
+    }),
+    [hoveredReferenceNodeId],
+  );
+
   const updateConnectedOutputData = useCallback(
     (generateNodeId: string, patch: Record<string, unknown>) => {
       const outputNodeId = findConnectedOutputNodeId(nodes, edges, generateNodeId);
       if (!outputNodeId) return false;
 
-      setNodes((nds) =>
+      setCanvasNodes((nds) =>
         nds.map((node) =>
           node.id === outputNodeId ? { ...node, data: { ...node.data, ...patch } } : node,
         ),
@@ -637,7 +734,7 @@ function Editor({
 
       return true;
     },
-    [edges, nodes, setNodes],
+    [edges, nodes, setCanvasNodes],
   );
 
   const writeGeneratedImageToOutput = useCallback(
@@ -680,7 +777,7 @@ function Editor({
           if (r) centerById.set(n.id, { x: r.cx, y: r.cy });
         }
       }
-      setNodes((nds) =>
+      setCanvasNodes((nds) =>
         nds
           .filter((n) => n.id !== id)
           .map((n) => {
@@ -692,27 +789,27 @@ function Editor({
           }),
       );
       // Drop any wires that were attached to the removed node.
-      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+      setCanvasEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
     },
-    [getNodes, getInternalNode, setNodes, setEdges],
+    [getNodes, getInternalNode, setCanvasNodes, setCanvasEdges],
   );
 
   const deleteEdge = useCallback(
     (id: string) => {
-      setEdges((eds) => eds.filter((e) => e.id !== id));
+      setCanvasEdges((eds) => eds.filter((e) => e.id !== id));
     },
-    [setEdges],
+    [setCanvasEdges],
   );
 
   const deleteAll = useCallback(() => {
-    setNodes([]);
-    setEdges([]);
+    setCanvasNodes([]);
+    setCanvasEdges([]);
     toast.success("Canvas cleared");
-  }, [setNodes, setEdges]);
+  }, [setCanvasNodes, setCanvasEdges]);
 
   const resizeNode = useCallback(
     (id: string, width: number, height: number) => {
-      setNodes((nds) =>
+      setCanvasNodes((nds) =>
         nds.map((n) => {
           if (n.id !== id) return n;
           // nodeOrigin is [0.5, 0.5], so `position` is the node's CENTER. To
@@ -731,7 +828,7 @@ function Editor({
         }),
       );
     },
-    [setNodes],
+    [setCanvasNodes],
   );
 
   const addNodeAtCenter = useCallback(
@@ -740,12 +837,12 @@ function Editor({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
-      setNodes((nds) => {
+      setCanvasNodes((nds) => {
         const node = createNode(type, findNewNodePosition(position, nds));
         return appendSelectedNode(nds, node);
       });
     },
-    [screenToFlowPosition, setNodes],
+    [screenToFlowPosition, setCanvasNodes],
   );
 
   const onDrop = useCallback(
@@ -757,12 +854,12 @@ function Editor({
         x: event.clientX,
         y: event.clientY,
       });
-      setNodes((nds) => {
+      setCanvasNodes((nds) => {
         const node = createNode(type, findNewNodePosition(position, nds));
         return appendSelectedNode(nds, node);
       });
     },
-    [screenToFlowPosition, setNodes],
+    [screenToFlowPosition, setCanvasNodes],
   );
 
   const nodeTypes = useMemo<NodeTypes>(
@@ -783,28 +880,31 @@ function Editor({
   const hoveredGraph = useMemo(() => {
     const nodeIds = new Set<string>();
     const edgeIds = new Set<string>();
+    const flowEdgeIds = new Set<string>();
 
-    if (!hoverTarget) return { nodeIds, edgeIds };
+    if (!hoverTarget) return { nodeIds, edgeIds, flowEdgeIds };
 
     if (hoverTarget.kind === "edge") {
       const edge = edges.find((candidate) => candidate.id === hoverTarget.id);
-      if (!edge) return { nodeIds, edgeIds };
+      if (!edge) return { nodeIds, edgeIds, flowEdgeIds };
 
       edgeIds.add(edge.id);
+      flowEdgeIds.add(edge.id);
       nodeIds.add(edge.source);
       nodeIds.add(edge.target);
-      return { nodeIds, edgeIds };
+      return { nodeIds, edgeIds, flowEdgeIds };
     }
 
     nodeIds.add(hoverTarget.id);
     for (const edge of edges) {
-      if (edge.source !== hoverTarget.id && edge.target !== hoverTarget.id) continue;
+      if (edge.source !== hoverTarget.id) continue;
       edgeIds.add(edge.id);
+      flowEdgeIds.add(edge.id);
       nodeIds.add(edge.source);
       nodeIds.add(edge.target);
     }
 
-    return { nodeIds, edgeIds };
+    return { nodeIds, edgeIds, flowEdgeIds };
   }, [edges, hoverTarget]);
 
   const renderedNodes = useMemo<CanvasNode[]>(
@@ -820,8 +920,13 @@ function Editor({
     () =>
       edges.map((edge) => {
         const isHighlighted = hoveredGraph.edgeIds.has(edge.id);
+        const isFlowing = hoveredGraph.flowEdgeIds.has(edge.id);
         return {
           ...edge,
+          data: {
+            ...(edge.data ?? {}),
+            flow: isFlowing,
+          },
           style: {
             ...edge.style,
             stroke: isHighlighted ? HIGHLIGHT_EDGE_COLOR : DEFAULT_EDGE_COLOR,
@@ -829,7 +934,7 @@ function Editor({
           },
         };
       }),
-    [edges, hoveredGraph.edgeIds],
+    [edges, hoveredGraph.edgeIds, hoveredGraph.flowEdgeIds],
   );
 
   const clearHoverTarget = useCallback(() => setHoverTarget(null), []);
@@ -858,6 +963,7 @@ function Editor({
       updateNodeData,
       getConnectedInputReferences,
       hasConnectedOutputNode,
+      getConnectedOutputState,
       updateConnectedOutputData,
       writeGeneratedImageToOutput,
       deleteNode,
@@ -868,6 +974,7 @@ function Editor({
       updateNodeData,
       getConnectedInputReferences,
       hasConnectedOutputNode,
+      getConnectedOutputState,
       updateConnectedOutputData,
       writeGeneratedImageToOutput,
       deleteNode,
@@ -974,57 +1081,63 @@ function Editor({
       <div className="flex min-h-0 flex-1">
         <CanvasActionsContext.Provider value={actions}>
           <NodePalette onAdd={addNodeAtCenter} />
-          <ConnectionHighlightContext.Provider value={connectionHighlight}>
-            <div className="relative flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
-              {connectedNotice && (
-                <div className="bg-card text-foreground pointer-events-none absolute top-3 right-3 z-30 rounded-md border px-3 py-1.5 text-xs font-semibold shadow-md">
-                  connected
-                </div>
-              )}
-              {isLoading || !canvas ? (
-                <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
-                  Loading canvas...
-                </div>
-              ) : (
-                <ReactFlow
-                  nodes={renderedNodes}
-                  edges={renderedEdges}
-                  onNodesChange={handleNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  onConnectStart={onConnectStart}
-                  onConnectEnd={onConnectEnd}
-                  onNodeMouseEnter={onNodeMouseEnter}
-                  onNodeMouseLeave={clearHoverTarget}
-                  onEdgeMouseEnter={onEdgeMouseEnter}
-                  onEdgeMouseLeave={clearHoverTarget}
-                  onNodeDragStop={onNodeDragStop}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  nodeOrigin={[0.5, 0.5]}
-                  connectionMode={ConnectionMode.Loose}
-                  connectionLineType={ConnectionLineType.Bezier}
-                  connectionLineStyle={{
-                    stroke: connectionColor,
-                    strokeWidth: EDGE_WIDTH,
-                  }}
-                  defaultEdgeOptions={defaultEdgeOptions}
-                  deleteKeyCode={["Delete", "Backspace"]}
-                  fitView
-                  className="bg-background"
-                >
-                  <Background
-                    variant={BackgroundVariant.Dots}
-                    gap={24}
-                    size={1}
-                    color="color-mix(in oklch, var(--muted-foreground), transparent 62%)"
-                  />
-                  <Controls />
-                  <MiniMap pannable zoomable />
-                </ReactFlow>
-              )}
-            </div>
-          </ConnectionHighlightContext.Provider>
+          <ReferenceHoverContext.Provider value={referenceHover}>
+            <ConnectionHighlightContext.Provider value={connectionHighlight}>
+              <div
+                className="relative flex-1"
+                onDrop={onDrop}
+                onDragOver={(e) => e.preventDefault()}
+              >
+                {connectedNotice && (
+                  <div className="bg-card text-foreground pointer-events-none absolute top-3 right-3 z-30 rounded-md border px-3 py-1.5 text-xs font-semibold shadow-md">
+                    connected
+                  </div>
+                )}
+                {isLoading || !canvas ? (
+                  <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
+                    Loading canvas...
+                  </div>
+                ) : (
+                  <ReactFlow
+                    nodes={renderedNodes}
+                    edges={renderedEdges}
+                    onNodesChange={handleNodesChange}
+                    onEdgesChange={handleEdgesChange}
+                    onConnect={onConnect}
+                    onConnectStart={onConnectStart}
+                    onConnectEnd={onConnectEnd}
+                    onNodeMouseEnter={onNodeMouseEnter}
+                    onNodeMouseLeave={clearHoverTarget}
+                    onEdgeMouseEnter={onEdgeMouseEnter}
+                    onEdgeMouseLeave={clearHoverTarget}
+                    onNodeDragStop={onNodeDragStop}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    nodeOrigin={[0.5, 0.5]}
+                    connectionMode={ConnectionMode.Loose}
+                    connectionLineType={ConnectionLineType.Bezier}
+                    connectionLineStyle={{
+                      stroke: connectionColor,
+                      strokeWidth: EDGE_WIDTH,
+                    }}
+                    defaultEdgeOptions={defaultEdgeOptions}
+                    deleteKeyCode={["Delete", "Backspace"]}
+                    fitView
+                    className="bg-background"
+                  >
+                    <Background
+                      variant={BackgroundVariant.Dots}
+                      gap={24}
+                      size={1}
+                      color="color-mix(in oklch, var(--muted-foreground), transparent 62%)"
+                    />
+                    <Controls />
+                    <MiniMap pannable zoomable />
+                  </ReactFlow>
+                )}
+              </div>
+            </ConnectionHighlightContext.Provider>
+          </ReferenceHoverContext.Provider>
         </CanvasActionsContext.Provider>
       </div>
     </div>

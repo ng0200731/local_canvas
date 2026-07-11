@@ -19,7 +19,12 @@ import {
   type PantoneColor,
 } from "@/lib/nodes/pantone";
 import type { PantoneCanvasNode } from "@/lib/nodes/types";
-import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
+import {
+  useCanvasActions,
+  useConnectionHighlight,
+  useGroupAccent,
+  useReferenceHover,
+} from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
 import { InputPort, OutputPort } from "./port";
 import { ResizeHandle } from "./resize-handle";
@@ -86,6 +91,7 @@ export function PantoneNode({
   const { resizeNode, updateNodeData } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
+  const { hoveredReferenceNodeId } = useReferenceHover();
   const [colors, setColors] = useState<PantoneColor[]>([]);
   const [loadingState, setLoadingState] = useState<"loading" | "ready" | "error">("loading");
   const [copied, setCopied] = useState(false);
@@ -94,6 +100,7 @@ export function PantoneNode({
   const height = Math.max(data.height ?? DEFAULT_HEIGHT, MIN_DISPLAY_HEIGHT);
   const isPanelExpanded = height > MIN_DISPLAY_HEIGHT + 8;
   const catalogFilter = persistedCatalogFilter(data.catalogFilter);
+  const isReferenceHovered = hoveredReferenceNodeId === id;
 
   useEffect(() => {
     let active = true;
@@ -216,6 +223,8 @@ export function PantoneNode({
       }}
       className={cn(
         "group relative flex flex-col overflow-hidden border border-neutral-200 bg-white text-neutral-950 shadow-[0_18px_32px_rgba(15,23,42,0.24)] dark:border-neutral-800 dark:bg-neutral-950",
+        isReferenceHovered &&
+          "ring-offset-background shadow-lg ring-2 ring-yellow-400 ring-offset-2",
         isNodeSelected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
       )}
     >

@@ -158,6 +158,24 @@
     opacity 140ms ease;
 }
 
+.react-flow__edge-path.canvas-edge-flow {
+  stroke-dasharray: 1 8;
+  stroke-linecap: round;
+  animation: canvas-edge-flow 700ms linear infinite;
+}
+
+@keyframes canvas-edge-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge-path.canvas-edge-flow {
+    animation: none;
+  }
+}
+
 .react-flow__node {
   transition:
     filter 140ms ease,

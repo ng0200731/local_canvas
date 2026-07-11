@@ -3,16 +3,19 @@ import type { ImageGenerationModelId } from "@/lib/image-generation-models";
 import type { PantoneCatalog } from "./pantone";
 
 /** Registered canvas node type identifiers (kept in sync with the registry). */
-export type NodeType =
-  | "note"
-  | "image"
-  | "group"
-  | "imageInput"
-  | "generate"
-  | "imageOutput"
-  | "suppler"
-  | "action"
-  | "pantone";
+export const NODE_TYPES = [
+  "note",
+  "image",
+  "group",
+  "imageInput",
+  "generate",
+  "imageOutput",
+  "suppler",
+  "action",
+  "pantone",
+] as const;
+
+export type NodeType = (typeof NODE_TYPES)[number];
 
 // ── Per-type node data ───────────────────────────────────────────────────
 // Each carries an index signature so the type satisfies React Flow v12's

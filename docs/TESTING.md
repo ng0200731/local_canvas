@@ -29,14 +29,17 @@ matching key in `.env.local`.
 - [ ] Output node: generated image appears with drag-reference and download actions.
 - [ ] Generate node: connected/dropped reference images are forwarded to image generation.
 
-## With Supabase keys 🔑 (run `supabase/migrations/0001_init.sql` first)
+## With Supabase keys 🔑 (run all `supabase/migrations/*.sql` first)
 
 - [ ] Sign up / log in / sign out round-trips; protected routes redirect to `/login`.
 - [ ] Projects & canvases persist to Postgres across reloads and a second device.
+- [ ] Canvas edits create/update rows in `canvas_nodes` and `canvas_edges`.
+- [ ] Reloading a canvas fetches those database rows and keeps nodes editable.
 - [ ] Uploaded images are stored in the private-per-user `uploads` bucket.
 
 ## Automated
 
-- [ ] `pnpm test` — unit tests for the local store + store selector pass.
+- [ ] `pnpm test` — unit tests for the local store, store selector, and canvas
+      content validation pass.
 - [ ] `pnpm lint` — eslint passes.
 - [ ] `pnpm build` — production build succeeds.

@@ -25,6 +25,15 @@ export interface ConnectedPantoneReference {
 
 export type ConnectedInputReference = ConnectedImageReference | ConnectedPantoneReference;
 
+export interface ConnectedOutputState {
+  nodeId: string;
+  resultUrl: string | null;
+  prompt?: string;
+  model?: string;
+  status: "idle" | "loading" | "error" | "done";
+  error?: string;
+}
+
 export interface CanvasActions {
   /** Patch a node's data object (shallow merge). */
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
@@ -32,6 +41,8 @@ export interface CanvasActions {
   getConnectedInputReferences: (nodeId: string) => ConnectedInputReference[];
   /** True when a Generate node is connected to an Output node. */
   hasConnectedOutputNode: (generateNodeId: string) => boolean;
+  /** Current data snapshot for the Output node connected to a Generate node. */
+  getConnectedOutputState: (generateNodeId: string) => ConnectedOutputState | null;
   /** Patch the Output node connected to a Generate node. Returns false when no Output is wired. */
   updateConnectedOutputData: (generateNodeId: string, patch: Record<string, unknown>) => boolean;
   /** Store a generated image URL on the connected Output node and record it in image history. */
@@ -92,6 +103,20 @@ export const ConnectionHighlightContext = createContext<ConnectionHighlight>({
   targetDot: null,
   color: DEFAULT_EDGE_COLOR,
 });
+
+export interface ReferenceHover {
+  hoveredReferenceNodeId: string | null;
+  setHoveredReferenceNodeId: (nodeId: string | null) => void;
+}
+
+export const ReferenceHoverContext = createContext<ReferenceHover>({
+  hoveredReferenceNodeId: null,
+  setHoveredReferenceNodeId: () => undefined,
+});
+
+export function useReferenceHover(): ReferenceHover {
+  return useContext(ReferenceHoverContext);
+}
 
 /** ~50% alpha, appended to a 6-digit hex color to soften the ring's outer glow. */
 const RING_GLOW_ALPHA = "80";

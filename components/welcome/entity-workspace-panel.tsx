@@ -4,12 +4,13 @@ import { useId, useMemo, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent, ReactNode } from "react";
 import {
   Building2,
-  Check,
   ChevronDown,
   ImagePlus,
   Mail,
+  Pencil,
   Plus,
   Save,
+  Search,
   Trash2,
   UserPlus,
   Wand2,
@@ -50,6 +51,12 @@ type PartySubTab = "company" | "employee";
 
 interface EmployeeRow extends EmployeeInput {
   id: string;
+}
+
+interface PartyRecord {
+  id: string;
+  company: CustomerCompanyState | SupplierCompanyState;
+  employees: EmployeeRow[];
 }
 
 type CustomerCompanyState = CustomerCompanyInput;
@@ -242,10 +249,14 @@ function EmployeeEditor({
   employees,
   domainSuffix,
   onEmployeesChange,
+  onSave,
+  isEditing,
 }: {
   employees: EmployeeRow[];
   domainSuffix: string;
   onEmployeesChange: (employees: EmployeeRow[]) => void;
+  onSave: () => Promise<void>;
+  isEditing: boolean;
 }) {
   const [submitted, setSubmitted] = useState(false);
   const normalizedDomain = normalizeEmailDomainSuffix(domainSuffix);
@@ -269,8 +280,20 @@ function EmployeeEditor({
   }
 
   function fillDummyEmployees() {
-    onEmployeesChange(dummyEmployees.map((employee) => ({ ...employee, id: crypto.randomUUID() })));
+    const target = employees.at(-1);
+    if (!target) return;
+    const dummy = dummyEmployees[(employees.length - 1) % dummyEmployees.length];
+    onEmployeesChange(
+      employees.map((employee) =>
+        employee.id === target.id ? { ...dummy, id: employee.id } : employee,
+      ),
+    );
     setSubmitted(false);
+  }
+
+  function saveEmployees() {
+    setSubmitted(true);
+    if (employees.every((employee) => employeeSchema.safeParse(employee).success)) void onSave();
   }
 
   return (
@@ -370,9 +393,9 @@ function EmployeeEditor({
       </div>
 
       <div className="flex justify-end">
-        <Button type="button" variant="outline" onClick={() => setSubmitted(true)}>
-          <Check />
-          Check employee input
+        <Button type="button" onClick={saveEmployees}>
+          <Save />
+          {isEditing ? "Update employees" : "Save employees"}
         </Button>
       </div>
     </div>
@@ -578,7 +601,17 @@ function SupplierCompanyForm({
   );
 }
 
-function PartyWorkspacePanel({ kind }: { kind: PartyKind }) {
+function PartyWorkspacePanel({
+  kind,
+  mode,
+  onModeChange,
+  formVersion,
+}: {
+  kind: PartyKind;
+  mode: "new" | "records";
+  onModeChange: (mode: "new" | "records") => void;
+  formVersion: number;
+}) {
   const [activeSubTab, setActiveSubTab] = useState<PartySubTab>("company");
   const [customerCompany, setCustomerCompany] = useState<CustomerCompanyState>({
     companyName: "",
@@ -591,9 +624,101 @@ function PartyWorkspacePanel({ kind }: { kind: PartyKind }) {
     productTypes: [],
   });
   const [employees, setEmployees] = useState<EmployeeRow[]>([emptyEmployee()]);
+  const [recordsByKind, setRecordsByKind] = useState<Record<PartyKind, PartyRecord[]>>({
+    customer: [],
+    supplier: [],
+  });
+  const [query, setQuery] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
+  const [isSaving, setIsSaving] = useState(false);
 
   const domainSuffix =
     kind === "customer" ? customerCompany.emailDomainSuffix : supplierCompany.emailDomainSuffix;
+
+  if (activeFormVersion !== formVersion) {
+    setActiveFormVersion(formVersion);
+    setCustomerCompany({ companyName: "", emailDomainSuffix: "", type: "" });
+    setSupplierCompany({ companyName: "", emailDomainSuffix: "", productTypes: [] });
+    setEmployees([emptyEmployee()]);
+    setEditingId(null);
+    setActiveSubTab("company");
+  }
+
+  async function saveRecord() {
+    setIsSaving(true);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const company = kind === "customer" ? customerCompany : supplierCompany;
+    setRecordsByKind((allRecords) => {
+      const current = allRecords[kind];
+      const record = { id: editingId ?? crypto.randomUUID(), company, employees };
+      const next = editingId
+        ? current.map((item) => (item.id === editingId ? record : item))
+        : [...current, record];
+      return { ...allRecords, [kind]: next };
+    });
+    setEditingId(null);
+    setActiveSubTab("company");
+    onModeChange("records");
+    setIsSaving(false);
+  }
+
+  function editRecord(record: PartyRecord) {
+    if (kind === "customer") setCustomerCompany(record.company as CustomerCompanyState);
+    else setSupplierCompany(record.company as SupplierCompanyState);
+    setEmployees(record.employees);
+    setEditingId(record.id);
+    setActiveSubTab("company");
+  }
+
+  const visibleRecords = recordsByKind[kind].filter((record) =>
+    [
+      record.company.companyName,
+      record.company.emailDomainSuffix,
+      ...record.employees.flatMap((employee) => Object.values(employee)),
+    ]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase()),
+  );
+  const companyIsComplete =
+    kind === "customer"
+      ? customerCompanySchema.safeParse(customerCompany).success
+      : supplierCompanySchema.safeParse(supplierCompany).success;
+
+  if (mode === "records" && editingId === null) {
+    return (
+      <section className="mx-auto grid w-full max-w-6xl gap-5">
+        <div>
+          <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Directory</p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight">{partyLabels[kind]} records</h2>
+        </div>
+        <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="border-b p-4">
+            <div className="relative max-w-md">
+              <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder="Search company or employee" aria-label="Search records" />
+            </div>
+          </div>
+          {visibleRecords.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-muted/60 text-muted-foreground text-xs uppercase"><tr><th className="px-4 py-3">Company</th><th className="px-4 py-3">Domain</th><th className="px-4 py-3">Employees</th><th className="px-4 py-3 text-right">Action</th></tr></thead>
+                <tbody className="divide-y">{visibleRecords.map((record) => (
+                  <tr key={record.id} className="hover:bg-muted/30">
+                    <td className="px-4 py-3 font-medium">{record.company.companyName}</td>
+                    <td className="px-4 py-3 text-muted-foreground">@{record.company.emailDomainSuffix}</td>
+                    <td className="px-4 py-3">{record.employees.map((employee) => employee.userName).join(", ")}</td>
+                    <td className="px-4 py-3 text-right"><Button type="button" variant="ghost" size="sm" onClick={() => editRecord(record)}><Pencil />Edit</Button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          ) : <p className="text-muted-foreground p-10 text-center text-sm">{query ? "No matching records." : "No saved records yet."}</p>}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="mx-auto grid w-full max-w-6xl gap-5">
@@ -613,7 +738,9 @@ function PartyWorkspacePanel({ kind }: { kind: PartyKind }) {
           </SubTabButton>
           <SubTabButton
             active={activeSubTab === "employee"}
-            onClick={() => setActiveSubTab("employee")}
+            onClick={() => {
+              if (companyIsComplete) setActiveSubTab("employee");
+            }}
           >
             Employee
           </SubTabButton>
@@ -653,9 +780,19 @@ function PartyWorkspacePanel({ kind }: { kind: PartyKind }) {
             employees={employees}
             domainSuffix={domainSuffix}
             onEmployeesChange={setEmployees}
+            onSave={saveRecord}
+            isEditing={editingId !== null}
           />
         ) : null}
       </div>
+      {isSaving ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-background/75 backdrop-blur-sm" role="status" aria-live="polite">
+          <div className="flex items-center gap-3 rounded-lg border bg-card px-5 py-4 shadow-lg">
+            <span className="border-primary size-5 animate-spin rounded-full border-2 border-t-transparent" />
+            <span className="text-sm font-semibold">Saving...</span>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -861,7 +998,17 @@ function ProductWorkspacePanel() {
   );
 }
 
-export function EntityWorkspacePanel({ kind }: { kind: EntityKind }) {
+export function EntityWorkspacePanel({
+  kind,
+  mode = "new",
+  onModeChange = () => undefined,
+  formVersion = 0,
+}: {
+  kind: EntityKind;
+  mode?: "new" | "records";
+  onModeChange?: (mode: "new" | "records") => void;
+  formVersion?: number;
+}) {
   if (kind === "product") return <ProductWorkspacePanel />;
-  return <PartyWorkspacePanel kind={kind} />;
+  return <PartyWorkspacePanel kind={kind} mode={mode} onModeChange={onModeChange} formVersion={formVersion} />;
 }

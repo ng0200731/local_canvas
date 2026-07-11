@@ -32,8 +32,9 @@ polished, shareable ComfyUI/Krea for the web.
   drop a Generate node → type a prompt → generate → image appears.
 - **Reference-image flow:** connect or drop up to 14 image references, describe the
   desired edit/composition, and generate a result guided by those images.
-- **Persistence:** edits autosave; reloading restores the canvas (localStorage in demo
-  mode, Supabase Postgres when configured).
+- **Persistence:** edits autosave; reloading restores the canvas. Demo mode uses
+  browser storage only. Supabase mode stores canvas records in Postgres, with
+  editable nodes and edges in structured `canvas_nodes` / `canvas_edges` tables.
 
 ## Success criteria (manual checklist)
 

@@ -18,8 +18,9 @@ export function NodeDeleteButton({ id }: { id: string }) {
         <button
           type="button"
           aria-label="Delete node"
-          onClick={(e) => e.stopPropagation()}
-          className="bg-background/80 text-muted-foreground hover:text-destructive absolute top-1 right-1 z-10 flex size-5 items-center justify-center rounded opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100"
+          title="Delete node"
+          onPointerDown={(event) => event.stopPropagation()}
+          className="nodrag nopan bg-background/90 text-muted-foreground hover:text-destructive focus-visible:ring-ring absolute top-1 right-1 z-40 flex size-5 items-center justify-center rounded border opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2"
         >
           <X className="size-3.5" />
         </button>

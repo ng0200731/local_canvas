@@ -23,10 +23,12 @@ import { cn } from "@/lib/utils";
 
 type SectionId = "customer" | "product" | "supplier" | "project";
 type TabId = "customer" | "product" | "supplier" | "project";
+type WorkspaceMode = "new" | "records";
 
 interface MenuItem {
   label: string;
   tab: TabId;
+  mode: WorkspaceMode;
 }
 
 interface MenuSection {
@@ -49,8 +51,8 @@ const sections: MenuSection[] = [
     icon: Users,
     tab: "customer",
     items: [
-      { label: "New", tab: "customer" },
-      { label: "View / edit", tab: "customer" },
+      { label: "New", tab: "customer", mode: "new" },
+      { label: "View / edit", tab: "customer", mode: "records" },
     ],
   },
   {
@@ -59,8 +61,8 @@ const sections: MenuSection[] = [
     icon: Boxes,
     tab: "product",
     items: [
-      { label: "New", tab: "product" },
-      { label: "View / edit", tab: "product" },
+      { label: "New", tab: "product", mode: "new" },
+      { label: "View / edit", tab: "product", mode: "records" },
     ],
   },
   {
@@ -69,8 +71,8 @@ const sections: MenuSection[] = [
     icon: PackageSearch,
     tab: "supplier",
     items: [
-      { label: "New", tab: "supplier" },
-      { label: "View / edit", tab: "supplier" },
+      { label: "New", tab: "supplier", mode: "new" },
+      { label: "View / edit", tab: "supplier", mode: "records" },
     ],
   },
   {
@@ -79,8 +81,8 @@ const sections: MenuSection[] = [
     icon: FolderKanban,
     tab: "project",
     items: [
-      { label: "New", tab: "project" },
-      { label: "View / edit", tab: "project" },
+      { label: "New", tab: "project", mode: "new" },
+      { label: "View / edit", tab: "project", mode: "records" },
     ],
   },
 ];
@@ -161,6 +163,9 @@ function renderTabContent({
   onOpenCanvas,
   onBackToProjects,
   onBackToProjectDetail,
+  entityMode,
+  onEntityModeChange,
+  entityFormVersion,
 }: {
   tabId: TabId;
   selectedProjectId: string | null;
@@ -169,6 +174,9 @@ function renderTabContent({
   onOpenCanvas: (canvasId: string) => void;
   onBackToProjects: () => void;
   onBackToProjectDetail: () => void;
+  entityMode: WorkspaceMode;
+  onEntityModeChange: (mode: WorkspaceMode) => void;
+  entityFormVersion: number;
 }): ReactNode {
   if (tabId === "project") {
     return (
@@ -182,8 +190,8 @@ function renderTabContent({
       />
     );
   }
-  if (tabId === "customer") return <EntityWorkspacePanel kind="customer" />;
-  if (tabId === "supplier") return <EntityWorkspacePanel kind="supplier" />;
+  if (tabId === "customer") return <EntityWorkspacePanel kind="customer" mode={entityMode} onModeChange={onEntityModeChange} formVersion={entityFormVersion} />;
+  if (tabId === "supplier") return <EntityWorkspacePanel kind="supplier" mode={entityMode} onModeChange={onEntityModeChange} formVersion={entityFormVersion} />;
   return <EntityWorkspacePanel kind="product" />;
 }
 
@@ -201,6 +209,8 @@ export function WorkspaceShell({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedCanvasId, setSelectedCanvasId] = useState<string | null>(null);
   const [isMenuCollapsed, setIsMenuCollapsed] = useState(false);
+  const [entityMode, setEntityMode] = useState<WorkspaceMode>("new");
+  const [entityFormVersion, setEntityFormVersion] = useState(0);
 
   function openTab(tabId: TabId) {
     setTabs((current) =>
@@ -237,7 +247,7 @@ export function WorkspaceShell({
 
     setExpanded((current) => (current === section.id ? null : section.id));
     setActiveSection(section.id);
-    openTab(section.tab);
+    if (section.id === "product" || section.id === "project") openTab(section.tab);
   }
 
   function closeTab(tabId: TabId) {
@@ -332,7 +342,11 @@ export function WorkspaceShell({
                       <button
                         key={`${section.id}-${item.label}`}
                         type="button"
-                        onClick={() => openTab(item.tab)}
+                        onClick={() => {
+                          setEntityMode(item.mode);
+                          if (item.mode === "new") setEntityFormVersion((current) => current + 1);
+                          openTab(item.tab);
+                        }}
                         className={cn(
                           "focus-visible:ring-ring flex h-8 items-center rounded-md px-2 text-left text-sm transition-colors outline-none focus-visible:ring-2",
                           activeTab === item.tab
@@ -404,6 +418,9 @@ export function WorkspaceShell({
               onOpenCanvas: openCanvasDetail,
               onBackToProjects: backToProjects,
               onBackToProjectDetail: () => setSelectedCanvasId(null),
+              entityMode,
+              onEntityModeChange: setEntityMode,
+              entityFormVersion,
             })
           ) : (
             <div className="mx-auto flex h-full min-h-96 w-full max-w-4xl flex-col justify-center">

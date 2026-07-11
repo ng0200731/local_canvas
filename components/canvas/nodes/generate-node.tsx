@@ -41,6 +41,7 @@ import {
   useCanvasActions,
   useConnectionHighlight,
   useGroupAccent,
+  useReferenceHover,
   type ConnectedInputReference,
 } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
@@ -54,6 +55,16 @@ interface MentionState {
   start: number;
   end: number;
   query: string;
+}
+
+interface PromptReference {
+  nodeId: string;
+  alias: string;
+}
+
+interface PromptPart {
+  value: string;
+  reference: PromptReference | null;
 }
 
 function mentionAtCaret(value: string, caret: number): MentionState | null {
@@ -71,44 +82,73 @@ function aliasMatchesQuery(alias: string, query: string): boolean {
   return alias.toLowerCase().includes(query.trim().toLowerCase());
 }
 
-function promptParts(value: string, aliases: readonly string[]) {
-  const parts: Array<{ value: string; mention: boolean }> = [];
-  const sortedAliases = aliases
-    .map((alias) => alias.trim())
-    .filter(Boolean)
-    .sort((left, right) => right.length - left.length);
+function promptParts(value: string, references: readonly PromptReference[]): PromptPart[] {
+  const parts: PromptPart[] = [];
+  const sortedReferences = references
+    .map((reference) => ({ ...reference, alias: reference.alias.trim() }))
+    .filter((reference) => reference.alias.length > 0)
+    .sort((left, right) => right.alias.length - left.alias.length);
   let index = 0;
 
   while (index < value.length) {
-    const match = sortedAliases.find((alias) =>
-      value.slice(index).toLowerCase().startsWith(`@${alias.toLowerCase()}`),
+    const match = sortedReferences.find((reference) =>
+      value.slice(index).toLowerCase().startsWith(`@${reference.alias.toLowerCase()}`),
     );
 
     if (match) {
-      parts.push({ value: value.slice(index, index + match.length + 1), mention: true });
-      index += match.length + 1;
+      parts.push({
+        value: value.slice(index, index + match.alias.length + 1),
+        reference: match,
+      });
+      index += match.alias.length + 1;
       continue;
     }
 
     const nextAt = value.indexOf("@", index + 1);
     const end = nextAt < 0 ? value.length : nextAt;
-    parts.push({ value: value.slice(index, end), mention: false });
+    parts.push({ value: value.slice(index, end), reference: null });
     index = end;
   }
 
   return parts;
 }
 
-function PromptPreview({ value, aliases }: { value: string; aliases: readonly string[] }) {
+function PromptPreview({
+  value,
+  references,
+  hoveredReferenceNodeId,
+  onReferenceHover,
+  onReferencePointerDown,
+}: {
+  value: string;
+  references: readonly PromptReference[];
+  hoveredReferenceNodeId: string | null;
+  onReferenceHover: (nodeId: string | null) => void;
+  onReferencePointerDown: () => void;
+}) {
   if (!value) {
     return <span className="text-muted-foreground">Describe the image...</span>;
   }
 
-  return promptParts(value, aliases).map((part, index) =>
-    part.mention ? (
-      <strong key={`${part.value}-${index}`} className="text-foreground font-semibold underline">
+  return promptParts(value, references).map((part, index) =>
+    part.reference ? (
+      <mark
+        key={`${part.value}-${index}`}
+        onPointerEnter={() => onReferenceHover(part.reference?.nodeId ?? null)}
+        onPointerLeave={() => onReferenceHover(null)}
+        onPointerCancel={() => onReferenceHover(null)}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          onReferencePointerDown();
+        }}
+        className={cn(
+          "pointer-events-auto rounded-sm bg-yellow-200 box-decoration-clone px-0.5 font-semibold text-yellow-950 transition-colors dark:bg-yellow-300/30 dark:text-yellow-50",
+          hoveredReferenceNodeId === part.reference.nodeId &&
+            "bg-yellow-300 text-yellow-950 dark:bg-yellow-300/45",
+        )}
+      >
         {part.value}
-      </strong>
+      </mark>
     ) : (
       <span key={`${part.value}-${index}`}>{part.value}</span>
     ),
@@ -149,14 +189,17 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     updateNodeData,
     getConnectedInputReferences,
     hasConnectedOutputNode,
+    getConnectedOutputState,
     updateConnectedOutputData,
     writeGeneratedImageToOutput,
     deleteEdge,
   } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
+  const { hoveredReferenceNodeId, setHoveredReferenceNodeId } = useReferenceHover();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
+  const generatingRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [mention, setMention] = useState<MentionState | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
@@ -165,11 +208,25 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const height = data.height ?? DEFAULT_HEIGHT;
 
   useEffect(() => {
+    if (document.activeElement === textareaRef.current || promptDraft === data.prompt) return;
+    setPromptDraft(data.prompt);
+  }, [data.prompt, promptDraft]);
+
+  useEffect(() => {
     if (data.status !== "error" || !isStaleGenerationConfigurationError(data.error)) return;
     updateNodeData(id, { status: "idle", error: undefined });
   }, [data.error, data.status, id, updateNodeData]);
 
+  useEffect(
+    () => () => {
+      setHoveredReferenceNodeId(null);
+    },
+    [setHoveredReferenceNodeId],
+  );
+
   const hasOutput = hasConnectedOutputNode(id);
+  const connectedOutput = getConnectedOutputState(id);
+  const connectedOutputHasImage = Boolean(connectedOutput?.resultUrl);
   const connectedReferences = getConnectedInputReferences(id);
   const connectedImageReferences = connectedReferences.filter(hasImageUrl);
   const connectedReferenceUrls = new Set(
@@ -190,6 +247,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const hasGenerationReferences = allGenerationReferences.length > 0;
   const model = normalizeImageGenerationModel(data.model);
   const selectedModel = getModelCatalogEntry(model);
+  const isGenerating = loading || data.status === "loading";
   const mentionSuggestions = mention
     ? connectedReferences.filter((reference) => {
         const query = mention.query.toLowerCase();
@@ -205,12 +263,21 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     mentionSuggestions[activeSuggestionIndex] ?? firstMentionSuggestion;
 
   const renderedReferences = connectedReferences.map((reference) => {
+    const isReferenceHovered = hoveredReferenceNodeId === reference.nodeId;
+
     if (reference.kind === "pantone") {
       return (
         <div
           key={reference.nodeId}
           title={`@${reference.alias}`}
-          className="group/reference relative size-9 overflow-hidden rounded border"
+          onPointerEnter={() => setHoveredReferenceNodeId(reference.nodeId)}
+          onPointerLeave={() => setHoveredReferenceNodeId(null)}
+          onPointerCancel={() => setHoveredReferenceNodeId(null)}
+          className={cn(
+            "group/reference relative size-9 overflow-hidden rounded border transition-[box-shadow,transform]",
+            isReferenceHovered &&
+              "ring-offset-background shadow-lg ring-2 ring-yellow-400 ring-offset-1",
+          )}
         >
           <div
             className="size-full"
@@ -243,7 +310,14 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       <div
         key={reference.nodeId}
         title={`@${reference.alias}`}
-        className="group/reference relative size-9 overflow-hidden rounded"
+        onPointerEnter={() => setHoveredReferenceNodeId(reference.nodeId)}
+        onPointerLeave={() => setHoveredReferenceNodeId(null)}
+        onPointerCancel={() => setHoveredReferenceNodeId(null)}
+        className={cn(
+          "group/reference relative size-9 overflow-hidden rounded transition-[box-shadow,transform]",
+          isReferenceHovered &&
+            "ring-offset-background shadow-lg ring-2 ring-yellow-400 ring-offset-1",
+        )}
       >
         <ImagePreviewDialog
           src={reference.imageUrl}
@@ -355,6 +429,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   }
 
   async function onGenerate() {
+    if (generatingRef.current) return;
     const prompt = promptDraft.trim();
     if (!prompt) {
       toast.error("Enter a prompt first");
@@ -365,16 +440,20 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       return;
     }
 
+    generatingRef.current = true;
+    setLoading(true);
+
     const outputReady = updateConnectedOutputData(id, {
       status: "loading",
       error: undefined,
     });
     if (!outputReady) {
+      generatingRef.current = false;
+      setLoading(false);
       toast.error("Connect an Output node before generating");
       return;
     }
 
-    setLoading(true);
     updateNodeData(id, { status: "loading", error: undefined, model });
     try {
       const res = await fetch("/api/generate", {
@@ -405,13 +484,14 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       if (!outputWritten) {
         throw new Error("Output node was disconnected before generation finished");
       }
-      toast.success("Image generated");
+      toast.success("Image generated. Download it from Output if you need to keep this version.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
       updateNodeData(id, { status: "error", error: message });
       updateConnectedOutputData(id, { status: "error", error: message });
       toast.error(message);
     } finally {
+      generatingRef.current = false;
       setLoading(false);
     }
   }
@@ -571,17 +651,23 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         <div className="focus-within:border-ring focus-within:ring-ring/30 bg-background/60 relative rounded-md border focus-within:ring-2">
           <div
             ref={previewRef}
-            className="pointer-events-none absolute inset-0 overflow-hidden p-2 text-sm leading-5 font-semibold break-words whitespace-pre-wrap"
+            className="pointer-events-none absolute inset-0 z-20 overflow-hidden p-2 text-sm leading-5 font-semibold break-words whitespace-pre-wrap"
             aria-hidden="true"
           >
             <PromptPreview
               value={promptDraft}
-              aliases={connectedReferences.map((reference) => reference.alias)}
+              references={connectedReferences.map((reference) => ({
+                nodeId: reference.nodeId,
+                alias: reference.alias,
+              }))}
+              hoveredReferenceNodeId={hoveredReferenceNodeId}
+              onReferenceHover={setHoveredReferenceNodeId}
+              onReferencePointerDown={() => textareaRef.current?.focus()}
             />
           </div>
           <textarea
             ref={textareaRef}
-            rows={4}
+            rows={7}
             placeholder="Describe the image..."
             value={promptDraft}
             onChange={(event) => updatePrompt(event.target.value, event.target.selectionStart)}
@@ -595,10 +681,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             onKeyDown={handlePromptKeyDown}
             onScroll={handlePromptScroll}
             onBlur={() => window.setTimeout(() => setMention(null), 120)}
-            className="nodrag caret-foreground relative z-10 block w-full resize-none overflow-y-auto rounded-md border border-transparent bg-transparent p-2 text-sm leading-5 font-semibold text-transparent outline-none placeholder:text-transparent"
+            className="nodrag caret-foreground relative z-10 block min-h-36 w-full resize-none overflow-y-auto rounded-md border border-transparent bg-transparent p-2 text-sm leading-5 font-semibold text-transparent outline-none placeholder:text-transparent"
           />
           {mention && connectedReferences.length > 0 && (
-            <div className="nodrag nopan bg-popover text-popover-foreground absolute right-0 left-0 z-20 mt-1 max-h-32 overflow-y-auto rounded-md border p-1 shadow-md">
+            <div className="nodrag nopan bg-popover text-popover-foreground absolute right-0 left-0 z-30 mt-1 max-h-32 overflow-y-auto rounded-md border p-1 shadow-md">
               {mentionSuggestions.length > 0 ? (
                 mentionSuggestions.map((reference, index) => (
                   <button
@@ -647,8 +733,12 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         </div>
 
         <ConfirmDialog
-          title="Generate image?"
-          description={`Run ${selectedModel.aliases[0]} at 1024x1024? This may use API credits.`}
+          title={connectedOutputHasImage ? "Replace output image?" : "Generate image?"}
+          description={
+            connectedOutputHasImage
+              ? `This will replace the current Output image as soon as generation starts. Download it first if you need to keep it. Run ${selectedModel.aliases[0]} at 1024x1024?`
+              : `Run ${selectedModel.aliases[0]} at 1024x1024? This may use API credits.`
+          }
           confirmLabel="Generate"
           destructive={false}
           onConfirm={() => void onGenerate()}
@@ -657,14 +747,14 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
               type="button"
               size="sm"
               disabled={
-                loading ||
+                isGenerating ||
                 !hasOutput ||
                 allGenerationReferences.length > MAX_IMAGE_GENERATION_REFERENCES
               }
-              className="w-full"
+              className={cn("w-full", isGenerating && "cursor-not-allowed")}
             >
-              {loading ? <Loader2 className="animate-spin" /> : <Sparkles />}
-              {loading ? "Generating..." : "Generate"}
+              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />}
+              {isGenerating ? "Generating..." : "Generate"}
             </Button>
           }
         />
