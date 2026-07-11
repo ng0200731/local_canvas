@@ -19,6 +19,7 @@ const envSchema = z.object({
   // ── Supabase (optional) ──────────────────────────────────────────────
   NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: optionalString,
+  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: optionalString,
   // Server-only — NEVER expose to the client.
   SUPABASE_SERVICE_ROLE_KEY: optionalString,
 
@@ -32,7 +33,17 @@ const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 function loadEnv(): Env {
-  const parsed = envSchema.safeParse(process.env);
+  // Explicit property access is required so Next.js can inline NEXT_PUBLIC_*
+  // values into the browser bundle at build time.
+  const parsed = envSchema.safeParse({
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    XIANGSU_API_KEY: process.env.XIANGSU_API_KEY,
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+  });
   if (!parsed.success) {
     console.error("❌ Invalid environment variables:", parsed.error.flatten().fieldErrors);
     throw new Error("Invalid environment variables. Check your .env file — see .env.example.");
@@ -42,9 +53,13 @@ function loadEnv(): Env {
 
 export const env = loadEnv();
 
+/** Browser-safe Supabase key. Publishable keys replace the legacy anon-key name. */
+export const supabasePublicKey =
+  env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
 /** True when Supabase URL + anon key are present (auth + cloud persistence active). */
 export const isSupabaseConfigured = Boolean(
-  env.NEXT_PUBLIC_SUPABASE_URL && env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  env.NEXT_PUBLIC_SUPABASE_URL && supabasePublicKey,
 );
 
 /** True when a Xiangsu API key is present (AI image generation active). */

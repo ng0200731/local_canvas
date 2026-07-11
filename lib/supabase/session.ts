@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { env, isSupabaseConfigured } from "@/lib/env";
+import { env, isSupabaseConfigured, supabasePublicKey } from "@/lib/env";
 
 /**
  * Refreshes the Supabase auth session on every matched request and protects
@@ -17,7 +17,7 @@ export async function updateSession(request: NextRequest) {
 
   const supabase = createServerClient(
     env.NEXT_PUBLIC_SUPABASE_URL as string,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
+    supabasePublicKey as string,
     {
       cookies: {
         getAll() {

@@ -20,7 +20,7 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 
 | Variable                                                     | Effect                                                      |
 | ------------------------------------------------------------ | ----------------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Enables auth + cloud Postgres persistence + Storage uploads |
+| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Enables auth + cloud Postgres persistence + Storage uploads |
 | `SUPABASE_SERVICE_ROLE_KEY`                                  | Server-only admin access (storage deletes, etc.)            |
 | `XIANGSU_API_KEY`                                            | Enables server-side image generation via Xiangsu AI         |
 | `NEXT_PUBLIC_APP_URL`                                        | Public app URL (defaults to `http://localhost:3000`)        |
@@ -29,7 +29,7 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 
 1. Create a project at https://supabase.com.
 2. Project Settings → API → copy the **URL** and **anon** key into `.env.local`
-   (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`). Add the
+   (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Add the
    **service_role** key as `SUPABASE_SERVICE_ROLE_KEY`.
 3. Run every SQL migration in `supabase/migrations/` in filename order via the
    Supabase SQL editor or CLI.

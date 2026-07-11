@@ -1,6 +1,6 @@
 import { createBrowserClient } from "@supabase/ssr";
 
-import { env } from "@/lib/env";
+import { env, supabasePublicKey } from "@/lib/env";
 
 /**
  * Browser-side Supabase client (singleton).
@@ -12,7 +12,7 @@ export function getSupabaseBrowserClient() {
   if (client) return client;
   client = createBrowserClient(
     env.NEXT_PUBLIC_SUPABASE_URL as string,
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
+    supabasePublicKey as string,
   );
   return client;
 }
