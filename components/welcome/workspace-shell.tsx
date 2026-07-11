@@ -190,9 +190,32 @@ function renderTabContent({
       />
     );
   }
-  if (tabId === "customer") return <EntityWorkspacePanel kind="customer" mode={entityMode} onModeChange={onEntityModeChange} formVersion={entityFormVersion} />;
-  if (tabId === "supplier") return <EntityWorkspacePanel kind="supplier" mode={entityMode} onModeChange={onEntityModeChange} formVersion={entityFormVersion} />;
-  return <EntityWorkspacePanel kind="product" />;
+  if (tabId === "customer")
+    return (
+      <EntityWorkspacePanel
+        kind="customer"
+        mode={entityMode}
+        onModeChange={onEntityModeChange}
+        formVersion={entityFormVersion}
+      />
+    );
+  if (tabId === "supplier")
+    return (
+      <EntityWorkspacePanel
+        kind="supplier"
+        mode={entityMode}
+        onModeChange={onEntityModeChange}
+        formVersion={entityFormVersion}
+      />
+    );
+  return (
+    <EntityWorkspacePanel
+      kind="product"
+      mode={entityMode}
+      onModeChange={onEntityModeChange}
+      formVersion={entityFormVersion}
+    />
+  );
 }
 
 export function WorkspaceShell({
@@ -247,7 +270,7 @@ export function WorkspaceShell({
 
     setExpanded((current) => (current === section.id ? null : section.id));
     setActiveSection(section.id);
-    if (section.id === "product" || section.id === "project") openTab(section.tab);
+    if (section.id === "project") openTab(section.tab);
   }
 
   function closeTab(tabId: TabId) {

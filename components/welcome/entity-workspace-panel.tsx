@@ -5,8 +5,9 @@ import type { ChangeEvent, ClipboardEvent, DragEvent, ReactNode } from "react";
 import {
   Building2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ImagePlus,
-  Mail,
   Pencil,
   Plus,
   Save,
@@ -16,6 +17,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,14 +37,27 @@ import {
   employeeSchema,
   hadAtSymbol,
   normalizeEmailDomainSuffix,
+  productSchema,
   supplierCompanySchema,
   supplierProductTypeLabels,
   supplierProductTypes,
+  type CustomerRecord,
   type CustomerCompanyInput,
   type EmployeeInput,
+  type ProductRecord,
   type SupplierCompanyInput,
+  type SupplierRecord,
   type SupplierProductType,
 } from "@/lib/workspace-records";
+import {
+  useCustomers,
+  useProducts,
+  useSuppliers,
+  useUpsertCustomer,
+  useUpsertProduct,
+  useUpsertSupplier,
+} from "@/lib/hooks/use-workspace-records";
+import { uploadImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 
 type EntityKind = "customer" | "supplier" | "product";
@@ -53,11 +68,7 @@ interface EmployeeRow extends EmployeeInput {
   id: string;
 }
 
-interface PartyRecord {
-  id: string;
-  company: CustomerCompanyState | SupplierCompanyState;
-  employees: EmployeeRow[];
-}
+type PartyRecord = CustomerRecord | SupplierRecord;
 
 type CustomerCompanyState = CustomerCompanyInput;
 
@@ -65,7 +76,8 @@ type SupplierCompanyState = SupplierCompanyInput;
 
 interface ProductImageState {
   name: string;
-  src: string;
+  url: string;
+  storagePath: string | null;
 }
 
 interface ProductFormState {
@@ -103,17 +115,91 @@ const partyLabels: Record<PartyKind, string> = {
   supplier: "Supplier",
 };
 
-const dummyCustomerCompany: CustomerCompanyState = {
-  companyName: "Northstar Apparel Group",
-  emailDomainSuffix: "northstarapparel.com",
-  type: "Brand owner",
-};
+function normalizeSearchValue(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
 
-const dummySupplierCompany: SupplierCompanyState = {
-  companyName: "Bright Trim Manufacturing",
-  emailDomainSuffix: "brighttrim.com",
-  productTypes: ["label", "tag", "zipper"],
-};
+function fuzzyMatches(value: string, normalizedQuery: string) {
+  if (!normalizedQuery) return true;
+
+  const normalizedValue = normalizeSearchValue(value);
+  if (normalizedValue.includes(normalizedQuery)) return true;
+
+  let queryIndex = 0;
+  for (const character of normalizedValue) {
+    if (character === normalizedQuery[queryIndex]) queryIndex += 1;
+    if (queryIndex === normalizedQuery.length) return true;
+  }
+  return false;
+}
+
+function getEmployeeEmail(employee: EmployeeInput, domainSuffix: string) {
+  return `${employee.emailPrefix}@${normalizeEmailDomainSuffix(domainSuffix)}`;
+}
+
+function getEmployeeSearchText(employee: EmployeeInput, domainSuffix: string) {
+  return [
+    employee.userName,
+    employee.emailPrefix,
+    getEmployeeEmail(employee, domainSuffix),
+    employee.title,
+    employee.tel,
+  ].join(" ");
+}
+
+function getPartyRecordSearchText(record: PartyRecord) {
+  const companyDetail =
+    "type" in record.company
+      ? record.company.type
+      : record.company.productTypes
+          .map((productType) => supplierProductTypeLabels[productType])
+          .join(" ");
+
+  return [
+    record.company.companyName,
+    record.company.emailDomainSuffix,
+    companyDetail,
+    ...record.employees.map((employee) =>
+      getEmployeeSearchText(employee, record.company.emailDomainSuffix),
+    ),
+  ].join(" ");
+}
+
+const dummyCustomerCompanies: CustomerCompanyState[] = [
+  {
+    companyName: "Northstar Apparel Group",
+    emailDomainSuffix: "northstarapparel.com",
+    type: "Brand owner",
+  },
+  {
+    companyName: "Cobalt Streetwear Co.",
+    emailDomainSuffix: "cobaltstreetwear.com",
+    type: "Distributor",
+  },
+  {
+    companyName: "Harborline Retail Ltd.",
+    emailDomainSuffix: "harborlineretail.com",
+    type: "Buying office",
+  },
+];
+
+const dummySupplierCompanies: SupplierCompanyState[] = [
+  {
+    companyName: "Bright Trim Manufacturing",
+    emailDomainSuffix: "brighttrim.com",
+    productTypes: ["label", "tag", "zipper"],
+  },
+  {
+    companyName: "Metro Embroidery Works",
+    emailDomainSuffix: "metroembroidery.com",
+    productTypes: ["embroidery-patch", "snap"],
+  },
+  {
+    companyName: "Pearl Packaging Supply",
+    emailDomainSuffix: "pearlpackaging.com",
+    productTypes: ["tag", "label"],
+  },
+];
 
 const dummyEmployees: EmployeeRow[] = [
   {
@@ -132,14 +218,60 @@ const dummyEmployees: EmployeeRow[] = [
   },
 ];
 
-const dummyProduct: ProductFormState = {
-  subject: "Woven label set for summer capsule",
-  detail:
-    "Main neck label, care label, and hang tag package. Match soft-hand finish and keep colors within approved Pantone range.",
-  material: "Damask woven polyester, 80D",
-  colorNotes: "Black ground, warm white logo, copper accent thread",
-  image: null,
-};
+function createDummyEmployee(index: number): EmployeeRow {
+  const dummy = dummyEmployees[index % dummyEmployees.length];
+  const cycle = Math.floor(index / dummyEmployees.length);
+  const suffix = cycle > 0 ? ` ${cycle + 1}` : "";
+  const emailSuffix = cycle > 0 ? `.${cycle + 1}` : "";
+
+  return {
+    ...dummy,
+    id: crypto.randomUUID(),
+    userName: `${dummy.userName}${suffix}`,
+    emailPrefix: `${dummy.emailPrefix}${emailSuffix}`,
+  };
+}
+
+const dummyProducts: ProductFormState[] = [
+  {
+    subject: "Woven label set for summer capsule",
+    detail:
+      "Main neck label, care label, and hang tag package. Match soft-hand finish and keep colors within approved Pantone range.",
+    material: "Damask woven polyester, 80D",
+    colorNotes: "Black ground, warm white logo, copper accent thread",
+    image: null,
+  },
+  {
+    subject: "Matte paper hang tag program",
+    detail:
+      "Two-size tag set with reinforced eyelets, cotton cord, and barcode area reserved on the reverse side.",
+    material: "450gsm matte art card",
+    colorNotes: "Ivory stock, charcoal print, muted green accent",
+    image: null,
+  },
+  {
+    subject: "Antique brass snap sample",
+    detail:
+      "Logo-engraved snap set for outerwear trial. Confirm pull strength and plating consistency before bulk approval.",
+    material: "Brass alloy with antique finish",
+    colorNotes: "Aged brass, low shine, black enamel logo fill",
+    image: null,
+  },
+];
+
+function getDummyCustomerCompany(index: number): CustomerCompanyState {
+  return { ...dummyCustomerCompanies[index % dummyCustomerCompanies.length] };
+}
+
+function getDummySupplierCompany(index: number): SupplierCompanyState {
+  const company = dummySupplierCompanies[index % dummySupplierCompanies.length];
+  return { ...company, productTypes: [...company.productTypes] };
+}
+
+function getDummyProduct(index: number): ProductFormState {
+  const product = dummyProducts[index % dummyProducts.length];
+  return { ...product, image: product.image ? { ...product.image } : null };
+}
 
 function getZodFieldErrors(result: FieldParseResult) {
   const errors: Record<string, string> = {};
@@ -259,6 +391,7 @@ function EmployeeEditor({
   isEditing: boolean;
 }) {
   const [submitted, setSubmitted] = useState(false);
+  const [dummyInputCount, setDummyInputCount] = useState(0);
   const normalizedDomain = normalizeEmailDomainSuffix(domainSuffix);
 
   function updateEmployee(id: string, key: keyof EmployeeInput, value: string) {
@@ -280,14 +413,16 @@ function EmployeeEditor({
   }
 
   function fillDummyEmployees() {
-    const target = employees.at(-1);
-    if (!target) return;
-    const dummy = dummyEmployees[(employees.length - 1) % dummyEmployees.length];
+    const targetIndex = Math.max(employees.length - 1, 0);
+    const dummy = createDummyEmployee(dummyInputCount);
     onEmployeesChange(
-      employees.map((employee) =>
-        employee.id === target.id ? { ...dummy, id: employee.id } : employee,
-      ),
+      employees.length
+        ? employees.map((employee, index) =>
+            index === targetIndex ? { ...dummy, id: employee.id } : employee,
+          )
+        : [dummy],
     );
+    setDummyInputCount((count) => count + 1);
     setSubmitted(false);
   }
 
@@ -413,6 +548,7 @@ function CustomerCompanyForm({
 }) {
   const [errors, setErrors] = useState<CompanyErrors>({});
   const [domainPrompt, setDomainPrompt] = useState<string | null>(null);
+  const [dummyInputCount, setDummyInputCount] = useState(0);
 
   function updateField(key: keyof CustomerCompanyState, nextValue: string) {
     if (key === "emailDomainSuffix") {
@@ -448,7 +584,8 @@ function CustomerCompanyForm({
           type="button"
           variant="outline"
           onClick={() => {
-            onChange(dummyCustomerCompany);
+            onChange(getDummyCustomerCompany(dummyInputCount));
+            setDummyInputCount((count) => count + 1);
             setErrors({});
             setDomainPrompt(null);
           }}
@@ -513,6 +650,7 @@ function SupplierCompanyForm({
 }) {
   const [errors, setErrors] = useState<CompanyErrors>({});
   const [domainPrompt, setDomainPrompt] = useState<string | null>(null);
+  const [dummyInputCount, setDummyInputCount] = useState(0);
 
   function updateTextField(key: "companyName" | "emailDomainSuffix", nextValue: string) {
     if (key === "emailDomainSuffix") {
@@ -548,7 +686,8 @@ function SupplierCompanyForm({
           type="button"
           variant="outline"
           onClick={() => {
-            onChange(dummySupplierCompany);
+            onChange(getDummySupplierCompany(dummyInputCount));
+            setDummyInputCount((count) => count + 1);
             setErrors({});
             setDomainPrompt(null);
           }}
@@ -624,62 +763,94 @@ function PartyWorkspacePanel({
     productTypes: [],
   });
   const [employees, setEmployees] = useState<EmployeeRow[]>([emptyEmployee()]);
-  const [recordsByKind, setRecordsByKind] = useState<Record<PartyKind, PartyRecord[]>>({
-    customer: [],
-    supplier: [],
-  });
   const [query, setQuery] = useState("");
+  const [expandedRecordIds, setExpandedRecordIds] = useState<string[]>([]);
+  const [searchCollapsedRecordKeys, setSearchCollapsedRecordKeys] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
-  const [isSaving, setIsSaving] = useState(false);
+  const customers = useCustomers();
+  const suppliers = useSuppliers();
+  const upsertCustomer = useUpsertCustomer();
+  const upsertSupplier = useUpsertSupplier();
 
   const domainSuffix =
     kind === "customer" ? customerCompany.emailDomainSuffix : supplierCompany.emailDomainSuffix;
+  const records: PartyRecord[] =
+    kind === "customer" ? (customers.data ?? []) : (suppliers.data ?? []);
+  const isLoadingRecords = kind === "customer" ? customers.isLoading : suppliers.isLoading;
+  const isRecordsError = kind === "customer" ? customers.isError : suppliers.isError;
+  const recordsError = kind === "customer" ? customers.error : suppliers.error;
+  const isSaving = kind === "customer" ? upsertCustomer.isPending : upsertSupplier.isPending;
+  const normalizedQuery = normalizeSearchValue(query);
 
   if (activeFormVersion !== formVersion) {
     setActiveFormVersion(formVersion);
     setCustomerCompany({ companyName: "", emailDomainSuffix: "", type: "" });
     setSupplierCompany({ companyName: "", emailDomainSuffix: "", productTypes: [] });
     setEmployees([emptyEmployee()]);
+    setExpandedRecordIds([]);
+    setSearchCollapsedRecordKeys([]);
     setEditingId(null);
     setActiveSubTab("company");
   }
 
   async function saveRecord() {
-    setIsSaving(true);
-    await new Promise((resolve) => setTimeout(resolve, 500));
     const company = kind === "customer" ? customerCompany : supplierCompany;
-    setRecordsByKind((allRecords) => {
-      const current = allRecords[kind];
-      const record = { id: editingId ?? crypto.randomUUID(), company, employees };
-      const next = editingId
-        ? current.map((item) => (item.id === editingId ? record : item))
-        : [...current, record];
-      return { ...allRecords, [kind]: next };
-    });
-    setEditingId(null);
-    setActiveSubTab("company");
-    onModeChange("records");
-    setIsSaving(false);
+    try {
+      if (kind === "customer") {
+        await upsertCustomer.mutateAsync({
+          id: editingId,
+          input: { company: company as CustomerCompanyState, employees },
+        });
+      } else {
+        await upsertSupplier.mutateAsync({
+          id: editingId,
+          input: { company: company as SupplierCompanyState, employees },
+        });
+      }
+      toast.success(`${partyLabels[kind]} saved`);
+      setEditingId(null);
+      setActiveSubTab("company");
+      setSearchCollapsedRecordKeys([]);
+      onModeChange("records");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Failed to save ${kind}`);
+    }
   }
 
-  function editRecord(record: PartyRecord) {
+  function editRecord(record: PartyRecord, tab: PartySubTab) {
     if (kind === "customer") setCustomerCompany(record.company as CustomerCompanyState);
     else setSupplierCompany(record.company as SupplierCompanyState);
     setEmployees(record.employees);
     setEditingId(record.id);
-    setActiveSubTab("company");
+    setActiveSubTab(tab);
   }
 
-  const visibleRecords = recordsByKind[kind].filter((record) =>
-    [
-      record.company.companyName,
-      record.company.emailDomainSuffix,
-      ...record.employees.flatMap((employee) => Object.values(employee)),
-    ]
-      .join(" ")
-      .toLocaleLowerCase()
-      .includes(query.trim().toLocaleLowerCase()),
+  function getSearchCollapseKey(recordId: string) {
+    return `${normalizedQuery}::${recordId}`;
+  }
+
+  function toggleRecordExpansion(recordId: string, isExpanded: boolean) {
+    const searchCollapseKey = getSearchCollapseKey(recordId);
+
+    if (isExpanded) {
+      setExpandedRecordIds((current) => current.filter((id) => id !== recordId));
+      setSearchCollapsedRecordKeys((current) =>
+        current.includes(searchCollapseKey) ? current : [...current, searchCollapseKey],
+      );
+      return;
+    }
+
+    setExpandedRecordIds((current) =>
+      current.includes(recordId) ? current : [...current, recordId],
+    );
+    setSearchCollapsedRecordKeys((current) =>
+      current.filter((key) => key !== searchCollapseKey),
+    );
+  }
+
+  const visibleRecords = records.filter((record) =>
+    fuzzyMatches(getPartyRecordSearchText(record), normalizedQuery),
   );
   const companyIsComplete =
     kind === "customer"
@@ -690,31 +861,148 @@ function PartyWorkspacePanel({
     return (
       <section className="mx-auto grid w-full max-w-6xl gap-5">
         <div>
-          <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Directory</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-tight">{partyLabels[kind]} records</h2>
+          <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+            Directory
+          </p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight">
+            {partyLabels[kind]} records
+          </h2>
         </div>
-        <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="bg-card overflow-hidden rounded-lg border shadow-sm">
           <div className="border-b p-4">
             <div className="relative max-w-md">
               <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder="Search company or employee" aria-label="Search records" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="pl-9"
+                placeholder="Search company or employee"
+                aria-label="Search records"
+              />
             </div>
           </div>
-          {visibleRecords.length ? (
+          {isLoadingRecords ? (
+            <p className="text-muted-foreground p-10 text-center text-sm">Loading records...</p>
+          ) : isRecordsError ? (
+            <p className="text-destructive p-10 text-center text-sm">
+              Failed to load records:{" "}
+              {recordsError instanceof Error ? recordsError.message : "unknown error"}
+            </p>
+          ) : visibleRecords.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead className="bg-muted/60 text-muted-foreground text-xs uppercase"><tr><th className="px-4 py-3">Company</th><th className="px-4 py-3">Domain</th><th className="px-4 py-3">Employees</th><th className="px-4 py-3 text-right">Action</th></tr></thead>
-                <tbody className="divide-y">{visibleRecords.map((record) => (
-                  <tr key={record.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3 font-medium">{record.company.companyName}</td>
-                    <td className="px-4 py-3 text-muted-foreground">@{record.company.emailDomainSuffix}</td>
-                    <td className="px-4 py-3">{record.employees.map((employee) => employee.userName).join(", ")}</td>
-                    <td className="px-4 py-3 text-right"><Button type="button" variant="ghost" size="sm" onClick={() => editRecord(record)}><Pencil />Edit</Button></td>
+                <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
+                  <tr>
+                    <th className="px-4 py-3">Name</th>
+                    <th className="px-4 py-3">Email / domain</th>
+                    <th className="px-4 py-3">Details</th>
+                    <th className="px-4 py-3 text-right">Action</th>
                   </tr>
-                ))}</tbody>
+                </thead>
+                {visibleRecords.map((record) => {
+                  const matchingEmployees = normalizedQuery
+                    ? record.employees.filter((employee) =>
+                        fuzzyMatches(
+                          getEmployeeSearchText(employee, record.company.emailDomainSuffix),
+                          normalizedQuery,
+                        ),
+                      )
+                    : record.employees;
+                  const hasMatchingEmployees =
+                    normalizedQuery.length > 0 && matchingEmployees.length > 0;
+                  const isAutoExpanded =
+                    hasMatchingEmployees &&
+                    !searchCollapsedRecordKeys.includes(getSearchCollapseKey(record.id));
+                  const isExpanded = expandedRecordIds.includes(record.id) || isAutoExpanded;
+                  const employeesToShow = hasMatchingEmployees
+                    ? matchingEmployees
+                    : record.employees;
+                  const employeeCountLabel =
+                    record.employees.length === 1
+                      ? "1 employee"
+                      : `${record.employees.length} employees`;
+
+                  return (
+                    <tbody key={record.id} className="border-t first:border-t-0">
+                      <tr className="hover:bg-muted/30">
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            className="focus-visible:ring-ring -mx-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-medium outline-none focus-visible:ring-2"
+                            aria-expanded={isExpanded}
+                            onClick={() => toggleRecordExpansion(record.id, isExpanded)}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="text-muted-foreground size-4" />
+                            ) : (
+                              <ChevronRight className="text-muted-foreground size-4" />
+                            )}
+                            <Building2 className="text-muted-foreground size-4" />
+                            <span className="min-w-0 truncate">{record.company.companyName}</span>
+                          </button>
+                        </td>
+                        <td className="text-muted-foreground px-4 py-3">
+                          @{record.company.emailDomainSuffix}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant="secondary">{employeeCountLabel}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => editRecord(record, "company")}
+                          >
+                            <Pencil />
+                            Company Edit
+                          </Button>
+                        </td>
+                      </tr>
+                      {isExpanded
+                        ? employeesToShow.map((employee) => (
+                            <tr key={employee.id} className="bg-muted/10 hover:bg-muted/30">
+                              <td className="px-4 py-3 pl-10 font-medium">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <UserPlus className="text-muted-foreground size-4" />
+                                  <span className="min-w-0 truncate">{employee.userName}</span>
+                                </div>
+                              </td>
+                              <td className="text-muted-foreground px-4 py-3">
+                                {getEmployeeEmail(employee, record.company.emailDomainSuffix)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="grid gap-1">
+                                  <span>{employee.title}</span>
+                                  <span className="text-muted-foreground text-xs">
+                                    {employee.tel}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => editRecord(record, "employee")}
+                                >
+                                  <Pencil />
+                                  Employee Edit
+                                </Button>
+                              </td>
+                            </tr>
+                          ))
+                        : null}
+                    </tbody>
+                  );
+                })}
               </table>
             </div>
-          ) : <p className="text-muted-foreground p-10 text-center text-sm">{query ? "No matching records." : "No saved records yet."}</p>}
+          ) : (
+            <p className="text-muted-foreground p-10 text-center text-sm">
+              {query ? "No matching records." : "No saved records yet."}
+            </p>
+          )}
         </div>
       </section>
     );
@@ -723,7 +1011,22 @@ function PartyWorkspacePanel({
   return (
     <section className="mx-auto grid w-full max-w-6xl gap-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+        <div className="grid gap-2">
+          {editingId !== null ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-fit"
+              onClick={() => {
+                setEditingId(null);
+                setActiveSubTab("company");
+              }}
+            >
+              <ChevronLeft />
+              Back
+            </Button>
+          ) : null}
           <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
             Standard userform
           </p>
@@ -748,17 +1051,6 @@ function PartyWorkspacePanel({
       </div>
 
       <div className="bg-card rounded-lg border p-5 shadow-sm">
-        <div className="mb-5 flex flex-wrap gap-2">
-          <Badge variant={activeSubTab === "company" ? "default" : "outline"}>
-            <Building2 />
-            Company tab
-          </Badge>
-          <Badge variant={activeSubTab === "employee" ? "default" : "outline"}>
-            <Mail />
-            Employee tab
-          </Badge>
-        </div>
-
         {activeSubTab === "company" && kind === "customer" ? (
           <CustomerCompanyForm
             value={customerCompany}
@@ -786,8 +1078,12 @@ function PartyWorkspacePanel({
         ) : null}
       </div>
       {isSaving ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-background/75 backdrop-blur-sm" role="status" aria-live="polite">
-          <div className="flex items-center gap-3 rounded-lg border bg-card px-5 py-4 shadow-lg">
+        <div
+          className="bg-background/75 fixed inset-0 z-50 grid place-items-center backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="bg-card flex items-center gap-3 rounded-lg border px-5 py-4 shadow-lg">
             <span className="border-primary size-5 animate-spin rounded-full border-2 border-t-transparent" />
             <span className="text-sm font-semibold">Saving...</span>
           </div>
@@ -801,22 +1097,15 @@ function getFirstImageFile(fileList: FileList) {
   return Array.from(fileList).find((file) => file.type.startsWith("image/")) ?? null;
 }
 
-function readImageFile(file: File): Promise<ProductImageState> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve({ name: file.name || "Pasted image", src: reader.result });
-        return;
-      }
-      reject(new Error("Unable to read image file."));
-    });
-    reader.addEventListener("error", () => reject(new Error("Unable to read image file.")));
-    reader.readAsDataURL(file);
-  });
-}
-
-function ProductWorkspacePanel() {
+function ProductWorkspacePanel({
+  mode,
+  onModeChange,
+  formVersion,
+}: {
+  mode: "new" | "records";
+  onModeChange: (mode: "new" | "records") => void;
+  formVersion: number;
+}) {
   const fileInputId = useId();
   const [form, setForm] = useState<ProductFormState>({
     subject: "",
@@ -826,6 +1115,14 @@ function ProductWorkspacePanel() {
     image: null,
   });
   const [imageError, setImageError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
+  const [submitted, setSubmitted] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [dummyInputCount, setDummyInputCount] = useState(0);
+  const products = useProducts();
+  const upsertProduct = useUpsertProduct();
 
   const hasProductDetail = useMemo(
     () =>
@@ -834,6 +1131,28 @@ function ProductWorkspacePanel() {
       ),
     [form.colorNotes, form.detail, form.material, form.subject],
   );
+  const parseResult = productSchema.safeParse(form);
+  const errors = submitted ? getZodFieldErrors(parseResult) : {};
+  const visibleProducts = (products.data ?? []).filter((product) =>
+    [product.subject, product.detail, product.material, product.colorNotes]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase()),
+  );
+
+  if (activeFormVersion !== formVersion) {
+    setActiveFormVersion(formVersion);
+    setForm({
+      subject: "",
+      detail: "",
+      material: "",
+      colorNotes: "",
+      image: null,
+    });
+    setImageError(null);
+    setEditingId(null);
+    setSubmitted(false);
+  }
 
   async function setImageFromFiles(fileList: FileList) {
     const imageFile = getFirstImageFile(fileList);
@@ -843,11 +1162,21 @@ function ProductWorkspacePanel() {
     }
 
     try {
-      const image = await readImageFile(imageFile);
-      setForm((current) => ({ ...current, image }));
+      setIsUploadingImage(true);
+      const image = await uploadImage(imageFile);
+      setForm((current) => ({
+        ...current,
+        image: {
+          name: imageFile.name || "Pasted image",
+          url: image.url,
+          storagePath: image.storagePath,
+        },
+      }));
       setImageError(null);
     } catch (error) {
       setImageError(error instanceof Error ? error.message : "Unable to read image file.");
+    } finally {
+      setIsUploadingImage(false);
     }
   }
 
@@ -867,6 +1196,106 @@ function ProductWorkspacePanel() {
     void setImageFromFiles(event.target.files);
   }
 
+  async function saveProduct() {
+    setSubmitted(true);
+    const result = productSchema.safeParse(form);
+    if (!result.success) return;
+
+    try {
+      await upsertProduct.mutateAsync({ id: editingId, input: result.data });
+      toast.success("Product saved");
+      setEditingId(null);
+      onModeChange("records");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save product");
+    }
+  }
+
+  function editProduct(product: ProductRecord) {
+    setForm({
+      subject: product.subject,
+      detail: product.detail,
+      material: product.material,
+      colorNotes: product.colorNotes,
+      image: product.image,
+    });
+    setEditingId(product.id);
+    setSubmitted(false);
+    setImageError(null);
+  }
+
+  if (mode === "records" && editingId === null) {
+    return (
+      <section className="mx-auto grid w-full max-w-6xl gap-5">
+        <div>
+          <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+            Directory
+          </p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-tight">Product records</h2>
+        </div>
+        <div className="bg-card overflow-hidden rounded-lg border shadow-sm">
+          <div className="border-b p-4">
+            <div className="relative max-w-md">
+              <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="pl-9"
+                placeholder="Search product records"
+                aria-label="Search product records"
+              />
+            </div>
+          </div>
+          {products.isLoading ? (
+            <p className="text-muted-foreground p-10 text-center text-sm">Loading products...</p>
+          ) : products.isError ? (
+            <p className="text-destructive p-10 text-center text-sm">
+              Failed to load products:{" "}
+              {products.error instanceof Error ? products.error.message : "unknown error"}
+            </p>
+          ) : visibleProducts.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
+                  <tr>
+                    <th className="px-4 py-3">Subject</th>
+                    <th className="px-4 py-3">Material</th>
+                    <th className="px-4 py-3">Color notes</th>
+                    <th className="px-4 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {visibleProducts.map((product) => (
+                    <tr key={product.id} className="hover:bg-muted/30">
+                      <td className="px-4 py-3 font-medium">{product.subject}</td>
+                      <td className="text-muted-foreground px-4 py-3">{product.material}</td>
+                      <td className="px-4 py-3">{product.colorNotes}</td>
+                      <td className="px-4 py-3 text-right">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => editProduct(product)}
+                        >
+                          <Pencil />
+                          Edit
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-muted-foreground p-10 text-center text-sm">
+              {query ? "No matching products." : "No saved products yet."}
+            </p>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="mx-auto grid w-full max-w-6xl gap-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -876,17 +1305,25 @@ function ProductWorkspacePanel() {
           </p>
           <h2 className="mt-1 text-2xl font-semibold tracking-tight">Product (+)</h2>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setForm(dummyProduct);
-            setImageError(null);
-          }}
-        >
-          <Wand2 />
-          Dummy input
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setForm(getDummyProduct(dummyInputCount));
+              setDummyInputCount((count) => count + 1);
+              setImageError(null);
+              setSubmitted(false);
+            }}
+          >
+            <Wand2 />
+            Dummy input
+          </Button>
+          <Button type="button" onClick={saveProduct} disabled={upsertProduct.isPending}>
+            <Save />
+            {editingId ? "Update product" : "Save product"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,380px)]">
@@ -895,14 +1332,14 @@ function ProductWorkspacePanel() {
             <Badge variant={hasProductDetail ? "default" : "outline"}>Product detail</Badge>
           </div>
           <div className="grid gap-4">
-            <FormField label="Subject">
+            <FormField label="Subject" error={errors.subject}>
               <Input
                 value={form.subject}
                 onChange={(event) => setForm({ ...form, subject: event.target.value })}
                 placeholder="Product subject"
               />
             </FormField>
-            <FormField label="Product detail">
+            <FormField label="Product detail" error={errors.detail}>
               <Textarea
                 value={form.detail}
                 onChange={(event) => setForm({ ...form, detail: event.target.value })}
@@ -911,14 +1348,14 @@ function ProductWorkspacePanel() {
               />
             </FormField>
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Material">
+              <FormField label="Material" error={errors.material}>
                 <Input
                   value={form.material}
                   onChange={(event) => setForm({ ...form, material: event.target.value })}
                   placeholder="Woven polyester, cotton, alloy..."
                 />
               </FormField>
-              <FormField label="Color notes">
+              <FormField label="Color notes" error={errors.colorNotes}>
                 <Input
                   value={form.colorNotes}
                   onChange={(event) => setForm({ ...form, colorNotes: event.target.value })}
@@ -957,7 +1394,7 @@ function ProductWorkspacePanel() {
               <div className="grid gap-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={form.image.src}
+                  src={form.image.url}
                   alt="Product preview"
                   className="max-h-64 w-full rounded-md object-contain"
                 />
@@ -969,7 +1406,9 @@ function ProductWorkspacePanel() {
                   <ImagePlus className="text-muted-foreground size-6" />
                 </span>
                 <div>
-                  <p className="text-sm font-medium">Paste or drop product image</p>
+                  <p className="text-sm font-medium">
+                    {isUploadingImage ? "Uploading image..." : "Paste or drop product image"}
+                  </p>
                   <p className="text-muted-foreground mt-1 text-xs leading-5">
                     Ctrl+V from clipboard, drag and drop, or choose a file.
                   </p>
@@ -994,6 +1433,18 @@ function ProductWorkspacePanel() {
           ) : null}
         </div>
       </div>
+      {upsertProduct.isPending ? (
+        <div
+          className="bg-background/75 fixed inset-0 z-50 grid place-items-center backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="bg-card flex items-center gap-3 rounded-lg border px-5 py-4 shadow-lg">
+            <span className="border-primary size-5 animate-spin rounded-full border-2 border-t-transparent" />
+            <span className="text-sm font-semibold">Saving...</span>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1009,6 +1460,16 @@ export function EntityWorkspacePanel({
   onModeChange?: (mode: "new" | "records") => void;
   formVersion?: number;
 }) {
-  if (kind === "product") return <ProductWorkspacePanel />;
-  return <PartyWorkspacePanel kind={kind} mode={mode} onModeChange={onModeChange} formVersion={formVersion} />;
+  if (kind === "product")
+    return (
+      <ProductWorkspacePanel mode={mode} onModeChange={onModeChange} formVersion={formVersion} />
+    );
+  return (
+    <PartyWorkspacePanel
+      kind={kind}
+      mode={mode}
+      onModeChange={onModeChange}
+      formVersion={formVersion}
+    />
+  );
 }

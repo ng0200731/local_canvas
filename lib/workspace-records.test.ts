@@ -4,6 +4,7 @@ import {
   customerCompanySchema,
   hadAtSymbol,
   normalizeEmailDomainSuffix,
+  productSchema,
   supplierCompanySchema,
 } from "@/lib/workspace-records";
 
@@ -46,6 +47,32 @@ describe("workspace record validation", () => {
         companyName: "Bright Trim",
         emailDomainSuffix: "brighttrim.com",
         productTypes: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates product records", () => {
+    expect(
+      productSchema.safeParse({
+        subject: "Woven label",
+        detail: "Main neck label and care label",
+        material: "Polyester",
+        colorNotes: "Black and white",
+        image: {
+          name: "label.webp",
+          url: "https://example.com/label.webp",
+          storagePath: null,
+        },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      productSchema.safeParse({
+        subject: "",
+        detail: "",
+        material: "",
+        colorNotes: "",
+        image: null,
       }).success,
     ).toBe(false);
   });

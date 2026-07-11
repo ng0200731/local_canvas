@@ -18,6 +18,8 @@ polished, shareable ComfyUI/Krea for the web.
    reference slot.
 6. **AI generation** — Generate node calls Xiangsu AI server-side with a selectable
    image model; the result is written to a connected Output node.
+7. **Workspace records** — create and edit customer, supplier, and product records
+   in structured tables.
 
 ## Explicitly out of scope (future milestones)
 
@@ -35,6 +37,8 @@ polished, shareable ComfyUI/Krea for the web.
 - **Persistence:** edits autosave; reloading restores the canvas. Demo mode uses
   browser storage only. Supabase mode stores canvas records in Postgres, with
   editable nodes and edges in structured `canvas_nodes` / `canvas_edges` tables.
+  Customer, supplier, and product records are also stored in structured Postgres
+  tables, not UI state.
 
 ## Success criteria (manual checklist)
 

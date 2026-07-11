@@ -35,11 +35,14 @@ matching key in `.env.local`.
 - [ ] Projects & canvases persist to Postgres across reloads and a second device.
 - [ ] Canvas edits create/update rows in `canvas_nodes` and `canvas_edges`.
 - [ ] Reloading a canvas fetches those database rows and keeps nodes editable.
+- [ ] Customer create/edit saves rows in `customers` and `customer_employees`.
+- [ ] Supplier create/edit saves rows in `suppliers` and `supplier_employees`.
+- [ ] Product create/edit saves rows in `products`.
 - [ ] Uploaded images are stored in the private-per-user `uploads` bucket.
 
 ## Automated
 
-- [ ] `pnpm test` — unit tests for the local store, store selector, and canvas
+- [ ] `pnpm test` — unit tests for local stores, store selector, and canvas
       content validation pass.
 - [ ] `pnpm lint` — eslint passes.
 - [ ] `pnpm build` — production build succeeds.

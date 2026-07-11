@@ -46,6 +46,16 @@ Canvas persistence uses structured database tables:
   The app saves through `replace_canvas_graph(...)`, which updates the mirror
   and replaces node/edge rows atomically.
 
+Customer, supplier, and product records also use structured database tables:
+
+- `customers` and `customer_employees` store customer companies and contacts.
+- `suppliers` and `supplier_employees` store supplier companies, contacts, and
+  typed product categories.
+- `products` stores product subject, detail, material, color notes, and image
+  URL metadata.
+- Customer and supplier saves use database functions that update the company
+  and replace employee rows in one transaction.
+
 ## Enabling AI generation
 
 1. Obtain a Xiangsu API key and rotate any key that has been exposed publicly.
