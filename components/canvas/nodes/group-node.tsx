@@ -1,7 +1,9 @@
 "use client";
 
 import { type NodeProps } from "@xyflow/react";
+import { Ungroup } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { GroupCanvasNode } from "@/lib/nodes/types";
@@ -14,7 +16,7 @@ const DEFAULT_WIDTH = 320;
 const DEFAULT_HEIGHT = 192;
 
 export function GroupNode({ id, data, selected }: NodeProps<GroupCanvasNode>) {
-  const { updateNodeData } = useCanvasActions();
+  const { updateNodeData, ungroupNode } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
@@ -28,6 +30,17 @@ export function GroupNode({ id, data, selected }: NodeProps<GroupCanvasNode>) {
       )}
     >
       <NodeDeleteButton id={id} />
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="outline"
+        className="nodrag absolute top-2 right-10 z-10"
+        aria-label="Disassemble group"
+        title="Disassemble group"
+        onClick={() => ungroupNode(id)}
+      >
+        <Ungroup />
+      </Button>
       <InputPort color={NODE_PORT_COLORS.group} />
       <input
         value={data.label}

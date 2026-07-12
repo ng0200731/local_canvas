@@ -109,22 +109,36 @@ export const productImageSchema = z.object({
   storagePath: z.string().nullable(),
 });
 
-export const productSchema = z.object({
-  productType: z.enum(supplierProductTypes),
-  subject: z.string().trim().min(1, "Subject is required."),
-  detail: z.string().trim().min(1, "Product detail is required."),
+export const productVariantInputSchema = z.object({
+  id: z.string().trim().min(1, "Variant id is required."),
+  sortIndex: z.number().int().min(0),
   material: z.string().trim().min(1, "Material is required."),
   colorNotes: z.string().trim().min(1, "Color notes are required."),
   parameters: z.record(z.string(), z.string()),
   unitPrice: z.string().trim().min(1, "Unit price is required."),
   priceUnit: z.string().trim().min(1, "Price unit is required."),
+  image: productImageSchema,
+});
+
+export const productVariantRecordSchema = productVariantInputSchema.extend({
   image: productImageSchema.nullable(),
 });
+
+export const productRecordInputSchema = z.object({
+  supplierId: z.string().trim().min(1, "Supplier is required."),
+  productType: z.enum(supplierProductTypes),
+  subject: z.string().trim().min(1, "Subject is required."),
+  detail: z.string().trim().min(1, "Product detail is required."),
+  variants: z.array(productVariantInputSchema).min(1, "Add at least one product image."),
+});
+
+export const productSchema = productRecordInputSchema;
 
 export type CustomerCompanyInput = z.infer<typeof customerCompanySchema>;
 export type SupplierCompanyInput = z.infer<typeof supplierCompanySchema>;
 export type EmployeeInput = z.infer<typeof employeeSchema>;
 export type ProductImageInput = z.infer<typeof productImageSchema>;
+export type ProductVariantInput = z.infer<typeof productVariantInputSchema>;
 export type ProductInput = z.infer<typeof productSchema>;
 
 export interface EmployeeRecord extends EmployeeInput {
@@ -147,8 +161,17 @@ export interface SupplierRecord {
   updatedAt: string;
 }
 
-export interface ProductRecord extends ProductInput {
+export interface ProductVariantRecord extends Omit<ProductVariantInput, "image"> {
+  image: ProductImageInput | null;
+}
+
+export interface ProductRecord {
   id: string;
+  supplierId: string | null;
+  productType: SupplierProductType;
+  subject: string;
+  detail: string;
+  variants: ProductVariantRecord[];
   createdAt: string;
   updatedAt: string;
 }
@@ -163,11 +186,104 @@ export const supplierRecordInputSchema = z.object({
   employees: z.array(employeeSchema.extend({ id: z.string().min(1) })).min(1),
 });
 
-export const productRecordInputSchema = productSchema;
-
 export type CustomerRecordInput = z.infer<typeof customerRecordInputSchema>;
 export type SupplierRecordInput = z.infer<typeof supplierRecordInputSchema>;
 export type ProductRecordInput = z.infer<typeof productRecordInputSchema>;
+export type ProductVariantRecordInput = z.infer<typeof productVariantRecordSchema>;
+
+function normalizeProductUnitPrice(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value : "0";
+}
+
+function normalizeProductPriceUnit(
+  value: unknown,
+  productType: SupplierProductType,
+): string {
+  return typeof value === "string" && value.trim() ? value : getProductPriceUnit(productType);
+}
+
+export function normalizeProductVariant(
+  value: unknown,
+  fallbackProductType: SupplierProductType,
+  fallbackSortIndex = 0,
+): ProductVariantRecord {
+  const candidate =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const parsed = productVariantRecordSchema.safeParse({
+    id:
+      typeof candidate.id === "string" && candidate.id.trim()
+        ? candidate.id
+        : `variant-${fallbackSortIndex + 1}`,
+    sortIndex: typeof candidate.sortIndex === "number" ? candidate.sortIndex : fallbackSortIndex,
+    material: typeof candidate.material === "string" ? candidate.material : "",
+    colorNotes: typeof candidate.colorNotes === "string" ? candidate.colorNotes : "",
+    parameters: normalizeProductParameters(candidate.parameters),
+    unitPrice: normalizeProductUnitPrice(candidate.unitPrice),
+    priceUnit: normalizeProductPriceUnit(candidate.priceUnit, fallbackProductType),
+    image: productImageSchema.nullable().catch(null).parse(candidate.image ?? null),
+  });
+
+  return parsed.success
+    ? parsed.data
+    : {
+        id: `variant-${fallbackSortIndex + 1}`,
+        sortIndex: fallbackSortIndex,
+        material: "",
+        colorNotes: "",
+        parameters: {},
+        unitPrice: "0",
+        priceUnit: getProductPriceUnit(fallbackProductType),
+        image: null,
+      };
+}
+
+export function normalizeProductRecord(value: unknown): ProductRecord {
+  const candidate =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const productType = normalizeSupplierProductType(
+    typeof candidate.productType === "string" ? candidate.productType : null,
+  );
+  const variantsValue = Array.isArray(candidate.variants) ? candidate.variants : [];
+  const variants =
+    variantsValue.length > 0
+      ? variantsValue.map((variant, index) => normalizeProductVariant(variant, productType, index))
+      : [
+          normalizeProductVariant(
+            {
+              id: "variant-1",
+              sortIndex: 0,
+              material: typeof candidate.material === "string" ? candidate.material : "",
+              colorNotes: typeof candidate.colorNotes === "string" ? candidate.colorNotes : "",
+              parameters: candidate.parameters,
+              unitPrice: candidate.unitPrice,
+              priceUnit: candidate.priceUnit,
+              image: candidate.image ?? null,
+            },
+            productType,
+            0,
+          ),
+        ];
+
+  return {
+    id: typeof candidate.id === "string" ? candidate.id : "",
+    supplierId:
+      typeof candidate.supplierId === "string" && candidate.supplierId.trim()
+        ? candidate.supplierId
+        : null,
+    productType,
+    subject: typeof candidate.subject === "string" ? candidate.subject : "",
+    detail: typeof candidate.detail === "string" ? candidate.detail : "",
+    variants: variants
+      .sort((left, right) => left.sortIndex - right.sortIndex)
+      .map((variant, index) => ({ ...variant, sortIndex: index })),
+    createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "",
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
+  };
+}
 
 export function normalizeEmailDomainSuffix(value: string) {
   return value.trim().replaceAll("@", "").replace(/\s+/g, "").toLowerCase();

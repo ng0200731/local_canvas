@@ -14,6 +14,7 @@ export interface WorkspaceRecordStore {
   upsertSupplier(id: string | null, input: SupplierRecordInput): Promise<SupplierRecord>;
   listProducts(): Promise<ProductRecord[]>;
   upsertProduct(id: string | null, input: ProductRecordInput): Promise<ProductRecord>;
+  getProduct(productId: string): Promise<ProductRecord | null>;
 }
 
 export type WorkspaceRecordKind = "customer" | "supplier" | "product";

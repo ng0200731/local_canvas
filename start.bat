@@ -31,13 +31,13 @@ if not exist "node_modules" (
   echo.
 )
 
-echo Starting the dev server at http://localhost:3000/login?redirect=/projects
+echo Starting the dev server at http://localhost:3000/login?redirect=/
 echo ^(Press Ctrl+C in this window to stop.^)
 echo.
 
 REM Open the browser a few seconds after the server starts (runs in parallel).
 REM `ping` is used as the delay because it works in any console context (timeout does not).
-start "" /min cmd /c "ping -n 5 127.0.0.1 >nul & start "" http://localhost:3000/login?redirect=/projects"
+start "" /min cmd /c "ping -n 5 127.0.0.1 >nul & start "" http://localhost:3000/login?redirect=/"
 
 call pnpm dev
 

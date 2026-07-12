@@ -3,14 +3,11 @@ import { z } from "zod";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   customerRecordInputSchema,
-  getProductPriceUnit,
-  normalizeProductParameters,
-  normalizeSupplierProductType,
+  normalizeProductRecord,
   normalizeSupplierProductTypes,
   productRecordInputSchema,
   supplierRecordInputSchema,
   type CustomerRecord,
-  type ProductImageInput,
   type ProductRecord,
   type SupplierRecord,
 } from "@/lib/workspace-records";
@@ -44,13 +41,27 @@ const supplierRowSchema = z.object({
   updated_at: z.string(),
 });
 
+const productVariantRowSchema = z.object({
+  id: z.string(),
+  sort_index: z.number().int(),
+  material: z.string().nullable().optional(),
+  color_notes: z.string().nullable().optional(),
+  parameters: z.unknown().nullable().optional(),
+  unit_price: z.string().nullable().optional(),
+  price_unit: z.string().nullable().optional(),
+  image_name: z.string().nullable(),
+  image_url: z.string().nullable(),
+  image_storage_path: z.string().nullable(),
+});
+
 const productRowSchema = z.object({
   id: z.string(),
+  supplier_id: z.string().nullable().optional(),
   product_type: z.string().nullable().optional(),
   subject: z.string(),
   detail: z.string(),
-  material: z.string(),
-  color_notes: z.string(),
+  material: z.string().nullable().optional(),
+  color_notes: z.string().nullable().optional(),
   parameters: z.unknown().nullable().optional(),
   unit_price: z.string().nullable().optional(),
   price_unit: z.string().nullable().optional(),
@@ -59,6 +70,7 @@ const productRowSchema = z.object({
   image_storage_path: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
+  product_variants: z.array(productVariantRowSchema).optional().default([]),
 });
 
 function assertNoError<T extends { error: { message: string } | null }>(
@@ -74,6 +86,10 @@ function toUnknownArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function isMissingVariantsRpc(message: string): boolean {
+  return message.includes("upsert_product_with_variants") && message.includes("schema cache");
+}
+
 function mapEmployees(value: unknown) {
   return toUnknownArray(value)
     .map((row) => employeeRowSchema.parse(row))
@@ -85,15 +101,6 @@ function mapEmployees(value: unknown) {
       title: row.title,
       tel: row.tel,
     }));
-}
-
-function imageFromRow(row: z.infer<typeof productRowSchema>): ProductImageInput | null {
-  if (!row.image_name || !row.image_url) return null;
-  return {
-    name: row.image_name,
-    url: row.image_url,
-    storagePath: row.image_storage_path,
-  };
 }
 
 function mapCustomer(rowValue: unknown, employeeRows: unknown): CustomerRecord {
@@ -128,21 +135,48 @@ function mapSupplier(rowValue: unknown, employeeRows: unknown): SupplierRecord {
 
 function mapProduct(rowValue: unknown): ProductRecord {
   const row = productRowSchema.parse(rowValue);
-  const productType = normalizeSupplierProductType(row.product_type);
-  return {
+  return normalizeProductRecord({
     id: row.id,
-    productType,
+    supplierId: row.supplier_id ?? null,
+    productType: row.product_type,
     subject: row.subject,
     detail: row.detail,
     material: row.material,
     colorNotes: row.color_notes,
-    parameters: normalizeProductParameters(row.parameters),
-    unitPrice: row.unit_price?.trim() ? row.unit_price : "0",
-    priceUnit: row.price_unit?.trim() ? row.price_unit : getProductPriceUnit(productType),
-    image: imageFromRow(row),
+    parameters: row.parameters,
+    unitPrice: row.unit_price,
+    priceUnit: row.price_unit,
+    image:
+      row.image_name && row.image_url
+        ? {
+            name: row.image_name,
+            url: row.image_url,
+            storagePath: row.image_storage_path,
+          }
+        : null,
+    variants:
+      row.product_variants.length > 0
+        ? row.product_variants.map((variant) => ({
+            id: variant.id,
+            sortIndex: variant.sort_index,
+            material: variant.material ?? "",
+            colorNotes: variant.color_notes ?? "",
+            parameters: variant.parameters,
+            unitPrice: variant.unit_price,
+            priceUnit: variant.price_unit,
+            image:
+              variant.image_name && variant.image_url
+                ? {
+                    name: variant.image_name,
+                    url: variant.image_url,
+                    storagePath: variant.image_storage_path,
+                  }
+                : null,
+          }))
+        : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-  };
+  });
 }
 
 export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
@@ -215,41 +249,129 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
     },
 
     async listProducts() {
-      const { data, error } = await supabase
+      const query = await supabase
         .from("products")
         .select(
-          "id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at",
+          "id, supplier_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
         )
         .order("updated_at", { ascending: false });
-      assertNoError({ error }, "listProducts");
-      return toUnknownArray(data).map(mapProduct);
+      if (query.error?.message.includes("supplier_id") || query.error?.message.includes("product_variants")) {
+        const legacy = await supabase
+          .from("products")
+          .select(
+            "id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at",
+          )
+          .order("updated_at", { ascending: false });
+        assertNoError({ error: legacy.error }, "listProducts");
+        return toUnknownArray(legacy.data).map(mapProduct);
+      }
+      assertNoError({ error: query.error }, "listProducts");
+      return toUnknownArray(query.data).map(mapProduct);
     },
 
     async upsertProduct(id, input) {
       const parsed = productRecordInputSchema.parse(input);
       const userId = await getCurrentUserId();
-      const row = {
+      const { data, error } = await supabase.rpc("upsert_product_with_variants", {
+        p_product_id: id,
+        p_user_id: userId,
+        p_supplier_id: parsed.supplierId,
+        p_product_type: parsed.productType,
+        p_subject: parsed.subject,
+        p_detail: parsed.detail,
+        p_variants: parsed.variants.map((variant) => ({
+          id: variant.id,
+          sortIndex: variant.sortIndex,
+          material: variant.material,
+          colorNotes: variant.colorNotes,
+          parameters: variant.parameters,
+          unitPrice: variant.unitPrice,
+          priceUnit: variant.priceUnit,
+          image: variant.image,
+        })),
+      });
+      if (!error) return mapProduct(data);
+      if (!isMissingVariantsRpc(error.message)) assertNoError({ error }, "upsertProduct");
+
+      // PostgREST can temporarily retain an old function cache after the
+      // variants migration. Use the same tables directly so the form remains
+      // usable; the migration RPC remains the normal atomic path.
+      const productId = id ?? crypto.randomUUID();
+      const first = parsed.variants[0];
+      const productValues = {
+        id: productId,
         user_id: userId,
+        supplier_id: parsed.supplierId,
         product_type: parsed.productType,
         subject: parsed.subject,
         detail: parsed.detail,
-        material: parsed.material,
-        color_notes: parsed.colorNotes,
-        parameters: parsed.parameters,
-        unit_price: parsed.unitPrice,
-        price_unit: parsed.priceUnit,
-        image_name: parsed.image?.name ?? null,
-        image_url: parsed.image?.url ?? null,
-        image_storage_path: parsed.image?.storagePath ?? null,
-        updated_at: new Date().toISOString(),
+        material: first.material,
+        color_notes: first.colorNotes,
+        parameters: first.parameters,
+        unit_price: first.unitPrice,
+        price_unit: first.priceUnit,
+        image_name: first.image.name,
+        image_url: first.image.url,
+        image_storage_path: first.image.storagePath,
       };
-      const selection =
-        "id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at";
-      const { data, error } = id
-        ? await supabase.from("products").update(row).eq("id", id).select(selection).single()
-        : await supabase.from("products").insert(row).select(selection).single();
-      assertNoError({ error }, "upsertProduct");
-      return mapProduct(data);
+      const productWrite = await supabase.from("products").upsert(productValues).select().single();
+      assertNoError({ error: productWrite.error }, "upsertProduct");
+
+      const removeVariants = await supabase
+        .from("product_variants")
+        .delete()
+        .eq("product_id", productId);
+      assertNoError({ error: removeVariants.error }, "upsertProduct variants");
+      const variantWrite = await supabase.from("product_variants").insert(
+        parsed.variants.map((variant) => ({
+          id: variant.id,
+          product_id: productId,
+          user_id: userId,
+          sort_index: variant.sortIndex,
+          material: variant.material,
+          color_notes: variant.colorNotes,
+          parameters: variant.parameters,
+          unit_price: variant.unitPrice,
+          price_unit: variant.priceUnit,
+          image_name: variant.image.name,
+          image_url: variant.image.url,
+          image_storage_path: variant.image.storagePath,
+        })),
+      );
+      assertNoError({ error: variantWrite.error }, "upsertProduct variants");
+
+      const saved = await supabase
+        .from("products")
+        .select(
+          "id, supplier_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
+        )
+        .eq("id", productId)
+        .single();
+      assertNoError({ error: saved.error }, "upsertProduct");
+      return mapProduct(saved.data);
+    },
+
+    async getProduct(productId) {
+      const query = await supabase
+        .from("products")
+        .select(
+          "id, supplier_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
+        )
+        .eq("id", productId)
+        .maybeSingle();
+      if (query.error?.message.includes("supplier_id") || query.error?.message.includes("product_variants")) {
+        const legacy = await supabase
+          .from("products")
+          .select(
+            "id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at",
+          )
+          .eq("id", productId)
+          .maybeSingle();
+        assertNoError({ error: legacy.error }, "getProduct");
+        return legacy.data ? mapProduct(legacy.data) : null;
+      }
+      assertNoError({ error: query.error }, "getProduct");
+      return query.data ? mapProduct(query.data) : null;
     },
   };
 }

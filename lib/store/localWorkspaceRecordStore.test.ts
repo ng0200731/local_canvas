@@ -2,7 +2,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { localWorkspaceRecordStore } from "./localWorkspaceRecordStore";
 
-beforeEach(() => localStorage.clear());
+beforeEach(async () => {
+  localStorage.clear();
+
+  if ("indexedDB" in window) {
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase("ica:workspace-record-store");
+      request.onerror = () => resolve();
+      request.onsuccess = () => resolve();
+      request.onblocked = () => resolve();
+    });
+  }
+});
 
 describe("localWorkspaceRecordStore", () => {
   it("creates and updates customer records with employees", async () => {
@@ -91,50 +102,86 @@ describe("localWorkspaceRecordStore", () => {
     expect(records[0].company.productTypes).toEqual(["woven-label", "metal"]);
   });
 
-  it("creates and updates product records", async () => {
+  it("creates and updates product records with variants", async () => {
     const created = await localWorkspaceRecordStore.upsertProduct(null, {
+      supplierId: "supplier-1",
       productType: "woven-label",
       subject: "Woven label",
       detail: "Main neck label",
-      material: "Polyester",
-      colorNotes: "Black and white",
-      parameters: {
-        size: "45 x 20 mm",
-        fold: "Center fold",
-      },
-      unitPrice: "0.032",
-      priceUnit: "per pc",
-      image: {
-        name: "label.webp",
-        url: "https://example.com/label.webp",
-        storagePath: "user/label.webp",
-      },
+      variants: [
+        {
+          id: "variant-1",
+          sortIndex: 0,
+          material: "Polyester",
+          colorNotes: "Black and white",
+          parameters: {
+            size: "45 x 20 mm",
+            fold: "Center fold",
+          },
+          unitPrice: "0.032",
+          priceUnit: "per pc",
+          image: {
+            name: "label.webp",
+            url: "https://example.com/label.webp",
+            storagePath: "user/label.webp",
+          },
+        },
+      ],
     });
 
     await localWorkspaceRecordStore.upsertProduct(created.id, {
+      supplierId: "supplier-1",
       productType: "hang-tag",
       subject: "Woven label set",
       detail: "Main neck label and care label",
-      material: "Polyester",
-      colorNotes: "Black and white",
-      parameters: {
-        size: "60 x 90 mm",
-        finish: "Matte lamination",
-      },
-      unitPrice: "0.075",
-      priceUnit: "per pc",
-      image: null,
+      variants: [
+        {
+          id: "variant-2",
+          sortIndex: 0,
+          material: "Paper",
+          colorNotes: "Black and white",
+          parameters: {
+            size: "60 x 90 mm",
+            finish: "Matte lamination",
+          },
+          unitPrice: "0.075",
+          priceUnit: "per pc",
+          image: {
+            name: "tag.webp",
+            url: "https://example.com/tag.webp",
+            storagePath: "user/tag.webp",
+          },
+        },
+        {
+          id: "variant-3",
+          sortIndex: 1,
+          material: "Paper",
+          colorNotes: "Cream",
+          parameters: {
+            size: "40 x 70 mm",
+          },
+          unitPrice: "0.062",
+          priceUnit: "per pc",
+          image: {
+            name: "tag-2.webp",
+            url: "https://example.com/tag-2.webp",
+            storagePath: "user/tag-2.webp",
+          },
+        },
+      ],
     });
 
     const records = await localWorkspaceRecordStore.listProducts();
     expect(records).toHaveLength(1);
     expect(records[0].productType).toBe("hang-tag");
-    expect(records[0].unitPrice).toBe("0.075");
     expect(records[0].subject).toBe("Woven label set");
-    expect(records[0].image).toBeNull();
+    expect(records[0].supplierId).toBe("supplier-1");
+    expect(records[0].variants).toHaveLength(2);
+    expect(records[0].variants[0].unitPrice).toBe("0.075");
+    expect(records[0].variants[1].image?.name).toBe("tag-2.webp");
   });
 
-  it("normalizes legacy product records from local storage", async () => {
+  it("normalizes legacy product records from local storage into indexeddb variants", async () => {
     localStorage.setItem(
       "ica:workspace:products",
       JSON.stringify([
@@ -157,8 +204,14 @@ describe("localWorkspaceRecordStore", () => {
 
     const records = await localWorkspaceRecordStore.listProducts();
     expect(records[0].productType).toBe("woven-label");
-    expect(records[0].parameters).toEqual({ size: "45 x 20 mm" });
-    expect(records[0].unitPrice).toBe("0");
-    expect(records[0].priceUnit).toBe("per pc");
+    expect(records[0].variants).toHaveLength(1);
+    expect(records[0].variants[0].parameters).toEqual({ size: "45 x 20 mm" });
+    expect(records[0].variants[0].unitPrice).toBe("0");
+    expect(records[0].variants[0].priceUnit).toBe("per pc");
+    if ("indexedDB" in window) {
+      expect(localStorage.getItem("ica:workspace:products")).toBeNull();
+    } else {
+      expect(localStorage.getItem("ica:workspace:products")).toContain("product-1");
+    }
   });
 });

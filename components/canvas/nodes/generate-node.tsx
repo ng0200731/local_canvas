@@ -679,6 +679,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         ...(accent ? { outline: `2px solid ${accent}`, outlineOffset: 2 } : {}),
         ...highlight,
       }}
+      aria-busy={isGenerating}
       className={cn(
         "group bg-card relative flex flex-col overflow-hidden rounded-lg border shadow-md",
         selected && "ring-primary ring-offset-background shadow-lg ring-2 ring-offset-2",
@@ -697,6 +698,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             <span className="text-muted-foreground text-xs">Provider</span>
             <Select
               value={provider}
+              disabled={isGenerating}
               onValueChange={(value) => {
                 const nextProvider = value === "gemini" ? "gemini" : "gpt";
                 updateNodeData(id, {
@@ -722,6 +724,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             {provider === "gemini" ? (
               <Select
                 value={geminiVersion}
+                disabled={isGenerating}
                 onValueChange={(value) => {
                   const nextVersion = value === "1" || value === "2" ? value : "pro";
                   const nextResolution = nextVersion === "1" ? "preview" : resolution;
@@ -759,6 +762,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             ) : (
               <Select
                 value={model}
+                disabled={isGenerating}
                 onValueChange={(value) => {
                   updateNodeData(id, { model: normalizeImageGenerationModel(value) });
                 }}
@@ -820,7 +824,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             <span className="text-muted-foreground text-xs">Resolution</span>
             <Select
               value={resolution}
-              disabled={provider === "gpt" || geminiVersion === "1"}
+              disabled={isGenerating || provider === "gpt" || geminiVersion === "1"}
               onValueChange={(value) => {
                 const nextResolution = normalizeImageGenerationResolution(value);
                 updateNodeData(id, {
@@ -847,6 +851,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             <span className="text-muted-foreground text-xs">Size</span>
             <Select
               value={size}
+              disabled={isGenerating}
               onValueChange={(value) => {
                 updateNodeData(id, { size: normalizeImageGenerationSize(value) });
               }}
@@ -873,6 +878,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             <span className="text-muted-foreground text-xs">Format</span>
             <Select
               value={outputFormat}
+              disabled={isGenerating}
               onValueChange={(value) => {
                 updateNodeData(id, {
                   outputFormat: normalizeImageGenerationOutputFormat(value),
@@ -911,6 +917,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                     type="button"
                     size="xs"
                     variant="ghost"
+                    disabled={isGenerating}
                     className="nodrag nopan text-destructive hover:text-destructive"
                   >
                     <Trash2 />
@@ -924,6 +931,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             className="bg-background/60 flex min-h-14 flex-wrap gap-1 rounded-md border border-dashed p-1"
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
+              if (isGenerating) return;
               e.preventDefault();
               const url = e.dataTransfer.getData("application/ica-image-url");
               if (url) addReference(url);
@@ -1000,6 +1008,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             rows={7}
             placeholder="Describe the image..."
             value={promptDraft}
+            disabled={isGenerating}
             onChange={(event) => updatePrompt(event.target.value, event.target.selectionStart)}
             onClick={(event) =>
               updatePrompt(event.currentTarget.value, event.currentTarget.selectionStart)

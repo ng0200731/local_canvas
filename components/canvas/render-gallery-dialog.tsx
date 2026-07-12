@@ -5,6 +5,7 @@ import { Download, Images, LoaderCircle } from "lucide-react";
 
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { downloadImageFile } from "@/lib/download-image";
 import { getModelDisplayName } from "@/lib/image-generation-models";
 import { getCanvasStore, type ImageRecord } from "@/lib/store";
 
@@ -21,14 +23,21 @@ interface RenderGalleryDialogProps {
   canvasId: string;
 }
 
-function downloadImage(image: ImageRecord) {
-  const anchor = document.createElement("a");
-  anchor.href = image.url;
-  anchor.download = `render-${image.createdAt.replaceAll(":", "-")}.webp`;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+function resolutionBadge(image: ImageRecord): string {
+  return image.modelDetails?.resolution ?? "Unknown";
+}
+
+function sizeBadge(image: ImageRecord): string {
+  const size = image.modelDetails?.size;
+  if (size === "1024x1024") return "Square";
+  if (size === "1536x1024") return "Wide";
+  if (size === "1024x1536") return "Tall";
+  return "Unknown";
+}
+
+function formatBadge(image: ImageRecord): string {
+  const format = image.modelDetails?.outputFormat?.toUpperCase();
+  return format || "Unknown";
 }
 
 function modelSummary(image: ImageRecord): string {
@@ -53,6 +62,7 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const previewItems = images.map((image) => ({
     src: image.url,
     alt: image.prompt ?? "Generated image",
@@ -69,6 +79,21 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
       setError(reason instanceof Error ? reason.message : "Failed to load renders");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleDownload(image: ImageRecord) {
+    setDownloadingId(image.id);
+    try {
+      await downloadImageFile({
+        url: image.url,
+        baseName: `render-${image.createdAt.replaceAll(":", "-")}`,
+        outputFormat: image.modelDetails?.outputFormat,
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Failed to download render.");
+    } finally {
+      setDownloadingId(null);
     }
   }
 
@@ -139,12 +164,22 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
                       className="absolute right-2 bottom-2 shadow-md"
                       aria-label="Download rendered image"
                       title="Download rendered image"
-                      onClick={() => downloadImage(image)}
+                      disabled={downloadingId === image.id}
+                      onClick={() => void handleDownload(image)}
                     >
-                      <Download />
+                      {downloadingId === image.id ? (
+                        <LoaderCircle className="animate-spin" />
+                      ) : (
+                        <Download />
+                      )}
                     </Button>
                   </div>
                   <div className="flex min-h-32 flex-col gap-2 p-3">
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="secondary">{resolutionBadge(image)}</Badge>
+                      <Badge variant="secondary">{sizeBadge(image)}</Badge>
+                      <Badge variant="secondary">{formatBadge(image)}</Badge>
+                    </div>
                     <p className="text-foreground line-clamp-3 text-xs leading-5">
                       {image.prompt ?? "No prompt saved"}
                     </p>

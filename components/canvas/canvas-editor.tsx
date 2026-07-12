@@ -21,6 +21,7 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
@@ -424,6 +425,9 @@ function Editor({
   const [canvasName, setCanvasName] = useState("");
   const [saving, setSaving] = useState(false);
   const [connectedNotice, setConnectedNotice] = useState(false);
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [pendingGroupNodeIds, setPendingGroupNodeIds] = useState<string[]>([]);
+  const [groupName, setGroupName] = useState("");
   const connectedNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live connection drag: which node the wire started from (source highlight)
@@ -576,6 +580,41 @@ function Editor({
 
   const addCanvasConnection = useCallback(
     (connection: Connection) => {
+      const source = nodesRef.current.find((node) => node.id === connection.source);
+      if (source?.type === "group") {
+        const childIds = nodesRef.current
+          .filter((node) => node.parentId === source.id && node.id !== connection.target)
+          .map((node) => node.id);
+        if (childIds.includes(connection.target)) {
+          toast.error("A group cannot batch-connect to one of its own nodes.");
+          return;
+        }
+        let created = 0;
+        setCanvasEdges((current) => {
+          let next = current;
+          for (const childId of childIds) {
+            const duplicate = next.some(
+              (edge) => edge.source === childId && edge.target === connection.target,
+            );
+            if (duplicate) continue;
+            next = addEdge(
+              {
+                ...connection,
+                source: childId,
+                sourceHandle: "right",
+                targetHandle: "left",
+                type: "deletable",
+                style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
+              },
+              next,
+            );
+            created += 1;
+          }
+          return next;
+        });
+        toast.success(`${created} connection${created === 1 ? "" : "s"} created`);
+        return;
+      }
       setCanvasEdges((eds) =>
         addEdge(
           {
@@ -595,6 +634,66 @@ function Editor({
   );
 
   const onConnect = addCanvasConnection;
+
+  const handleSelectionEnd = useCallback(() => {
+    const selectedIds = nodesRef.current
+      .filter((node) => node.selected && !node.parentId && node.type !== "group")
+      .map((node) => node.id);
+    if (selectedIds.length < 2) return;
+    setPendingGroupNodeIds(selectedIds);
+    setGroupName("");
+    setGroupDialogOpen(true);
+  }, []);
+
+  const createSelectionGroup = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const label = groupName.trim();
+      if (!label) return;
+      const selected = pendingGroupNodeIds
+        .map((id) => ({
+          node: nodesRef.current.find((node) => node.id === id),
+          rect: rectOf(getInternalNode(id)),
+        }))
+        .filter(
+          (entry): entry is { node: CanvasNode; rect: NonNullable<ReturnType<typeof rectOf>> } =>
+            Boolean(
+              entry.node && entry.rect && !entry.node.parentId && entry.node.type !== "group",
+            ),
+        );
+      if (selected.length < 2) {
+        setGroupDialogOpen(false);
+        return;
+      }
+      const padding = 40;
+      const left = Math.min(...selected.map(({ rect }) => rect.x)) - padding;
+      const top = Math.min(...selected.map(({ rect }) => rect.y)) - padding;
+      const right = Math.max(...selected.map(({ rect }) => rect.x + rect.w)) + padding;
+      const bottom = Math.max(...selected.map(({ rect }) => rect.y + rect.h)) + padding;
+      const group = createNode("group", { x: (left + right) / 2, y: (top + bottom) / 2 });
+      group.data = { ...group.data, label, width: right - left, height: bottom - top };
+      const selectedRects = new Map(selected.map(({ node, rect }) => [node.id, rect] as const));
+      setCanvasNodes((current) =>
+        reorderChildrenAfterParents([
+          ...current.map((node) => {
+            const rect = selectedRects.get(node.id);
+            if (!rect) return { ...node, selected: false };
+            return {
+              ...node,
+              parentId: group.id,
+              position: { x: rect.cx - left, y: rect.cy - top },
+              selected: false,
+            };
+          }),
+          { ...group, selected: true },
+        ]),
+      );
+      setGroupDialogOpen(false);
+      setPendingGroupNodeIds([]);
+      toast.success(`Grouped ${selected.length} nodes`);
+    },
+    [getInternalNode, groupName, pendingGroupNodeIds, setCanvasNodes],
+  );
 
   const onConnectStart = useCallback(
     (_event: MouseEvent | TouchEvent, { nodeId }: OnConnectStartParams) => {
@@ -872,6 +971,32 @@ function Editor({
     [getNodes, getInternalNode, setCanvasNodes, setCanvasEdges],
   );
 
+  const ungroupNode = useCallback(
+    (id: string) => {
+      const centers = new Map<string, XYPosition>();
+      for (const node of getNodes()) {
+        if (node.parentId !== id) continue;
+        const rect = rectOf(getInternalNode(node.id));
+        if (rect) centers.set(node.id, { x: rect.cx, y: rect.cy });
+      }
+      setCanvasNodes((current) =>
+        current
+          .filter((node) => node.id !== id)
+          .map((node) => {
+            if (node.parentId !== id) return node;
+            const detached = { ...node, position: centers.get(node.id) ?? node.position };
+            delete detached.parentId;
+            return detached;
+          }),
+      );
+      setCanvasEdges((current) =>
+        current.filter((edge) => edge.source !== id && edge.target !== id),
+      );
+      toast.success("Group disassembled");
+    },
+    [getInternalNode, getNodes, setCanvasEdges, setCanvasNodes],
+  );
+
   const deleteEdge = useCallback(
     (id: string) => {
       setCanvasEdges((eds) => eds.filter((e) => e.id !== id));
@@ -1050,6 +1175,7 @@ function Editor({
       updateConnectedOutputData,
       writeGeneratedImageToOutput,
       deleteNode,
+      ungroupNode,
       deleteEdge,
       resizeNode,
     }),
@@ -1061,6 +1187,7 @@ function Editor({
       updateConnectedOutputData,
       writeGeneratedImageToOutput,
       deleteNode,
+      ungroupNode,
       deleteEdge,
       resizeNode,
     ],
@@ -1162,6 +1289,35 @@ function Editor({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+        <DialogContent>
+          <form onSubmit={createSelectionGroup} className="flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle>Name this group</DialogTitle>
+              <DialogDescription>
+                The selected nodes will move and batch-connect together through the group output.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="canvas-group-name">Group name</Label>
+              <Input
+                id="canvas-group-name"
+                autoFocus
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                placeholder="Product preparation"
+              />
+            </div>
+            <DialogFooter>
+              <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+              <Button type="submit" disabled={!groupName.trim()}>
+                Create group
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <div className="flex min-h-0 flex-1">
         <CanvasActionsContext.Provider value={actions}>
           <NodePalette onAdd={addNodeAtCenter} />
@@ -1195,6 +1351,10 @@ function Editor({
                     onEdgeMouseEnter={onEdgeMouseEnter}
                     onEdgeMouseLeave={clearHoverTarget}
                     onNodeDragStop={onNodeDragStop}
+                    onSelectionEnd={handleSelectionEnd}
+                    selectionOnDrag
+                    selectionMode={SelectionMode.Partial}
+                    panOnDrag={[1, 2]}
                     nodeTypes={nodeTypes}
                     edgeTypes={edgeTypes}
                     nodeOrigin={[0.5, 0.5]}

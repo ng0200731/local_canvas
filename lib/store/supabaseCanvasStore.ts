@@ -53,6 +53,13 @@ interface ImageRow {
   storage_path: string | null;
   prompt: string | null;
   model: string | null;
+  model_details?: {
+    model?: string | null;
+    size?: string | null;
+    resolution?: string | null;
+    outputFormat?: string | null;
+    output_format?: string | null;
+  } | null;
   created_at: string;
 }
 
@@ -81,6 +88,16 @@ const imageRowSchema = z.object({
   storage_path: z.string().nullable(),
   prompt: z.string().nullable(),
   model: z.string().nullable(),
+  model_details: z
+    .object({
+      model: z.string().nullable().optional(),
+      size: z.string().nullable().optional(),
+      resolution: z.string().nullable().optional(),
+      outputFormat: z.string().nullable().optional(),
+      output_format: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   created_at: z.string(),
 });
 
@@ -139,7 +156,14 @@ const mapImage = (value: unknown): ImageRecord => {
     storagePath: r.storage_path,
     prompt: r.prompt,
     model: r.model,
-    modelDetails: null,
+    modelDetails: r.model_details
+      ? {
+          model: r.model_details.model ?? r.model ?? "",
+          size: r.model_details.size ?? null,
+          resolution: r.model_details.resolution ?? null,
+          outputFormat: r.model_details.outputFormat ?? r.model_details.output_format ?? null,
+        }
+      : null,
     createdAt: r.created_at,
   };
 };
@@ -368,33 +392,68 @@ export function createSupabaseCanvasStore(): CanvasStore {
 
     // ── Image metadata ──────────────────────────────────────────────────
     async listImages(canvasId: string) {
-      const { data, error } = await supabase
+      const query = await supabase
         .from("images")
-        .select("id, canvas_id, source, url, storage_path, prompt, model, created_at")
+        .select(
+          "id, canvas_id, source, url, storage_path, prompt, model, model_details, created_at",
+        )
         .eq("canvas_id", canvasId)
         .eq("source", "generated")
         .order("created_at", { ascending: false });
-      assertNoError({ error }, "listImages");
-      return z.array(imageRowSchema).parse(data).map(mapImage);
+      if (query.error?.message.includes("model_details")) {
+        const legacy = await supabase
+          .from("images")
+          .select("id, canvas_id, source, url, storage_path, prompt, model, created_at")
+          .eq("canvas_id", canvasId)
+          .eq("source", "generated")
+          .order("created_at", { ascending: false });
+        assertNoError({ error: legacy.error }, "listImages");
+        return z.array(imageRowSchema).parse(legacy.data).map(mapImage);
+      }
+      assertNoError({ error: query.error }, "listImages");
+      return z.array(imageRowSchema).parse(query.data).map(mapImage);
     },
 
     async recordImage(input: RecordImageInput) {
       const userId = await getCurrentUserId();
-      const { data, error } = await supabase
+      const values = {
+        user_id: userId,
+        canvas_id: input.canvasId ?? null,
+        source: input.source,
+        url: input.url,
+        storage_path: input.storagePath ?? null,
+        prompt: input.prompt ?? null,
+        model: input.model ?? null,
+        model_details: input.modelDetails
+          ? {
+              model: input.modelDetails.model,
+              size: input.modelDetails.size,
+              resolution: input.modelDetails.resolution,
+              output_format: input.modelDetails.outputFormat,
+            }
+          : null,
+      };
+      const query = await supabase
         .from("images")
-        .insert({
-          user_id: userId,
-          canvas_id: input.canvasId ?? null,
-          source: input.source,
-          url: input.url,
-          storage_path: input.storagePath ?? null,
-          prompt: input.prompt ?? null,
-          model: input.model ?? null,
-        })
-        .select("id, canvas_id, source, url, storage_path, prompt, model, created_at")
+        .insert(values)
+        .select(
+          "id, canvas_id, source, url, storage_path, prompt, model, model_details, created_at",
+        )
         .single();
-      assertNoError({ error }, "recordImage");
-      return mapImage(data);
+      if (query.error?.message.includes("model_details")) {
+        const legacyValues = Object.fromEntries(
+          Object.entries(values).filter(([key]) => key !== "model_details"),
+        );
+        const legacy = await supabase
+          .from("images")
+          .insert(legacyValues)
+          .select("id, canvas_id, source, url, storage_path, prompt, model, created_at")
+          .single();
+        assertNoError({ error: legacy.error }, "recordImage");
+        return mapImage(legacy.data);
+      }
+      assertNoError({ error: query.error }, "recordImage");
+      return mapImage(query.data);
     },
   };
 }

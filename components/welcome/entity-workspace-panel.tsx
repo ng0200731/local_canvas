@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,6 +59,7 @@ import {
   type CustomerCompanyInput,
   type EmployeeInput,
   type ProductRecord,
+  type ProductVariantRecord,
   type SupplierCompanyInput,
   type SupplierRecord,
   type SupplierProductType,
@@ -94,15 +96,24 @@ interface ProductImageState {
 }
 
 interface ProductFormState {
+  supplierId: string;
   productType: SupplierProductType;
   subject: string;
   detail: string;
-  material: string;
-  colorNotes: string;
-  parameters: Record<string, string>;
-  unitPrice: string;
-  priceUnit: string;
+  variants: ProductVariantFormState[];
+  activeVariantId: string | null;
+}
+
+interface ProductVariantFormState extends Omit<ProductVariantRecord, "image"> {
   image: ProductImageState | null;
+}
+
+interface SupplierTableFilters {
+  company: string;
+  domain: string;
+  productTypes: string;
+  employees: string;
+  products: string;
 }
 
 type CompanyErrors = Partial<Record<keyof CustomerCompanyInput, string>> &
@@ -131,6 +142,14 @@ const partyLabels: Record<PartyKind, string> = {
   customer: "Customer",
   supplier: "Supplier",
 };
+
+const emptySupplierTableFilters = (): SupplierTableFilters => ({
+  company: "",
+  domain: "",
+  productTypes: "",
+  employees: "",
+  products: "",
+});
 
 function normalizeSearchValue(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -971,12 +990,11 @@ function getProductParameterDummySet(
 
 function createProductForm(
   productType: SupplierProductType,
-  input: Omit<ProductFormState, "productType" | "priceUnit">,
+  input: Omit<ProductFormState, "productType">,
 ): ProductFormState {
   return {
     ...input,
     productType,
-    priceUnit: getProductPriceUnit(productType),
   };
 }
 
@@ -1024,14 +1042,25 @@ function getDummyProduct(
   const dummy = getProductParameterDummySet(productType, parameterCycle);
   const label = supplierProductTypeLabels[productType];
 
+  const variants: ProductVariantFormState[] = [
+    {
+      id: crypto.randomUUID(),
+      sortIndex: 0,
+      material: getProductMaterialSummary(dummy.parameters),
+      colorNotes: getProductColorNotes(dummy.parameters),
+      parameters: { ...dummy.parameters },
+      unitPrice: dummy.unitPrice,
+      priceUnit: getProductPriceUnit(productType),
+      image: null,
+    },
+  ];
+
   return createProductForm(productType, {
+    supplierId: "",
     subject: `${label} sample ${parameterCycle + 1}`,
     detail: `Generic ${label.toLocaleLowerCase()} specification. Confirm construction, tolerance, finishing, packing, and production approval sample before bulk order.`,
-    material: getProductMaterialSummary(dummy.parameters),
-    colorNotes: getProductColorNotes(dummy.parameters),
-    parameters: { ...dummy.parameters },
-    unitPrice: dummy.unitPrice,
-    image: null,
+    variants,
+    activeVariantId: variants[0]?.id ?? null,
   });
 }
 
@@ -1047,17 +1076,101 @@ function getDummySupplierCompany(index: number): SupplierCompanyState {
 function emptyProductForm(
   productType: SupplierProductType = defaultSupplierProductType,
 ): ProductFormState {
+  const variants: ProductVariantFormState[] = [
+    {
+      id: crypto.randomUUID(),
+      sortIndex: 0,
+      material: "",
+      colorNotes: "",
+      parameters: getDefaultProductParameters(productType),
+      unitPrice: "",
+      priceUnit: getProductPriceUnit(productType),
+      image: null,
+    },
+  ];
+
   return {
+    supplierId: "",
     productType,
     subject: "",
     detail: "",
+    variants,
+    activeVariantId: variants[0]?.id ?? null,
+  };
+}
+
+function normalizeVariants(variants: ProductVariantFormState[]): ProductVariantFormState[] {
+  return variants
+    .slice()
+    .sort((left, right) => left.sortIndex - right.sortIndex)
+    .map((variant, index) => ({ ...variant, sortIndex: index }));
+}
+
+function getActiveVariant(form: ProductFormState): ProductVariantFormState {
+  const normalized = normalizeVariants(form.variants);
+  const fallbackVariant: ProductVariantFormState = normalized[0] ?? {
+    id: crypto.randomUUID(),
+    sortIndex: 0,
     material: "",
     colorNotes: "",
-    parameters: getDefaultProductParameters(productType),
+    parameters: getDefaultProductParameters(form.productType),
     unitPrice: "",
-    priceUnit: getProductPriceUnit(productType),
+    priceUnit: getProductPriceUnit(form.productType),
     image: null,
   };
+
+  return normalized.find((variant) => variant.id === form.activeVariantId) ?? fallbackVariant;
+}
+
+function setVariantField(
+  form: ProductFormState,
+  variantId: string,
+  update: (variant: ProductVariantFormState) => ProductVariantFormState,
+): ProductFormState {
+  return {
+    ...form,
+    variants: normalizeVariants(
+      form.variants.map((variant) => (variant.id === variantId ? update(variant) : variant)),
+    ),
+  };
+}
+
+function buildProductInput(form: ProductFormState) {
+  return {
+    supplierId: form.supplierId,
+    productType: form.productType,
+    subject: form.subject,
+    detail: form.detail,
+    variants: normalizeVariants(form.variants).filter(
+      (
+        variant,
+      ): variant is ProductVariantFormState & {
+        image: ProductImageState;
+      } => variant.image !== null,
+    ),
+  };
+}
+
+function getProductPrimaryVariant(product: ProductRecord): ProductVariantRecord | null {
+  return product.variants[0] ?? null;
+}
+
+function getProductSearchText(product: ProductRecord) {
+  return [
+    supplierProductTypeLabels[product.productType],
+    product.subject,
+    product.detail,
+    ...product.variants.flatMap((variant) => [
+      variant.material,
+      variant.colorNotes,
+      variant.unitPrice,
+      variant.priceUnit,
+      ...Object.values(variant.parameters),
+      variant.image?.name ?? "",
+    ]),
+  ]
+    .join(" ")
+    .trim();
 }
 
 function getZodFieldErrors(result: FieldParseResult) {
@@ -1126,27 +1239,60 @@ function ProductTypeSelect({
   value: SupplierProductType[];
   onChange: (next: SupplierProductType[]) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = normalizeSearchValue(query);
+  const visibleTypes = supplierProductTypes.filter((productType) =>
+    fuzzyMatches(supplierProductTypeLabels[productType], normalizedQuery),
+  );
+
+  function toggleProductType(productType: SupplierProductType) {
+    onChange(
+      value.includes(productType)
+        ? value.filter((item) => item !== productType)
+        : [...value, productType],
+    );
+  }
+
   return (
-    <Select
-      value={value[0]}
-      onValueChange={(nextValue) =>
-        onChange(nextValue ? [normalizeSupplierProductType(nextValue)] : [])
-      }
-    >
-      <SelectTrigger className="w-full">
-        <SelectValue placeholder="Choose a product type" />
-      </SelectTrigger>
-      <SelectContent align="start" className="max-h-80">
-        <SelectGroup>
-          <SelectLabel>Product type</SelectLabel>
-          {supplierProductTypes.map((productType) => (
-            <SelectItem key={productType} value={productType}>
+    <div className="grid gap-2">
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search product types"
+        aria-label="Search supplier product types"
+      />
+      <div className="bg-background max-h-48 overflow-y-auto rounded-lg border">
+        {visibleTypes.map((productType) => {
+          const checked = value.includes(productType);
+          return (
+            <label
+              key={productType}
+              className="hover:bg-muted/40 flex cursor-pointer items-center gap-3 px-3 py-2 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleProductType(productType)}
+                className="size-4"
+              />
+              <span>{supplierProductTypeLabels[productType]}</span>
+            </label>
+          );
+        })}
+        {visibleTypes.length === 0 ? (
+          <p className="text-muted-foreground px-3 py-4 text-sm">No matching product types.</p>
+        ) : null}
+      </div>
+      {value.length ? (
+        <div className="flex flex-wrap gap-2">
+          {value.map((productType) => (
+            <Badge key={productType} variant="secondary">
               {supplierProductTypeLabels[productType]}
-            </SelectItem>
+            </Badge>
           ))}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1542,8 +1688,13 @@ function PartyWorkspacePanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
   const [showSupplierNextStep, setShowSupplierNextStep] = useState(false);
+  const [savedSupplierId, setSavedSupplierId] = useState<string | null>(null);
+  const [supplierFilters, setSupplierFilters] = useState<SupplierTableFilters>(
+    emptySupplierTableFilters(),
+  );
   const customers = useCustomers();
   const suppliers = useSuppliers();
+  const products = useProducts();
   const upsertCustomer = useUpsertCustomer();
   const upsertSupplier = useUpsertSupplier();
 
@@ -1566,6 +1717,8 @@ function PartyWorkspacePanel({
     setSearchCollapsedRecordKeys([]);
     setEditingId(null);
     setActiveSubTab("company");
+    setSavedSupplierId(null);
+    setSupplierFilters(emptySupplierTableFilters());
   }
 
   async function saveRecord() {
@@ -1577,10 +1730,11 @@ function PartyWorkspacePanel({
           input: { company: company as CustomerCompanyState, employees },
         });
       } else {
-        await upsertSupplier.mutateAsync({
+        const savedSupplier = await upsertSupplier.mutateAsync({
           id: editingId,
           input: { company: company as SupplierCompanyState, employees },
         });
+        setSavedSupplierId(savedSupplier.id);
       }
       toast.success(`${partyLabels[kind]} saved`);
       setEditingId(null);
@@ -1598,7 +1752,10 @@ function PartyWorkspacePanel({
 
   function editRecord(record: PartyRecord, tab: PartySubTab) {
     if (kind === "customer") setCustomerCompany(record.company as CustomerCompanyState);
-    else setSupplierCompany(record.company as SupplierCompanyState);
+    else {
+      setSupplierCompany(record.company as SupplierCompanyState);
+      setSavedSupplierId(record.id);
+    }
     setEmployees(record.employees);
     setEditingId(record.id);
     setActiveSubTab(tab);
@@ -1628,6 +1785,39 @@ function PartyWorkspacePanel({
   const visibleRecords = records.filter((record) =>
     fuzzyMatches(getPartyRecordSearchText(record), normalizedQuery),
   );
+  const supplierProducts = products.data ?? [];
+  const filteredSupplierRecords =
+    kind !== "supplier"
+      ? []
+      : visibleRecords.filter((record): record is SupplierRecord => {
+          if (!("productTypes" in record.company)) return false;
+          const employeesText = record.employees
+            .map((employee) => `${employee.userName} ${employee.title} ${employee.tel}`)
+            .join(" ");
+          const productRecords = supplierProducts.filter(
+            (product) => product.supplierId === record.id,
+          );
+          const productText = productRecords.map(getProductSearchText).join(" ");
+
+          return (
+            fuzzyMatches(
+              record.company.companyName,
+              normalizeSearchValue(supplierFilters.company),
+            ) &&
+            fuzzyMatches(
+              record.company.emailDomainSuffix,
+              normalizeSearchValue(supplierFilters.domain),
+            ) &&
+            fuzzyMatches(
+              record.company.productTypes
+                .map((productType) => supplierProductTypeLabels[productType])
+                .join(" "),
+              normalizeSearchValue(supplierFilters.productTypes),
+            ) &&
+            fuzzyMatches(employeesText, normalizeSearchValue(supplierFilters.employees)) &&
+            fuzzyMatches(productText, normalizeSearchValue(supplierFilters.products))
+          );
+        });
   const companyIsComplete =
     kind === "customer"
       ? customerCompanySchema.safeParse(customerCompany).success
@@ -1664,6 +1854,170 @@ function PartyWorkspacePanel({
               Failed to load records:{" "}
               {recordsError instanceof Error ? recordsError.message : "unknown error"}
             </p>
+          ) : kind === "supplier" ? (
+            records.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
+                    <tr>
+                      <th className="px-4 py-3">Company</th>
+                      <th className="px-4 py-3">Domain</th>
+                      <th className="px-4 py-3">Product types</th>
+                      <th className="px-4 py-3">Employees</th>
+                      <th className="px-4 py-3">Products</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                    <tr className="bg-background/90 normal-case">
+                      <th className="px-4 py-2">
+                        <Input
+                          value={supplierFilters.company}
+                          onChange={(event) =>
+                            setSupplierFilters((current) => ({
+                              ...current,
+                              company: event.target.value,
+                            }))
+                          }
+                          placeholder="Filter company"
+                          aria-label="Filter suppliers by company"
+                        />
+                      </th>
+                      <th className="px-4 py-2">
+                        <Input
+                          value={supplierFilters.domain}
+                          onChange={(event) =>
+                            setSupplierFilters((current) => ({
+                              ...current,
+                              domain: event.target.value,
+                            }))
+                          }
+                          placeholder="Filter domain"
+                          aria-label="Filter suppliers by domain"
+                        />
+                      </th>
+                      <th className="px-4 py-2">
+                        <Input
+                          value={supplierFilters.productTypes}
+                          onChange={(event) =>
+                            setSupplierFilters((current) => ({
+                              ...current,
+                              productTypes: event.target.value,
+                            }))
+                          }
+                          placeholder="Filter product types"
+                          aria-label="Filter suppliers by product types"
+                        />
+                      </th>
+                      <th className="px-4 py-2">
+                        <Input
+                          value={supplierFilters.employees}
+                          onChange={(event) =>
+                            setSupplierFilters((current) => ({
+                              ...current,
+                              employees: event.target.value,
+                            }))
+                          }
+                          placeholder="Filter employees"
+                          aria-label="Filter suppliers by employees"
+                        />
+                      </th>
+                      <th className="px-4 py-2">
+                        <Input
+                          value={supplierFilters.products}
+                          onChange={(event) =>
+                            setSupplierFilters((current) => ({
+                              ...current,
+                              products: event.target.value,
+                            }))
+                          }
+                          placeholder="Filter products"
+                          aria-label="Filter suppliers by products"
+                        />
+                      </th>
+                      <th className="text-muted-foreground px-4 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredSupplierRecords.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="text-muted-foreground px-4 py-10 text-center text-sm"
+                        >
+                          No suppliers match the active filters.
+                        </td>
+                      </tr>
+                    ) : null}
+                    {filteredSupplierRecords.map((record) => {
+                      const productRecords = supplierProducts.filter(
+                        (product) => product.supplierId === record.id,
+                      );
+                      const galleryItems = productRecords.flatMap((product) =>
+                        product.variants
+                          .filter((variant) => variant.image)
+                          .map((variant, index) => ({
+                            src: variant.image?.url ?? "",
+                            alt: `${product.subject} variant ${index + 1}`,
+                          })),
+                      );
+
+                      return (
+                        <tr key={record.id} className="hover:bg-muted/30">
+                          <td className="px-4 py-3 font-medium">{record.company.companyName}</td>
+                          <td className="text-muted-foreground px-4 py-3">
+                            @{record.company.emailDomainSuffix}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              {record.company.productTypes.map((productType) => (
+                                <Badge key={productType} variant="secondary">
+                                  {supplierProductTypeLabels[productType]}
+                                </Badge>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">{record.employees.length}</td>
+                          <td className="px-4 py-3">{productRecords.length}</td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex justify-end gap-2">
+                              {galleryItems[0] ? (
+                                <ImagePreviewDialog
+                                  src={galleryItems[0].src}
+                                  alt={galleryItems[0].alt}
+                                  title={`${record.company.companyName} product gallery`}
+                                  gallery={galleryItems}
+                                  trigger={
+                                    <Button type="button" variant="ghost" size="sm">
+                                      View products
+                                    </Button>
+                                  }
+                                />
+                              ) : (
+                                <Button type="button" variant="ghost" size="sm" disabled>
+                                  View products
+                                </Button>
+                              )}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => editRecord(record, "company")}
+                              >
+                                <Pencil />
+                                Edit
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-muted-foreground p-10 text-center text-sm">
+                {query ? "No matching records." : "No saved supplier records yet."}
+              </p>
+            )
           ) : visibleRecords.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
@@ -1870,6 +2224,7 @@ function PartyWorkspacePanel({
             formVersion={formVersion}
             availableProductTypes={supplierCompany.productTypes}
             embedded
+            initialSupplierId={savedSupplierId}
           />
         ) : null}
       </div>
@@ -1922,31 +2277,23 @@ function PartyWorkspacePanel({
   );
 }
 
-function getFirstImageFile(fileList: FileList) {
-  return Array.from(fileList).find((file) => file.type.startsWith("image/")) ?? null;
-}
-
 function ProductWorkspacePanel({
   mode,
   onModeChange,
   formVersion,
   availableProductTypes = supplierProductTypes,
   embedded = false,
+  initialSupplierId = null,
 }: {
   mode: "new" | "records";
   onModeChange: (mode: "new" | "records") => void;
   formVersion: number;
   availableProductTypes?: readonly SupplierProductType[];
   embedded?: boolean;
+  initialSupplierId?: string | null;
 }) {
   const fileInputId = useId();
-  const normalizedAvailableProductTypes = normalizeSupplierProductTypes(availableProductTypes);
-  const selectableProductTypes = normalizedAvailableProductTypes.length
-    ? normalizedAvailableProductTypes
-    : supplierProductTypes;
-  const initialProductType = selectableProductTypes[0] ?? defaultSupplierProductType;
-  const [form, setForm] = useState<ProductFormState>(emptyProductForm(initialProductType));
-  const [imageError, setImageError] = useState<string | null>(null);
+  const [supplierQuery, setSupplierQuery] = useState("");
   const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
@@ -1954,59 +2301,123 @@ function ProductWorkspacePanel({
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [dummyInputCount, setDummyInputCount] = useState(0);
   const [parameterDummyInputCount, setParameterDummyInputCount] = useState(0);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [activeGallery, setActiveGallery] = useState<ProductRecord | null>(null);
+  const suppliers = useSuppliers();
   const products = useProducts();
   const upsertProduct = useUpsertProduct();
 
+  const supplierOptions = suppliers.data ?? [];
+  const initialProductType =
+    normalizeSupplierProductTypes(availableProductTypes)[0] ?? defaultSupplierProductType;
+  const [form, setForm] = useState<ProductFormState>(() => {
+    const next = emptyProductForm(initialProductType);
+    return {
+      ...next,
+      supplierId: initialSupplierId ?? "",
+      activeVariantId: next.variants[0]?.id ?? null,
+    };
+  });
+  const activeSupplierId = embedded ? (initialSupplierId ?? "") : form.supplierId;
+  const selectedSupplier =
+    supplierOptions.find((supplier) => supplier.id === activeSupplierId) ?? null;
+  const normalizedAvailableProductTypes = embedded
+    ? normalizeSupplierProductTypes(availableProductTypes)
+    : normalizeSupplierProductTypes(selectedSupplier?.company.productTypes ?? []);
+  const selectableProductTypes = normalizedAvailableProductTypes.length
+    ? normalizedAvailableProductTypes
+    : supplierProductTypes;
   const productParameterFields = productParameterTemplates[form.productType].fields;
-  const parseResult = productSchema.safeParse(form);
+  const activeVariant = getActiveVariant(form);
+  const parseResult = productSchema.safeParse(buildProductInput(form));
   const errors = submitted ? getZodFieldErrors(parseResult) : {};
   const visibleProducts = (products.data ?? []).filter((product) =>
-    [
-      supplierProductTypeLabels[product.productType],
-      product.subject,
-      product.detail,
-      product.material,
-      product.colorNotes,
-      product.unitPrice,
-      product.priceUnit,
-      ...Object.values(product.parameters),
-    ]
-      .join(" ")
-      .toLocaleLowerCase()
-      .includes(query.trim().toLocaleLowerCase()),
+    getProductSearchText(product).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
+  const visibleSupplierOptions = supplierOptions.filter((supplier) =>
+    fuzzyMatches(
+      `${supplier.company.companyName} ${supplier.company.emailDomainSuffix} ${supplier.company.productTypes
+        .map((productType) => supplierProductTypeLabels[productType])
+        .join(" ")}`,
+      normalizeSearchValue(supplierQuery),
+    ),
   );
 
   if (activeFormVersion !== formVersion) {
     setActiveFormVersion(formVersion);
-    setForm(emptyProductForm(initialProductType));
+    const next = emptyProductForm(initialProductType);
+    setForm({
+      ...next,
+      supplierId: initialSupplierId ?? "",
+      activeVariantId: next.variants[0]?.id ?? null,
+    });
     setImageError(null);
     setEditingId(null);
     setSubmitted(false);
   }
 
   if (!selectableProductTypes.includes(form.productType)) {
-    setForm(emptyProductForm(initialProductType));
+    const next = emptyProductForm(initialProductType);
+    setForm({
+      ...next,
+      supplierId: activeSupplierId,
+      activeVariantId: next.variants[0]?.id ?? null,
+    });
     setParameterDummyInputCount(0);
     setSubmitted(false);
   }
 
-  async function setImageFromFiles(fileList: FileList) {
-    const imageFile = getFirstImageFile(fileList);
-    if (!imageFile) {
+  async function setImagesFromFiles(fileList: FileList) {
+    const imageFiles = Array.from(fileList).filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) {
       setImageError("Drop or paste an image file.");
       return;
     }
 
     try {
       setIsUploadingImage(true);
-      const image = await uploadImage(imageFile);
+      const uploads = await Promise.all(
+        imageFiles.map(async (file) => {
+          const image = await uploadImage(file);
+          return {
+            id: crypto.randomUUID(),
+            sortIndex: 0,
+            material: "",
+            colorNotes: "",
+            parameters: getDefaultProductParameters(form.productType),
+            unitPrice: "",
+            priceUnit: getProductPriceUnit(form.productType),
+            image: {
+              name: file.name || "Uploaded image",
+              url: image.url,
+              storagePath: image.storagePath,
+            } satisfies ProductImageState,
+          } satisfies ProductVariantFormState;
+        }),
+      );
+
       setForm((current) => ({
         ...current,
-        image: {
-          name: imageFile.name || "Pasted image",
-          url: image.url,
-          storagePath: image.storagePath,
-        },
+        // A new form contains one blank variant so its fields can render. The
+        // first image ingest replaces that placeholder instead of leaving an
+        // empty tab 1 before the uploaded images.
+        variants: normalizeVariants([
+          ...(current.variants.length === 1 &&
+          current.variants[0]?.image === null &&
+          !current.variants[0].material.trim() &&
+          !current.variants[0].colorNotes.trim() &&
+          !current.variants[0].unitPrice.trim()
+            ? []
+            : current.variants),
+          ...uploads.map((variant, index) => ({
+            ...variant,
+            sortIndex:
+              (current.variants.length === 1 && current.variants[0]?.image === null
+                ? 0
+                : current.variants.length) + index,
+          })),
+        ]),
+        activeVariantId: uploads[0]?.id ?? current.activeVariantId,
       }));
       setImageError(null);
     } catch (error) {
@@ -2019,17 +2430,17 @@ function ProductWorkspacePanel({
   function handlePaste(event: ClipboardEvent<HTMLDivElement>) {
     if (event.clipboardData.files.length === 0) return;
     event.preventDefault();
-    void setImageFromFiles(event.clipboardData.files);
+    void setImagesFromFiles(event.clipboardData.files);
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
-    void setImageFromFiles(event.dataTransfer.files);
+    void setImagesFromFiles(event.dataTransfer.files);
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     if (!event.target.files) return;
-    void setImageFromFiles(event.target.files);
+    void setImagesFromFiles(event.target.files);
   }
 
   function updateProductType(value: string | null) {
@@ -2038,35 +2449,45 @@ function ProductWorkspacePanel({
     setForm((current) => ({
       ...current,
       productType,
-      parameters: getDefaultProductParameters(productType),
-      unitPrice: "",
-      priceUnit: getProductPriceUnit(productType),
+      variants: normalizeVariants(
+        current.variants.map((variant) => ({
+          ...variant,
+          parameters: getDefaultProductParameters(productType),
+          priceUnit: getProductPriceUnit(productType),
+        })),
+      ),
     }));
     setParameterDummyInputCount(0);
   }
 
-  function updateProductParameter(key: string, value: string) {
-    setForm((current) => ({
-      ...current,
-      parameters: {
-        ...current.parameters,
-        [key]: value,
-      },
-    }));
+  function updateActiveVariant(
+    update: (variant: ProductVariantFormState) => ProductVariantFormState,
+  ) {
+    setForm((current) => setVariantField(current, activeVariant.id, update));
   }
 
   function fillDummyProductParameters() {
-    const dummy = getProductParameterDummySet(form.productType, parameterDummyInputCount);
     const label = supplierProductTypeLabels[form.productType];
     setForm((current) => ({
       ...current,
       subject: `${label} internal ${parameterDummyInputCount + 1}`,
       detail: `Generic ${label.toLocaleLowerCase()} specification. Confirm construction, tolerance, finishing, packing, and production approval sample before bulk order.`,
-      material: getProductMaterialSummary(dummy.parameters),
-      colorNotes: getProductColorNotes(dummy.parameters),
-      parameters: dummy.parameters,
-      unitPrice: dummy.unitPrice,
-      priceUnit: getProductPriceUnit(current.productType),
+      variants: normalizeVariants(
+        current.variants.map((variant, index) => {
+          const variantDummy = getProductParameterDummySet(
+            current.productType,
+            parameterDummyInputCount + index,
+          );
+          return {
+            ...variant,
+            material: getProductMaterialSummary(variantDummy.parameters),
+            colorNotes: getProductColorNotes(variantDummy.parameters),
+            parameters: variantDummy.parameters,
+            unitPrice: variantDummy.unitPrice,
+            priceUnit: getProductPriceUnit(current.productType),
+          };
+        }),
+      ),
     }));
     setParameterDummyInputCount((count) => count + 1);
     setSubmitted(false);
@@ -2074,7 +2495,7 @@ function ProductWorkspacePanel({
 
   async function saveProduct() {
     setSubmitted(true);
-    const result = productSchema.safeParse(form);
+    const result = productSchema.safeParse(buildProductInput(form));
     if (!result.success) return;
 
     try {
@@ -2089,23 +2510,49 @@ function ProductWorkspacePanel({
 
   function editProduct(product: ProductRecord) {
     const productType = normalizeSupplierProductType(product.productType);
+    const variants = normalizeVariants(
+      product.variants.map((variant) => ({
+        id: variant.id,
+        sortIndex: variant.sortIndex,
+        material: variant.material,
+        colorNotes: variant.colorNotes,
+        parameters: {
+          ...getDefaultProductParameters(productType),
+          ...normalizeProductDimensions(variant.parameters),
+        },
+        unitPrice: variant.unitPrice,
+        priceUnit: variant.priceUnit || getProductPriceUnit(productType),
+        image: variant.image,
+      })),
+    );
     setForm({
+      supplierId: product.supplierId ?? "",
       productType,
       subject: product.subject,
       detail: product.detail,
-      material: product.material,
-      colorNotes: product.colorNotes,
-      parameters: {
-        ...getDefaultProductParameters(productType),
-        ...normalizeProductDimensions(product.parameters),
-      },
-      unitPrice: product.unitPrice,
-      priceUnit: product.priceUnit || getProductPriceUnit(productType),
-      image: product.image,
+      variants,
+      activeVariantId: variants[0]?.id ?? null,
     });
     setEditingId(product.id);
     setSubmitted(false);
     setImageError(null);
+  }
+
+  function removeVariant(variantId: string) {
+    setForm((current) => {
+      if (current.variants.length === 1) return current;
+      const variants = normalizeVariants(
+        current.variants.filter((variant) => variant.id !== variantId),
+      );
+      return {
+        ...current,
+        variants,
+        activeVariantId:
+          current.activeVariantId === variantId
+            ? (variants[0]?.id ?? null)
+            : current.activeVariantId,
+      };
+    });
   }
 
   if (mode === "records" && editingId === null) {
@@ -2142,36 +2589,59 @@ function ProductWorkspacePanel({
               <table className="w-full text-left text-sm">
                 <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
                   <tr>
+                    <th className="px-4 py-3">Supplier</th>
                     <th className="px-4 py-3">Type</th>
                     <th className="px-4 py-3">Subject</th>
+                    <th className="px-4 py-3">Variants</th>
                     <th className="px-4 py-3">Unit price</th>
                     <th className="px-4 py-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {visibleProducts.map((product) => (
-                    <tr key={product.id} className="hover:bg-muted/30">
-                      <td className="text-muted-foreground px-4 py-3">
-                        {supplierProductTypeLabels[product.productType]}
-                      </td>
-                      <td className="px-4 py-3 font-medium">{product.subject}</td>
-                      <td className="px-4 py-3">
-                        {product.unitPrice}{" "}
-                        <span className="text-muted-foreground">{product.priceUnit}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => editProduct(product)}
-                        >
-                          <Pencil />
-                          Edit
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                  {visibleProducts.map((product) => {
+                    const primaryVariant = getProductPrimaryVariant(product);
+                    const supplierName =
+                      supplierOptions.find((supplier) => supplier.id === product.supplierId)
+                        ?.company.companyName ?? "Unknown supplier";
+
+                    return (
+                      <tr key={product.id} className="hover:bg-muted/30">
+                        <td className="px-4 py-3">{supplierName}</td>
+                        <td className="text-muted-foreground px-4 py-3">
+                          {supplierProductTypeLabels[product.productType]}
+                        </td>
+                        <td className="px-4 py-3 font-medium">{product.subject}</td>
+                        <td className="px-4 py-3">{product.variants.length}</td>
+                        <td className="px-4 py-3">
+                          {primaryVariant?.unitPrice ?? "—"}{" "}
+                          <span className="text-muted-foreground">
+                            {primaryVariant?.priceUnit ?? ""}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setActiveGallery(product)}
+                            >
+                              View
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => editProduct(product)}
+                            >
+                              <Pencil />
+                              Edit
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2181,6 +2651,58 @@ function ProductWorkspacePanel({
             </p>
           )}
         </div>
+        <Dialog
+          open={activeGallery !== null}
+          onOpenChange={(open) => !open && setActiveGallery(null)}
+        >
+          <DialogContent className="max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>{activeGallery?.subject ?? "Product images"}</DialogTitle>
+              <DialogDescription>
+                Review every saved product variant image in one place.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {(activeGallery?.variants ?? []).map((variant, index, variants) =>
+                variant.image ? (
+                  <ImagePreviewDialog
+                    key={variant.id}
+                    src={variant.image.url}
+                    alt={`${activeGallery?.subject ?? "Product"} variant ${index + 1}`}
+                    title={activeGallery?.subject ?? "Product image"}
+                    initialIndex={index}
+                    gallery={variants
+                      .filter((item) => item.image)
+                      .map((item, itemIndex) => ({
+                        src: item.image?.url ?? "",
+                        alt: `${activeGallery?.subject ?? "Product"} variant ${itemIndex + 1}`,
+                      }))}
+                    trigger={
+                      <button
+                        type="button"
+                        className="bg-muted hover:bg-muted/80 overflow-hidden rounded-lg border text-left"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={variant.image.url}
+                          alt={`${activeGallery?.subject ?? "Product"} variant ${index + 1}`}
+                          className="aspect-square w-full object-cover"
+                        />
+                      </button>
+                    }
+                  />
+                ) : (
+                  <div
+                    key={variant.id}
+                    className="text-muted-foreground bg-muted grid aspect-square place-items-center rounded-lg border text-sm"
+                  >
+                    No image
+                  </div>
+                ),
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </section>
     );
   }
@@ -2201,7 +2723,10 @@ function ProductWorkspacePanel({
             type="button"
             variant="outline"
             onClick={() => {
-              setForm(getDummyProduct(dummyInputCount, selectableProductTypes));
+              setForm({
+                ...getDummyProduct(dummyInputCount, selectableProductTypes),
+                supplierId: activeSupplierId,
+              });
               setDummyInputCount((count) => count + 1);
               setParameterDummyInputCount(0);
               setImageError(null);
@@ -2229,6 +2754,54 @@ function ProductWorkspacePanel({
             </Button>
           </div>
           <div className="grid gap-4">
+            {!embedded ? (
+              <FormField label="Supplier" error={errors.supplierId}>
+                <div className="grid gap-2">
+                  <Input
+                    value={supplierQuery}
+                    onChange={(event) => setSupplierQuery(event.target.value)}
+                    placeholder="Search supplier"
+                    aria-label="Search suppliers"
+                  />
+                  <div className="bg-background max-h-52 overflow-y-auto rounded-lg border">
+                    {visibleSupplierOptions.map((supplier) => {
+                      const checked = form.supplierId === supplier.id;
+                      return (
+                        <button
+                          key={supplier.id}
+                          type="button"
+                          className={cn(
+                            "hover:bg-muted/40 flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-sm",
+                            checked ? "bg-muted/50" : "",
+                          )}
+                          onClick={() =>
+                            setForm((current) => ({
+                              ...current,
+                              supplierId: supplier.id,
+                            }))
+                          }
+                        >
+                          <span>
+                            <span className="block font-medium">
+                              {supplier.company.companyName}
+                            </span>
+                            <span className="text-muted-foreground block text-xs">
+                              @{supplier.company.emailDomainSuffix}
+                            </span>
+                          </span>
+                          {checked ? <Badge>Selected</Badge> : null}
+                        </button>
+                      );
+                    })}
+                    {visibleSupplierOptions.length === 0 ? (
+                      <p className="text-muted-foreground px-3 py-4 text-sm">
+                        No matching suppliers.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </FormField>
+            ) : null}
             <FormField label="Product type" error={errors.productType}>
               <Select value={form.productType} onValueChange={updateProductType}>
                 <SelectTrigger className="w-full">
@@ -2262,17 +2835,24 @@ function ProductWorkspacePanel({
               />
             </FormField>
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Material" error={errors.material}>
+              <FormField label="Material">
                 <Input
-                  value={form.material}
-                  onChange={(event) => setForm({ ...form, material: event.target.value })}
+                  value={activeVariant.material}
+                  onChange={(event) =>
+                    updateActiveVariant((variant) => ({ ...variant, material: event.target.value }))
+                  }
                   placeholder="Woven polyester, cotton, alloy..."
                 />
               </FormField>
-              <FormField label="Color notes" error={errors.colorNotes}>
+              <FormField label="Color notes">
                 <Input
-                  value={form.colorNotes}
-                  onChange={(event) => setForm({ ...form, colorNotes: event.target.value })}
+                  value={activeVariant.colorNotes}
+                  onChange={(event) =>
+                    updateActiveVariant((variant) => ({
+                      ...variant,
+                      colorNotes: event.target.value,
+                    }))
+                  }
                   placeholder="Pantone, finish, contrast..."
                 />
               </FormField>
@@ -2281,24 +2861,37 @@ function ProductWorkspacePanel({
               {productParameterFields.map((field) => (
                 <FormField key={field.key} label={field.label}>
                   <Input
-                    value={form.parameters[field.key] ?? ""}
-                    onChange={(event) => updateProductParameter(field.key, event.target.value)}
+                    value={activeVariant.parameters[field.key] ?? ""}
+                    onChange={(event) =>
+                      updateActiveVariant((variant) => ({
+                        ...variant,
+                        parameters: {
+                          ...variant.parameters,
+                          [field.key]: event.target.value,
+                        },
+                      }))
+                    }
                     placeholder={field.placeholder}
                   />
                 </FormField>
               ))}
             </div>
-            <FormField label="Unit price" error={errors.unitPrice}>
+            <FormField label="Unit price">
               <div className="flex">
                 <Input
-                  value={form.unitPrice}
-                  onChange={(event) => setForm({ ...form, unitPrice: event.target.value })}
+                  value={activeVariant.unitPrice}
+                  onChange={(event) =>
+                    updateActiveVariant((variant) => ({
+                      ...variant,
+                      unitPrice: event.target.value,
+                    }))
+                  }
                   className="rounded-r-none"
                   inputMode="decimal"
                   placeholder="0.075"
                 />
                 <span className="border-input bg-muted text-muted-foreground flex h-8 shrink-0 items-center rounded-r-lg border border-l-0 px-2 text-sm">
-                  {form.priceUnit}
+                  {activeVariant.priceUnit}
                 </span>
               </div>
             </FormField>
@@ -2309,18 +2902,37 @@ function ProductWorkspacePanel({
           className={cn("rounded-lg border p-5 shadow-sm", embedded ? "bg-background" : "bg-card")}
         >
           <div className="mb-5 flex items-center justify-between gap-3">
-            <Badge variant={form.image ? "default" : "outline"}>Product image</Badge>
-            {form.image ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Remove product image"
-                onClick={() => setForm({ ...form, image: null })}
-              >
-                <X />
-              </Button>
-            ) : null}
+            <Badge variant={activeVariant.image ? "default" : "outline"}>
+              {form.variants.length} variant{form.variants.length === 1 ? "" : "s"}
+            </Badge>
+          </div>
+
+          <div className="mb-4 overflow-x-auto pb-1">
+            <div className="flex min-w-max gap-2">
+              {normalizeVariants(form.variants).map((variant, index) => {
+                const isActive = variant.id === activeVariant.id;
+                const hasError =
+                  submitted &&
+                  (!variant.image || !variant.material.trim() || !variant.colorNotes.trim());
+
+                return (
+                  <button
+                    key={variant.id}
+                    type="button"
+                    className={cn(
+                      "rounded-md border px-3 py-2 text-sm font-medium",
+                      isActive ? "bg-foreground text-background" : "bg-background",
+                      hasError ? "border-destructive" : "",
+                    )}
+                    onClick={() =>
+                      setForm((current) => ({ ...current, activeVariantId: variant.id }))
+                    }
+                  >
+                    {index + 1}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div
@@ -2331,15 +2943,33 @@ function ProductWorkspacePanel({
             onDrop={handleDrop}
             className="border-input focus-visible:ring-ring/50 grid min-h-72 place-items-center rounded-lg border border-dashed p-4 text-center outline-none focus-visible:ring-3"
           >
-            {form.image ? (
+            {activeVariant.image ? (
               <div className="grid gap-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={form.image.url}
+                  src={activeVariant.image.url}
                   alt="Product preview"
                   className="max-h-64 w-full rounded-md object-contain"
                 />
-                <p className="text-muted-foreground truncate text-xs">{form.image.name}</p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-muted-foreground truncate text-xs">
+                    {activeVariant.image.name}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Remove product image"
+                    onClick={() =>
+                      updateActiveVariant((variant) => ({
+                        ...variant,
+                        image: null,
+                      }))
+                    }
+                  >
+                    <X />
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="grid justify-items-center gap-3">
@@ -2348,22 +2978,24 @@ function ProductWorkspacePanel({
                 </span>
                 <div>
                   <p className="text-sm font-medium">
-                    {isUploadingImage ? "Uploading image..." : "Paste or drop product image"}
+                    {isUploadingImage ? "Uploading images..." : "Paste or drop one or more images"}
                   </p>
                   <p className="text-muted-foreground mt-1 text-xs leading-5">
-                    Ctrl+V from clipboard, drag and drop, or choose a file.
+                    Ctrl+V from clipboard, drag and drop, or choose files. Each image becomes its
+                    own numbered variant tab.
                   </p>
                 </div>
                 <input
                   id={fileInputId}
                   type="file"
                   accept="image/*"
+                  multiple
                   className="sr-only"
                   onChange={handleFileChange}
                 />
                 <Button type="button" variant="outline" render={<Label htmlFor={fileInputId} />}>
                   <FolderOpen />
-                  Choose image
+                  Choose images
                 </Button>
               </div>
             )}
@@ -2372,6 +3004,18 @@ function ProductWorkspacePanel({
           {imageError ? (
             <p className="text-destructive mt-3 text-xs leading-5">{imageError}</p>
           ) : null}
+
+          <div className="mt-4 flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={form.variants.length <= 1}
+              onClick={() => removeVariant(activeVariant.id)}
+            >
+              <Trash2 />
+              Remove current variant
+            </Button>
+          </div>
         </div>
       </div>
       {upsertProduct.isPending ? (

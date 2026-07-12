@@ -1,15 +1,17 @@
 import { z } from "zod";
 
-const storedRecordSchema = z.object({
-  id: z.string().min(1),
-  updatedAt: z.string().optional(),
-}).passthrough();
+const storedRecordSchema = z
+  .object({
+    id: z.string().min(1),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
 
 const canvasSchema = storedRecordSchema.extend({
   content: z.object({ nodes: z.array(z.unknown()), edges: z.array(z.unknown()) }),
 });
 
-export const localRecoveryArchiveSchema = z.object({
+const localRecoveryArchiveV1Schema = z.object({
   version: z.literal(1),
   exportedAt: z.string(),
   origin: z.string(),
@@ -21,6 +23,15 @@ export const localRecoveryArchiveSchema = z.object({
   products: z.array(storedRecordSchema),
 });
 
+const localRecoveryArchiveV2Schema = localRecoveryArchiveV1Schema.extend({
+  version: z.literal(2),
+});
+
+export const localRecoveryArchiveSchema = z.union([
+  localRecoveryArchiveV1Schema,
+  localRecoveryArchiveV2Schema,
+]);
+
 export type LocalRecoveryArchive = z.infer<typeof localRecoveryArchiveSchema>;
 
 export const RECOVERY_KEYS = {
@@ -31,6 +42,10 @@ export const RECOVERY_KEYS = {
   suppliers: "ica:workspace:suppliers",
   products: "ica:workspace:products",
 } as const;
+
+const PRODUCT_DB_NAME = "ica:workspace-record-store";
+const PRODUCT_DB_VERSION = 1;
+const PRODUCT_STORE = "products";
 
 type RecoverableCollection = keyof typeof RECOVERY_KEYS;
 
@@ -58,7 +73,13 @@ export function mergeRecoveryRecords<T extends z.infer<typeof storedRecordSchema
   return [...merged.values()];
 }
 
+function canUseIndexedDb(): boolean {
+  return typeof window !== "undefined" && "indexedDB" in window;
+}
+
 async function readIndexedCanvasContent(id: string): Promise<unknown | null> {
+  if (!canUseIndexedDb()) return null;
+
   return new Promise((resolve) => {
     const request = indexedDB.open("ica:local-store", 1);
     request.onerror = () => resolve(null);
@@ -80,9 +101,84 @@ async function readIndexedCanvasContent(id: string): Promise<unknown | null> {
   });
 }
 
+async function openProductsDb(): Promise<IDBDatabase | null> {
+  if (!canUseIndexedDb()) return null;
+
+  return new Promise((resolve) => {
+    const request = indexedDB.open(PRODUCT_DB_NAME, PRODUCT_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PRODUCT_STORE)) {
+        db.createObjectStore(PRODUCT_STORE, { keyPath: "id" });
+      }
+    };
+    request.onerror = () => resolve(null);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function readIndexedProducts(): Promise<z.infer<typeof storedRecordSchema>[]> {
+  const db = await openProductsDb();
+  if (!db) return [];
+
+  try {
+    return await new Promise((resolve) => {
+      const request = db.transaction(PRODUCT_STORE, "readonly").objectStore(PRODUCT_STORE).getAll();
+      request.onerror = () => resolve([]);
+      request.onsuccess = () => {
+        const rows = Array.isArray(request.result) ? request.result : [];
+        resolve(z.array(storedRecordSchema).catch([]).parse(rows));
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function writeIndexedProducts(records: z.infer<typeof storedRecordSchema>[]): Promise<void> {
+  const db = await openProductsDb();
+  if (!db) return;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(PRODUCT_STORE, "readwrite");
+      const store = transaction.objectStore(PRODUCT_STORE);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("Failed to write product recovery data."));
+      store.clear();
+      for (const record of records) {
+        store.put(record);
+      }
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function readRecoveryProducts(): Promise<z.infer<typeof storedRecordSchema>[]> {
+  const indexedProducts = await readIndexedProducts();
+  if (indexedProducts.length > 0) return indexedProducts;
+  return parseCollection(localStorage.getItem(RECOVERY_KEYS.products));
+}
+
+async function writeRecoveryProducts(records: z.infer<typeof storedRecordSchema>[]): Promise<void> {
+  if (canUseIndexedDb()) {
+    await writeIndexedProducts(records);
+  }
+  localStorage.setItem(RECOVERY_KEYS.products, JSON.stringify(records));
+}
+
 export async function createLocalRecoveryArchive(): Promise<LocalRecoveryArchive> {
   const collections = Object.fromEntries(
-    Object.entries(RECOVERY_KEYS).map(([name, key]) => [name, parseCollection(localStorage.getItem(key))]),
+    await Promise.all(
+      (Object.keys(RECOVERY_KEYS) as RecoverableCollection[]).map(async (name) => {
+        if (name === "products") {
+          return [name, await readRecoveryProducts()] as const;
+        }
+        return [name, parseCollection(localStorage.getItem(RECOVERY_KEYS[name]))] as const;
+      }),
+    ),
   ) as Record<RecoverableCollection, z.infer<typeof storedRecordSchema>[]>;
 
   const canvases = await Promise.all(
@@ -92,8 +188,8 @@ export async function createLocalRecoveryArchive(): Promise<LocalRecoveryArchive
     }),
   );
 
-  return localRecoveryArchiveSchema.parse({
-    version: 1,
+  return localRecoveryArchiveV2Schema.parse({
+    version: 2,
     exportedAt: new Date().toISOString(),
     origin: window.location.origin,
     ...collections,
@@ -104,6 +200,12 @@ export async function createLocalRecoveryArchive(): Promise<LocalRecoveryArchive
 export async function importLocalRecoveryArchive(value: unknown): Promise<LocalRecoveryArchive> {
   const archive = localRecoveryArchiveSchema.parse(value);
   for (const name of Object.keys(RECOVERY_KEYS) as RecoverableCollection[]) {
+    if (name === "products") {
+      const current = await readRecoveryProducts();
+      await writeRecoveryProducts(mergeRecoveryRecords(current, archive.products));
+      continue;
+    }
+
     const current = parseCollection(localStorage.getItem(RECOVERY_KEYS[name]));
     const incoming = archive[name];
     localStorage.setItem(RECOVERY_KEYS[name], JSON.stringify(mergeRecoveryRecords(current, incoming)));

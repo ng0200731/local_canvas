@@ -23,7 +23,7 @@ export default async function LoginPage({
         <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
         <p className="text-muted-foreground text-sm">Sign in to your canvas</p>
       </div>
-      <LoginForm redirectTo={redirectTo ?? "/projects"} />
+      <LoginForm redirectTo={redirectTo ?? "/"} />
       <p className="text-muted-foreground text-center text-sm">
         No account?{" "}
         <Link
