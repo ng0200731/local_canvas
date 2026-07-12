@@ -103,7 +103,7 @@ describe("workspace record validation", () => {
     ).toBe(false);
   });
 
-  it("validates customer garment products and requires a customer project", () => {
+  it("validates customer garment products without a customer project field", () => {
     const variant = {
       id: "variant-1",
       sortIndex: 0,
@@ -124,7 +124,6 @@ describe("workspace record validation", () => {
       productSchema.safeParse({
         ownerKind: "customer",
         customerId: "customer-1",
-        projectId: "project-1",
         productType: "shirt",
         subject: "SH-001",
         detail: "Customer shirt sample",
@@ -137,7 +136,7 @@ describe("workspace record validation", () => {
         customerId: "customer-1",
         productType: "woven-label",
         subject: "SH-001",
-        detail: "Missing project",
+        detail: "Wrong customer garment type",
         variants: [variant],
       }).success,
     ).toBe(false);

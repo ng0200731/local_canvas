@@ -215,11 +215,10 @@ describe("localWorkspaceRecordStore", () => {
     }
   });
 
-  it("persists customer products with their customer project", async () => {
+  it("persists customer products without a customer project field", async () => {
     await localWorkspaceRecordStore.upsertProduct(null, {
       ownerKind: "customer",
       customerId: "customer-1",
-      projectId: "project-1",
       productType: "shirt",
       subject: "SH-001",
       detail: "Cotton shirt",
@@ -245,7 +244,7 @@ describe("localWorkspaceRecordStore", () => {
     expect(products[0]).toMatchObject({
       ownerKind: "customer",
       customerId: "customer-1",
-      projectId: "project-1",
+      projectId: null,
       supplierId: null,
       productType: "shirt",
     });

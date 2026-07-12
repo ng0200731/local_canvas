@@ -93,6 +93,13 @@ function SendCanvasDialog({
         html: report.html,
         text: report.text,
         pdfFilename: `${filename}-report.pdf`,
+        report: {
+          title: report.title,
+          generatedAt: report.generatedAt,
+          project: report.project,
+          sections: report.sections,
+          steps: report.steps,
+        },
       });
       const sentAt = new Date().toLocaleString();
       setSentRecords((current) => [

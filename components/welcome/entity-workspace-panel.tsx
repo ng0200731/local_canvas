@@ -110,7 +110,6 @@ interface ProductFormState {
   ownerKind: ProductOwnerKind;
   supplierId: string;
   customerId: string;
-  projectId: string;
   productType: WorkspaceProductType;
   subject: string;
   detail: string;
@@ -1133,7 +1132,6 @@ function getDummyProduct(
     ownerKind,
     supplierId: "",
     customerId: "",
-    projectId: "",
     subject: `${label} sample ${parameterCycle + 1}`,
     detail: `Generic ${label.toLocaleLowerCase()} specification. Confirm construction, tolerance, finishing, packing, and production approval sample before bulk order.`,
     variants,
@@ -1171,7 +1169,6 @@ function emptyProductForm(
     ownerKind,
     supplierId: "",
     customerId: "",
-    projectId: "",
     productType,
     subject: "",
     detail: "",
@@ -1221,7 +1218,6 @@ function buildProductInput(form: ProductFormState) {
     ownerKind: form.ownerKind,
     supplierId: form.ownerKind === "supplier" ? form.supplierId : null,
     customerId: form.ownerKind === "customer" ? form.customerId : null,
-    projectId: null,
     productType: form.productType,
     subject: form.subject,
     detail: form.detail,
@@ -2774,9 +2770,7 @@ function ProductWorkspacePanel({
 
     try {
       await upsertProduct.mutateAsync({ id: editingId, input: result.data });
-      toast.success(
-        ownerKind === "customer" ? "Customer product image saved" : "Product saved",
-      );
+      toast.success(ownerKind === "customer" ? "Customer product image saved" : "Product saved");
       setEditingId(null);
       onModeChange("records");
     } catch (error) {
@@ -2808,7 +2802,6 @@ function ProductWorkspacePanel({
       ownerKind: product.ownerKind,
       supplierId: product.supplierId ?? "",
       customerId: product.customerId ?? "",
-      projectId: product.projectId ?? "",
       productType,
       subject: product.subject,
       detail: product.detail,
@@ -2966,7 +2959,6 @@ function ProductWorkspacePanel({
                 ...getDummyProduct(dummyInputCount, selectableProductTypes, ownerKind),
                 supplierId: activeSupplierId,
                 customerId: activeCustomerId,
-                projectId: form.projectId,
               });
               setDummyInputCount((count) => count + 1);
               setParameterDummyInputCount(0);
@@ -3328,9 +3320,7 @@ function ProductWorkspacePanel({
             <p className="text-destructive mt-3 text-xs leading-5">{imageError}</p>
           ) : null}
           {activeVariantErrors.image ? (
-            <p className="text-destructive mt-3 text-xs leading-5">
-              {activeVariantErrors.image}
-            </p>
+            <p className="text-destructive mt-3 text-xs leading-5">{activeVariantErrors.image}</p>
           ) : null}
 
           <div className="mt-4 flex justify-end">

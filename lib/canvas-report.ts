@@ -258,11 +258,6 @@ function blockHtml(block: CanvasReportBlock): string {
   return `<article class="block"><div class="details"><h3>${escapeHtml(block.title)}</h3>${block.subtitle ? `<p>${escapeHtml(block.subtitle)}</p>` : ""}<table>${details}</table></div>${image}</article>`;
 }
 
-function sectionHtml(title: string, blocks: readonly CanvasReportBlock[]): string {
-  if (blocks.length === 0) return "";
-  return `<section><h2>${escapeHtml(title)}</h2>${blocks.map(blockHtml).join("")}</section>`;
-}
-
 function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
   const pageCss = `
     body{font-family:Arial,sans-serif;color:#151515;margin:0;background:#f6f5f2}
@@ -331,18 +326,26 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
   const nodes = content.nodes.slice().sort(byNodePosition);
   const nodesById = new Map(content.nodes.map((node) => [node.id, node] as const));
   const productsById = new Map(input.products.map((product) => [product.id, product] as const));
-  const suppliersById = new Map(input.suppliers.map((supplier) => [supplier.id, supplier] as const));
+  const suppliersById = new Map(
+    input.suppliers.map((supplier) => [supplier.id, supplier] as const),
+  );
   const customer = input.project?.customerId
     ? (input.customers.find((candidate) => candidate.id === input.project?.customerId) ?? null)
     : null;
 
   const customerProducts = input.products
-    .filter((product) => product.ownerKind === "customer" && product.customerId === input.project?.customerId)
+    .filter(
+      (product) =>
+        product.ownerKind === "customer" && product.customerId === input.project?.customerId,
+    )
     .map((product) => ({
       id: `customer-product-${product.id}`,
       title: product.subject,
       subtitle: getWorkspaceProductTypeLabel(product.productType),
-      details: productDetails(product, customer?.company.companyName ?? input.project?.customerName ?? "Customer"),
+      details: productDetails(
+        product,
+        customer?.company.companyName ?? input.project?.customerName ?? "Customer",
+      ),
       image: variantImage(primaryVariant(product)),
     }));
 
@@ -370,7 +373,14 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
             { label: "Supplier", value: stringValue(data.supplierName) },
             { label: "Product", value: stringValue(data.productSubject) },
           ].filter((item) => item.value),
-      image: variantImage(variant) ?? (nullableString(data.variantImageUrl) ? { url: nullableString(data.variantImageUrl), alt: stringValue(data.variantImageName) || "Supplier image" } : null),
+      image:
+        variantImage(variant) ??
+        (nullableString(data.variantImageUrl)
+          ? {
+              url: nullableString(data.variantImageUrl),
+              alt: stringValue(data.variantImageName) || "Supplier image",
+            }
+          : null),
     };
   });
 
@@ -392,7 +402,10 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     });
 
   const genericBlocks = nodes
-    .filter((node) => node.type === "imageInput" && stringValue(asRecord(node.data).genericDefinitionName))
+    .filter(
+      (node) =>
+        node.type === "imageInput" && stringValue(asRecord(node.data).genericDefinitionName),
+    )
     .map((node) => {
       const data = asRecord(node.data);
       return {
@@ -404,7 +417,10 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
           { label: "Node", value: stringValue(data.genericDefinitionName) },
         ].filter((item) => item.value),
         image: nullableString(data.imageUrl)
-          ? { url: nullableString(data.imageUrl), alt: stringValue(data.alias) || "Generic node image" }
+          ? {
+              url: nullableString(data.imageUrl),
+              alt: stringValue(data.alias) || "Generic node image",
+            }
           : null,
       };
     });
@@ -419,24 +435,34 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
         .map(outputBlockForNode),
     );
 
-  const breakdownLabels = new Set([
-    "Sample lead time",
-    "Sample charge",
-    "Sample cost",
-    "Production cost",
-    "Production lead time",
-    "Bulk lead time",
-    "Product lead time",
-    "Unit price",
-  ]);
+  const breakdownLabels = new Set(
+    [
+      "Sample lead time",
+      "Sample charge",
+      "Sample cost",
+      "Production cost",
+      "Production lead time",
+      "Bulk lead time",
+      "Product lead time",
+      "Unit price",
+    ].map((label) => label.toLocaleLowerCase()),
+  );
   const supplierBreakdowns = supplierBlocks.map((block, index) => {
     const supplierNode = supplierNodes[index];
+    const details = block.details.filter((detail) =>
+      breakdownLabels.has(detail.label.toLocaleLowerCase()),
+    );
     return {
       id: `breakdown-${block.id}`,
       title: `${block.title} breakdown`,
       subtitle: block.subtitle,
-      details: block.details.filter((detail) => breakdownLabels.has(detail.label)),
-      image: supplierNode ? generatedImageForSupplier(supplierNode, nodesById, content.edges) : null,
+      details:
+        details.length > 0
+          ? details
+          : [{ label: "Breakdown", value: "No timing or cost breakdown fields captured yet." }],
+      image: supplierNode
+        ? generatedImageForSupplier(supplierNode, nodesById, content.edges)
+        : null,
     };
   });
 
@@ -458,9 +484,10 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     ...nodes.map((node, index) => ({
       id: `node-${node.id}`,
       title: `${index + 1}. ${node.type} node`,
-      detail: node.type === "generate"
-        ? `Created Generate node with prompt: ${stringValue(asRecord(node.data).prompt) || "No prompt entered."}`
-        : `Created ${nodeTitle(node)}.`,
+      detail:
+        node.type === "generate"
+          ? `Created Generate node with prompt: ${stringValue(asRecord(node.data).prompt) || "No prompt entered."}`
+          : `Created ${nodeTitle(node)}.`,
     })),
     ...content.edges.map((edge, index) => ({
       id: `edge-${edge.id}`,
@@ -484,7 +511,9 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
       employeeTitle: input.project?.employeeTitle ?? "",
       employeeEmail: input.project?.employeeEmail ?? "Not set",
       employeeTel: input.project?.employeeTel ?? "Not set",
-      currency: [input.project?.currencyCode, input.project?.currencySymbol].filter(Boolean).join(" ") || "Not set",
+      currency:
+        [input.project?.currencyCode, input.project?.currencySymbol].filter(Boolean).join(" ") ||
+        "Not set",
       destination: input.project?.destinationCountryName ?? "Not set",
     },
     customerProducts,
@@ -493,6 +522,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     genericBlocks,
     outputBlocks,
     supplierBreakdowns,
+    sections,
     steps,
   };
 

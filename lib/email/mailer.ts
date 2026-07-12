@@ -247,6 +247,7 @@ export async function prepareCanvasReportMail(
       title: input.subject,
       customerName: input.canvasName,
       text: input.text,
+      report: input.report,
     });
     return {
       subject: input.subject,

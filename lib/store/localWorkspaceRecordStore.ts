@@ -334,7 +334,7 @@ export const localWorkspaceRecordStore: WorkspaceRecordStore = {
       ownerKind: parsed.ownerKind,
       supplierId: parsed.ownerKind === "supplier" ? (parsed.supplierId ?? null) : null,
       customerId: parsed.ownerKind === "customer" ? (parsed.customerId ?? null) : null,
-      projectId: parsed.ownerKind === "customer" ? (parsed.projectId ?? null) : null,
+      projectId: null,
       productType: parsed.productType,
       subject: parsed.subject,
       detail: parsed.detail,
