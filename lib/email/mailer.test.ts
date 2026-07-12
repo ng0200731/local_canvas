@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createEmailDelivery,
   prepareCanvasMail,
+  prepareCanvasReportHtmlOnlyMail,
   prepareCanvasReportMail,
   type MailTransportFactory,
   type SmtpProviderConfig,
@@ -157,6 +158,44 @@ describe("SMTP email delivery", () => {
     expect(prepared.text).toContain("Report body");
     expect(prepared.text).toContain("email content only");
     expect(prepared.html).toContain("email content only");
+
+    errorSpy.mockRestore();
+  });
+
+  it("prepares a separate HTML-only diagnostic report email", () => {
+    const prepared = prepareCanvasReportHtmlOnlyMail({
+      to: "recipient@example.com",
+      canvasName: "Campaign board",
+      subject: "Campaign board canvas report",
+      html: "<p>Report body</p>",
+      text: "Report body",
+      pdfFilename: "campaign-board-report.pdf",
+    });
+
+    expect(prepared.subject).toBe("Campaign board canvas report (HTML only)");
+    expect(prepared.attachments).toEqual([]);
+    expect(prepared.text).toContain("Diagnostic email 1 of 2");
+  });
+
+  it("can require the PDF attachment for the second diagnostic report email", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      prepareCanvasReportMail(
+        {
+          to: "recipient@example.com",
+          canvasName: "Campaign board",
+          subject: "Campaign board canvas report",
+          html: "<p>Report body</p>",
+          text: "Report body",
+          pdfFilename: "campaign-board-report.pdf",
+        },
+        async () => {
+          throw new Error("PDF render failed");
+        },
+        { requirePdf: true },
+      ),
+    ).rejects.toThrow("PDF render failed");
 
     errorSpy.mockRestore();
   });

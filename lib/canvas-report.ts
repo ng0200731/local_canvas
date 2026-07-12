@@ -229,6 +229,23 @@ function generatedImageForSupplier(
   return resultUrl ? { url: resultUrl, alt: "Generated supplier output" } : null;
 }
 
+function finalOutputImage(outputBlocks: readonly CanvasReportBlock[]): CanvasReportImage | null {
+  return [...outputBlocks].reverse().find((block) => block.image?.url)?.image ?? null;
+}
+
+function parseCurrencyAmount(value: string): { prefix: string; amount: number } | null {
+  const match = /^\s*([^\d.-]*)\s*(-?\d+(?:\.\d+)?)/.exec(value);
+  if (!match) return null;
+  const amount = Number(match[2]);
+  if (!Number.isFinite(amount)) return null;
+  return { prefix: match[1]?.trim() ?? "", amount };
+}
+
+function formatCurrencyAmount(prefix: string, amount: number): string {
+  const formatted = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+  return prefix ? `${prefix} ${formatted}` : formatted;
+}
+
 function nodeTitle(node: CanvasNode | undefined): string {
   if (!node) return "Unknown node";
   const data = asRecord(node.data);
@@ -447,24 +464,64 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
       "Unit price",
     ].map((label) => label.toLocaleLowerCase()),
   );
-  const supplierBreakdowns = supplierBlocks.map((block, index) => {
-    const supplierNode = supplierNodes[index];
+  const supplierBreakdownDetails = supplierBlocks.flatMap((block) => {
     const details = block.details.filter((detail) =>
       breakdownLabels.has(detail.label.toLocaleLowerCase()),
     );
-    return {
-      id: `breakdown-${block.id}`,
-      title: `${block.title} breakdown`,
-      subtitle: block.subtitle,
-      details:
-        details.length > 0
-          ? details
-          : [{ label: "Breakdown", value: "No timing or cost breakdown fields captured yet." }],
-      image: supplierNode
-        ? generatedImageForSupplier(supplierNode, nodesById, content.edges)
-        : null,
-    };
+    if (details.length === 0) {
+      return [
+        {
+          label: block.title,
+          value: `${block.subtitle ? `${block.subtitle}\n` : ""}No timing or cost breakdown fields captured yet.`,
+        },
+      ];
+    }
+
+    return details.map((detail) => ({
+      label: `${block.title} - ${detail.label}`,
+      value: detail.value,
+    }));
   });
+  const sampleChargeParts = supplierBlocks
+    .map((block) => {
+      const value =
+        block.details.find((detail) => detail.label.toLocaleLowerCase() === "sample charge")
+          ?.value ?? "";
+      const parsed = parseCurrencyAmount(value);
+      return parsed ? { ...parsed, supplierName: block.title } : null;
+    })
+    .filter(
+      (part): part is { prefix: string; amount: number; supplierName: string } => part !== null,
+    );
+  const sampleChargePrefixes = new Set(sampleChargeParts.map((part) => part.prefix));
+  const sampleChargeTotal =
+    sampleChargeParts.length > 0 && sampleChargePrefixes.size === 1
+      ? sampleChargeParts.reduce((total, part) => total + part.amount, 0)
+      : null;
+  const supplierBreakdowns: CanvasReportBlock[] =
+    supplierBlocks.length > 0
+      ? [
+          {
+            id: "supplier-total-breakdown",
+            title: "Supplier total breakdown",
+            subtitle: supplierBlocks.map((block) => block.subtitle ?? block.title).join(" + "),
+            details: [
+              ...(sampleChargeTotal !== null
+                ? [
+                    {
+                      label: "Total sample charge",
+                      value: `${sampleChargeParts
+                        .map((part) => `${part.supplierName}: ${formatCurrencyAmount(part.prefix, part.amount)}`)
+                        .join(" + ")} = ${formatCurrencyAmount(sampleChargeParts[0]?.prefix ?? "", sampleChargeTotal)}`,
+                    },
+                  ]
+                : []),
+              ...supplierBreakdownDetails,
+            ],
+            image: finalOutputImage(outputBlocks),
+          },
+        ]
+      : [];
 
   const sections: CanvasReportSection[] = [
     { id: "customer-products", title: "Product list", blocks: customerProducts },
@@ -501,7 +558,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     })),
   ];
 
-  const baseReport = {
+  const baseReport: Omit<CanvasReport, "html" | "text"> = {
     title: `${input.canvas.name} canvas report`,
     generatedAt: new Date().toISOString(),
     project: {

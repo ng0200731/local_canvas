@@ -1,6 +1,6 @@
 import "server-only";
 
-import PDFDocument from "pdfkit";
+import PDFDocument from "pdfkit/js/pdfkit.standalone.js";
 
 import type { CanvasReportPayload } from "@/lib/email/schemas";
 

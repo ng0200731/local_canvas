@@ -238,9 +238,21 @@ export function prepareTestMail(): PreparedMail {
   };
 }
 
+export function prepareCanvasReportHtmlOnlyMail(input: SendCanvasReportEmailRequest): PreparedMail {
+  const diagnosticNote =
+    "Diagnostic email 1 of 2: this message is HTML/text only and has no PDF attachment.";
+  return {
+    subject: `${input.subject} (HTML only)`,
+    text: `${input.text}\n\n${diagnosticNote}`,
+    html: `${input.html}<p>${escapeHtml(diagnosticNote)}</p>`,
+    attachments: [],
+  };
+}
+
 export async function prepareCanvasReportMail(
   input: SendCanvasReportEmailRequest,
   renderPdf: CanvasReportPdfRenderer = renderCanvasReportPdf,
+  options: { requirePdf?: boolean } = {},
 ): Promise<PreparedMail> {
   try {
     const pdf = await renderPdf({
@@ -250,7 +262,7 @@ export async function prepareCanvasReportMail(
       report: input.report,
     });
     return {
-      subject: input.subject,
+      subject: `${input.subject} (PDF attached)`,
       text: input.text,
       html: input.html,
       attachments: [
@@ -264,7 +276,9 @@ export async function prepareCanvasReportMail(
   } catch (error) {
     console.error("Canvas report PDF generation failed; sending email without attachment.", {
       errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : "Unknown error",
     });
+    if (options.requirePdf) throw error;
   }
 
   const fallbackNote =
@@ -293,12 +307,22 @@ export function createEmailDelivery({ providers, createTransport }: EmailDeliver
             attachments: mail.attachments,
           }),
         );
-        return emailDeliveryResponseSchema.parse({
+        const response = emailDeliveryResponseSchema.parse({
           success: true,
           provider: provider.id,
           messageId: result.messageId,
         });
-      } catch {
+        console.info("Email delivery accepted by SMTP provider.", {
+          provider: response.provider,
+          messageId: response.messageId,
+        });
+        return response;
+      } catch (error) {
+        console.warn("SMTP provider failed; trying next configured provider.", {
+          provider: provider.id,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        });
         // Continue to the next configured provider. Credential and SMTP details
         // deliberately stay server-side and are never returned to the browser.
       }
@@ -322,7 +346,12 @@ export async function deliverCanvasEmail(input: SendCanvasEmailRequest) {
 
 export async function deliverCanvasReportEmail(input: SendCanvasReportEmailRequest) {
   const parsed = sendCanvasReportEmailRequestSchema.parse(input);
-  return delivery()(parsed.to, await prepareCanvasReportMail(parsed));
+  const deliver = delivery();
+  await deliver(parsed.to, prepareCanvasReportHtmlOnlyMail(parsed));
+  return deliver(
+    parsed.to,
+    await prepareCanvasReportMail(parsed, renderCanvasReportPdf, { requirePdf: true }),
+  );
 }
 
 export async function deliverTestEmail(input: SendTestEmailRequest) {
