@@ -100,6 +100,7 @@ const genericNodeRowSchema = z.object({
   name: z.string(),
   image_url: z.string(),
   storage_path: z.string().nullable(),
+  images: z.unknown().optional(),
   sort_index: z.number().int(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -270,6 +271,7 @@ function mapGenericNodeDefinition(rowValue: unknown): GenericNodeDefinition {
   return genericNodeDefinitionSchema.parse({
     id: row.id,
     name: row.name,
+    images: row.images,
     imageUrl: row.image_url,
     storagePath: row.storage_path,
     sortIndex: row.sort_index,
@@ -587,10 +589,15 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
     async listGenericNodeDefinitions() {
       const query = await supabase
         .from("generic_node_definitions")
-        .select("id, name, image_url, storage_path, sort_index, created_at, updated_at")
+        .select("id, name, image_url, storage_path, images, sort_index, created_at, updated_at")
         .order("sort_index", { ascending: true });
       if (query.error) {
         if (isSettingsSchemaCacheMismatch(query.error.message)) {
+          const legacy = await supabase
+            .from("generic_node_definitions")
+            .select("id, name, image_url, storage_path, sort_index, created_at, updated_at")
+            .order("sort_index", { ascending: true });
+          if (!legacy.error) return toUnknownArray(legacy.data).map(mapGenericNodeDefinition);
           return localWorkspaceRecordStore.listGenericNodeDefinitions();
         }
         assertNoError({ error: query.error }, "listGenericNodeDefinitions");
@@ -603,18 +610,20 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       const userId = await getCurrentUserId();
       const existing = await this.listGenericNodeDefinitions();
       const current = id ? existing.find((record) => record.id === id) : null;
+      const primaryImage = parsed.images[0];
       const values = {
         id: current?.id ?? id ?? crypto.randomUUID(),
         user_id: userId,
         name: parsed.name,
-        image_url: parsed.imageUrl,
-        storage_path: parsed.storagePath,
+        image_url: primaryImage.url,
+        storage_path: primaryImage.storagePath,
+        images: parsed.images,
         sort_index: current?.sortIndex ?? existing.length,
       };
       const query = await supabase
         .from("generic_node_definitions")
         .upsert(values)
-        .select("id, name, image_url, storage_path, sort_index, created_at, updated_at")
+        .select("id, name, image_url, storage_path, images, sort_index, created_at, updated_at")
         .single();
       if (query.error) {
         if (isSettingsSchemaCacheMismatch(query.error.message)) {

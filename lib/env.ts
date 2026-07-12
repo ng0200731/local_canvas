@@ -15,20 +15,81 @@ const optionalString = z.preprocess((v) => (v === "" ? undefined : v), z.string(
 
 const optionalUrl = z.preprocess((v) => (v === "" ? undefined : v), z.string().url().optional());
 
-const envSchema = z.object({
-  // ── Supabase (optional) ──────────────────────────────────────────────
-  NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: optionalString,
-  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: optionalString,
-  // Server-only — NEVER expose to the client.
-  SUPABASE_SERVICE_ROLE_KEY: optionalString,
+const optionalEmail = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.email().optional(),
+);
 
-  // ── Xiangsu AI (optional, server-only) ──────────────────────────────
-  XIANGSU_API_KEY: optionalString,
+const optionalPort = z.preprocess((value) => {
+  if (value === "") return undefined;
+  if (typeof value === "string") return Number(value);
+  return value;
+}, z.number().int().min(1).max(65535).optional());
 
-  // ── App ──────────────────────────────────────────────────────────────
-  NEXT_PUBLIC_APP_URL: optionalUrl.default("http://localhost:3000"),
-});
+const optionalBoolean = z.preprocess((value) => {
+  if (value === "" || value === undefined) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return value;
+}, z.boolean().optional());
+
+const envSchema = z
+  .object({
+    // ── Supabase (optional) ──────────────────────────────────────────────
+    NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: optionalString,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: optionalString,
+    // Server-only — NEVER expose to the client.
+    SUPABASE_SERVICE_ROLE_KEY: optionalString,
+
+    // ── Xiangsu AI (optional, server-only) ──────────────────────────────
+    XIANGSU_API_KEY: optionalString,
+
+    // SMTP (optional, server-only). An optional local catcher overrides 163.com, then Gmail.
+    SMTP_LOCAL_HOST: optionalString,
+    SMTP_LOCAL_PORT: optionalPort,
+    SMTP_LOCAL_SECURE: optionalBoolean.default(false),
+    SMTP_LOCAL_USERNAME: optionalEmail,
+    SMTP_LOCAL_PASSWORD: optionalString,
+    SMTP_163_USERNAME: optionalEmail,
+    SMTP_163_PASSWORD: optionalString,
+    SMTP_GMAIL_USERNAME: optionalEmail,
+    SMTP_GMAIL_PASSWORD: optionalString,
+    SMTP_FROM_NAME: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().trim().min(1).max(100).optional(),
+    ),
+
+    // ── App ──────────────────────────────────────────────────────────────
+    NEXT_PUBLIC_APP_URL: optionalUrl.default("http://localhost:3000"),
+  })
+  .superRefine((value, context) => {
+    const pairs = [
+      ["SMTP_163_USERNAME", value.SMTP_163_USERNAME, "SMTP_163_PASSWORD", value.SMTP_163_PASSWORD],
+      ["SMTP_LOCAL_HOST", value.SMTP_LOCAL_HOST, "SMTP_LOCAL_PORT", value.SMTP_LOCAL_PORT],
+      [
+        "SMTP_LOCAL_USERNAME",
+        value.SMTP_LOCAL_USERNAME,
+        "SMTP_LOCAL_PASSWORD",
+        value.SMTP_LOCAL_PASSWORD,
+      ],
+      [
+        "SMTP_GMAIL_USERNAME",
+        value.SMTP_GMAIL_USERNAME,
+        "SMTP_GMAIL_PASSWORD",
+        value.SMTP_GMAIL_PASSWORD,
+      ],
+    ] as const;
+
+    for (const [firstKey, firstValue, secondKey, secondValue] of pairs) {
+      if (Boolean(firstValue) === Boolean(secondValue)) continue;
+      context.addIssue({
+        code: "custom",
+        path: [firstValue ? secondKey : firstKey],
+        message: `${firstKey} and ${secondKey} must be configured together.`,
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 
@@ -38,10 +99,19 @@ function loadEnv(): Env {
   const parsed = envSchema.safeParse({
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     XIANGSU_API_KEY: process.env.XIANGSU_API_KEY,
+    SMTP_163_USERNAME: process.env.SMTP_163_USERNAME,
+    SMTP_163_PASSWORD: process.env.SMTP_163_PASSWORD,
+    SMTP_LOCAL_HOST: process.env.SMTP_LOCAL_HOST,
+    SMTP_LOCAL_PORT: process.env.SMTP_LOCAL_PORT,
+    SMTP_LOCAL_SECURE: process.env.SMTP_LOCAL_SECURE,
+    SMTP_LOCAL_USERNAME: process.env.SMTP_LOCAL_USERNAME,
+    SMTP_LOCAL_PASSWORD: process.env.SMTP_LOCAL_PASSWORD,
+    SMTP_GMAIL_USERNAME: process.env.SMTP_GMAIL_USERNAME,
+    SMTP_GMAIL_PASSWORD: process.env.SMTP_GMAIL_PASSWORD,
+    SMTP_FROM_NAME: process.env.SMTP_FROM_NAME,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   });
   if (!parsed.success) {
@@ -58,9 +128,7 @@ export const supabasePublicKey =
   env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 /** True when Supabase URL + anon key are present (auth + cloud persistence active). */
-export const isSupabaseConfigured = Boolean(
-  env.NEXT_PUBLIC_SUPABASE_URL && supabasePublicKey,
-);
+export const isSupabaseConfigured = Boolean(env.NEXT_PUBLIC_SUPABASE_URL && supabasePublicKey);
 
 /** True when a Xiangsu API key is present (AI image generation active). */
 export const isXiangsuConfigured = Boolean(env.XIANGSU_API_KEY);

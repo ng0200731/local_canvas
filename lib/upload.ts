@@ -99,10 +99,12 @@ export async function uploadImage(
 export async function persistGeneratedImage(
   url: string,
   format: ImageGenerationOutputFormat = DEFAULT_FORMAT,
+  signal?: AbortSignal,
 ): Promise<UploadResult> {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal });
   if (!response.ok) throw new Error("Failed to read the generated image.");
   const blob = await response.blob();
+  signal?.throwIfAborted();
   const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
   return uploadImage(
     new File([blob], `generated.${extension}`, { type: blob.type || "image/png" }),

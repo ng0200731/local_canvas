@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ArrowUpRight, FileImage, Loader2, Mail, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { buildCanvasReport } from "@/lib/canvas-report";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -15,27 +16,51 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateCanvasDialog } from "@/components/projects/create-canvas-dialog";
+import { sendCanvasReportEmail } from "@/lib/email/client";
+import { emailRecipientSchema } from "@/lib/email/schemas";
 import { useCanvases, useDeleteCanvas } from "@/lib/hooks/use-canvases";
 import { useProject } from "@/lib/hooks/use-projects";
+import { useCustomers, useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
 import { formatDate } from "@/lib/format";
-import { getCanvasStore, type Canvas, type ImageRecord } from "@/lib/store";
+import { getCanvasStore, type Canvas, type ImageRecord, type Project } from "@/lib/store";
 
-function SendCanvasDialog({ canvas }: { canvas: Canvas }) {
+function SendCanvasDialog({
+  canvas,
+  project,
+  defaultRecipient,
+}: {
+  canvas: Canvas;
+  project: Project | null;
+  defaultRecipient: string;
+}) {
   const [open, setOpen] = useState(false);
+  const customers = useCustomers();
+  const suppliers = useSuppliers();
+  const products = useProducts();
   const [images, setImages] = useState<ImageRecord[]>([]);
+  const [loadedCanvas, setLoadedCanvas] = useState<Canvas | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sentRecords, setSentRecords] = useState<string[]>([]);
+  const [recipient, setRecipient] = useState(defaultRecipient);
 
   async function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
     if (!nextOpen) return;
+    if (!recipient) setRecipient(defaultRecipient);
     setLoading(true);
     try {
-      setImages(await getCanvasStore().listImages(canvas.id));
+      const [fullCanvas, renderImages] = await Promise.all([
+        getCanvasStore().getCanvas(canvas.id),
+        getCanvasStore().listImages(canvas.id),
+      ]);
+      setLoadedCanvas(fullCanvas ?? canvas);
+      setImages(renderImages);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load render history");
     } finally {
@@ -44,18 +69,54 @@ function SendCanvasDialog({ canvas }: { canvas: Canvas }) {
   }
 
   async function sendSelected() {
-    if (selectedImageIds.length === 0) return;
+    const parsedRecipient = emailRecipientSchema.safeParse(recipient);
+    if (!parsedRecipient.success) {
+      toast.error(parsedRecipient.error.issues[0]?.message ?? "Enter a valid recipient email.");
+      return;
+    }
+
     setSending(true);
     try {
+      const report = buildCanvasReport({
+        canvas: loadedCanvas ?? canvas,
+        project,
+        customers: customers.data ?? [],
+        suppliers: suppliers.data ?? [],
+        products: products.data ?? [],
+        images,
+      });
+      const filename = canvas.name.replace(/[^a-z0-9-]+/gi, "-").replace(/^-|-$/g, "") || "canvas";
+      const result = await sendCanvasReportEmail({
+        to: parsedRecipient.data,
+        canvasName: canvas.name,
+        subject: `${canvas.name} canvas report`,
+        html: report.html,
+        text: report.text,
+        pdfFilename: `${filename}-report.pdf`,
+      });
       const sentAt = new Date().toLocaleString();
       setSentRecords((current) => [
         `${sentAt} · ${selectedImageIds.length} render image${
           selectedImageIds.length === 1 ? "" : "s"
-        } sent from ${canvas.name}`,
+        } delivered to ${parsedRecipient.data} with ${
+          result.provider === "163" ? "163.com" : "Gmail"
+        }`,
         ...current,
       ]);
-      toast.success("Send record saved. Configure SMTP env vars to enable delivery.");
+      setSentRecords((current) => [
+        `${sentAt} - canvas report delivered to ${parsedRecipient.data} with ${
+          result.provider === "local"
+            ? "Local SMTP"
+            : result.provider === "163"
+              ? "163.com"
+              : "Gmail"
+        }`,
+        ...current.filter((record) => !record.startsWith(sentAt)),
+      ]);
+      toast.success(`Email sent to ${parsedRecipient.data}.`);
       setSelectedImageIds([]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Email delivery failed.");
     } finally {
       setSending(false);
     }
@@ -70,12 +131,25 @@ function SendCanvasDialog({ canvas }: { canvas: Canvas }) {
       <Dialog open={open} onOpenChange={(nextOpen) => void handleOpenChange(nextOpen)}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Send render history image</DialogTitle>
+            <DialogTitle>Send canvas report</DialogTitle>
             <DialogDescription>
-              Choose one or more rendered images from this canvas. 163.com is the primary email
-              provider when server SMTP env vars are configured.
+              Sends the full canvas report as HTML and attaches a PDF copy. 163.com is tried first,
+              then Gmail; an optional local SMTP catcher overrides both.
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor={`canvas-email-recipient-${canvas.id}`}>Recipient email</Label>
+            <Input
+              id={`canvas-email-recipient-${canvas.id}`}
+              type="email"
+              autoComplete="email"
+              placeholder="recipient@example.com"
+              value={recipient}
+              onChange={(event) => setRecipient(event.target.value)}
+              disabled={sending}
+              required
+            />
+          </div>
           {loading ? (
             <div className="text-muted-foreground flex h-56 items-center justify-center gap-2 text-sm">
               <Loader2 className="size-4 animate-spin" />
@@ -132,10 +206,16 @@ function SendCanvasDialog({ canvas }: { canvas: Canvas }) {
             </Button>
             <Button
               type="button"
-              disabled={sending || selectedImageIds.length === 0}
+              disabled={
+                sending ||
+                !recipient.trim() ||
+                customers.isLoading ||
+                suppliers.isLoading ||
+                products.isLoading
+              }
               onClick={() => void sendSelected()}
             >
-              {sending ? "Sending..." : `Send selected (${selectedImageIds.length})`}
+              {sending ? "Sending..." : "Send report"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -147,10 +227,14 @@ function SendCanvasDialog({ canvas }: { canvas: Canvas }) {
 function CanvasActions({
   canvas,
   projectId,
+  project,
+  defaultRecipient,
   onOpen,
 }: {
   canvas: Canvas;
   projectId: string;
+  project: Project | null;
+  defaultRecipient: string;
   onOpen?: (canvasId: string) => void;
 }) {
   const del = useDeleteCanvas(projectId);
@@ -178,7 +262,7 @@ function CanvasActions({
           View/Edit
         </Button>
       )}
-      <SendCanvasDialog canvas={canvas} />
+      <SendCanvasDialog canvas={canvas} project={project} defaultRecipient={defaultRecipient} />
       <ConfirmDialog
         title="Delete canvas?"
         description="This permanently deletes the canvas."
@@ -276,7 +360,13 @@ export function CanvasList({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <CanvasActions canvas={canvas} projectId={projectId} onOpen={onOpenCanvas} />
+                      <CanvasActions
+                        canvas={canvas}
+                        projectId={projectId}
+                        project={project.data ?? null}
+                        defaultRecipient={project.data?.employeeEmail ?? ""}
+                        onOpen={onOpenCanvas}
+                      />
                     </td>
                   </tr>
                 ))}

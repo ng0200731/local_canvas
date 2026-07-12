@@ -56,6 +56,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCanvas } from "@/lib/hooks/use-canvas";
+import { useProject } from "@/lib/hooks/use-projects";
 import { useGenericNodeDefinitions } from "@/lib/hooks/use-workspace-records";
 import {
   normalizeImageGenerationModel,
@@ -67,6 +68,7 @@ import {
   type ImageGenerationSize,
   type ImageGenerationOutputFormat,
 } from "@/lib/image-generation-models";
+import { createGenerationRunManager } from "@/lib/generation-run";
 import { getCanvasStore } from "@/lib/store";
 import {
   createGenericPresetNode,
@@ -93,6 +95,7 @@ import {
   type ConnectedInputReference,
 } from "./canvas-context";
 import { NodePalette } from "./node-palette";
+import { CanvasLogPanel } from "./canvas-log-panel";
 import { RenderGalleryDialog } from "./render-gallery-dialog";
 import { DeletableEdge } from "./edges/canvas-edge";
 import { ActionNode } from "./nodes/action-node";
@@ -103,6 +106,7 @@ import { ImageNode } from "./nodes/image-node";
 import { NoteNode } from "./nodes/note-node";
 import { OutputNode } from "./nodes/output-node";
 import { PantoneNode } from "./nodes/pantone-node";
+import { ProductNode } from "./nodes/product-node";
 import { SupplerNode } from "./nodes/suppler-node";
 
 const AUTOSAVE_DEBOUNCE_MS = 600;
@@ -343,7 +347,7 @@ function appendSelectedNode(nodes: CanvasNode[], node: CanvasNode): CanvasNode[]
 }
 
 function nodeNeedsInitialFieldFocus(type: NodeType): boolean {
-  return type === "imageInput" || type === "pantone" || type === "suppler";
+  return type === "imageInput" || type === "pantone" || type === "suppler" || type === "product";
 }
 
 function focusNewNodeField(nodeId: string) {
@@ -388,22 +392,28 @@ function findConnectedOutputNodeId(
   edges: CanvasEdge[],
   generateNodeId: string,
 ): string | null {
+  return findConnectedNodeIdsByType(nodes, edges, generateNodeId, "imageOutput")[0] ?? null;
+}
+
+function findConnectedNodeIdsByType(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  nodeId: string,
+  type: NodeType,
+): string[] {
   const nodesById = new Map(nodes.map((node) => [node.id, node] as const));
+  const connectedIds = new Set<string>();
 
   for (const edge of edges) {
     const otherNodeId =
-      edge.source === generateNodeId
-        ? edge.target
-        : edge.target === generateNodeId
-          ? edge.source
-          : null;
+      edge.source === nodeId ? edge.target : edge.target === nodeId ? edge.source : null;
 
-    if (otherNodeId && nodesById.get(otherNodeId)?.type === "imageOutput") {
-      return otherNodeId;
+    if (otherNodeId && nodesById.get(otherNodeId)?.type === type) {
+      connectedIds.add(otherNodeId);
     }
   }
 
-  return null;
+  return [...connectedIds];
 }
 
 function outputStatus(value: unknown): ConnectedOutputState["status"] {
@@ -496,6 +506,32 @@ function findConnectedInputReferences(
       continue;
     }
 
+    if (node.type === "product") {
+      const imageUrl =
+        typeof node.data.variantImageUrl === "string" ? node.data.variantImageUrl : null;
+      if (!imageUrl) continue;
+
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : "product";
+      const label =
+        typeof node.data.productSubject === "string" && node.data.productSubject.trim()
+          ? node.data.productSubject.trim()
+          : alias;
+
+      seen.add(otherNodeId);
+      references.push({
+        edgeId: edge.id,
+        nodeId: otherNodeId,
+        kind: "image",
+        alias,
+        label,
+        imageUrl,
+      });
+      continue;
+    }
+
     if (node.type === "pantone") {
       const swatchHex =
         typeof node.data.hex === "string" && node.data.hex.startsWith("#") ? node.data.hex : null;
@@ -534,21 +570,28 @@ function findConnectedInputReferences(
 
 function normalizeNodeType(node: CanvasNode): CanvasNode {
   const normalizedType = (node.type as string) === "output" ? "imageOutput" : node.type;
+  const data =
+    (normalizedType === "generate" || normalizedType === "imageOutput") &&
+    node.data.status === "loading"
+      ? { ...node.data, status: "idle", error: undefined }
+      : node.data;
   if (normalizedType !== "generate") {
-    return normalizedType === node.type ? node : { ...node, type: normalizedType };
+    return normalizedType === node.type && data === node.data
+      ? node
+      : { ...node, type: normalizedType, data };
   }
-  const model = normalizeImageGenerationModel(node.data.model);
+  const model = normalizeImageGenerationModel(data.model);
 
   return {
     ...node,
     type: normalizedType,
     data: {
-      ...node.data,
+      ...data,
       model,
-      size: normalizeImageGenerationSize(node.data.size),
-      outputFormat: normalizeImageGenerationOutputFormat(node.data.outputFormat),
+      size: normalizeImageGenerationSize(data.size),
+      outputFormat: normalizeImageGenerationOutputFormat(data.outputFormat),
       resolution: normalizeImageGenerationResolution(
-        node.data.resolution ?? resolutionForImageGenerationModel(model),
+        data.resolution ?? resolutionForImageGenerationModel(model),
       ),
     },
   };
@@ -566,6 +609,7 @@ function Editor({
   onBack?: () => void;
 }) {
   const { data: canvas, isLoading } = useCanvas(canvasId);
+  const { data: project } = useProject(projectId);
   const genericNodeDefinitionsQuery = useGenericNodeDefinitions();
   const genericNodeDefinitions = useMemo(
     () => sortGenericNodeDefinitions(genericNodeDefinitionsQuery.data ?? []),
@@ -579,6 +623,7 @@ function Editor({
   const [edges, setEdges] = useEdgesState<CanvasEdge>([]);
   const nodesRef = useRef<CanvasNode[]>([]);
   const edgesRef = useRef<CanvasEdge[]>([]);
+  const generationRunManagerRef = useRef(createGenerationRunManager());
   const loadedRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { screenToFlowPosition, getNodes, getInternalNode } = useReactFlow<
@@ -651,6 +696,13 @@ function Editor({
   useEffect(() => {
     edgesRef.current = edges;
   }, [edges]);
+
+  useEffect(
+    () => () => {
+      generationRunManagerRef.current.cancelAll();
+    },
+    [],
+  );
 
   // Load the canvas content once it arrives.
   useEffect(() => {
@@ -1215,7 +1267,11 @@ function Editor({
 
   const updateConnectedOutputData = useCallback(
     (generateNodeId: string, patch: Record<string, unknown>) => {
-      const outputNodeId = findConnectedOutputNodeId(nodes, edges, generateNodeId);
+      const outputNodeId = findConnectedOutputNodeId(
+        nodesRef.current,
+        edgesRef.current,
+        generateNodeId,
+      );
       if (!outputNodeId) return false;
 
       setCanvasNodes((nds) =>
@@ -1226,7 +1282,86 @@ function Editor({
 
       return true;
     },
-    [edges, nodes, setCanvasNodes],
+    [setCanvasNodes],
+  );
+
+  const startGenerationRun = useCallback(
+    (generateNodeId: string) => generationRunManagerRef.current.start(generateNodeId),
+    [],
+  );
+
+  const isGenerationRunCurrent = useCallback(
+    (generateNodeId: string, runId: string) =>
+      generationRunManagerRef.current.isCurrent(generateNodeId, runId),
+    [],
+  );
+
+  const finishGenerationRun = useCallback((generateNodeId: string, runId: string) => {
+    generationRunManagerRef.current.finish(generateNodeId, runId);
+  }, []);
+
+  const cancelGenerationRun = useCallback(
+    (nodeId: string) => {
+      const currentNodes = nodesRef.current;
+      const currentEdges = edgesRef.current;
+      const targetNode = currentNodes.find((node) => node.id === nodeId);
+      if (!targetNode || (targetNode.type !== "generate" && targetNode.type !== "imageOutput")) {
+        return false;
+      }
+
+      const generateNodeIds = new Set<string>();
+      const outputNodeIds = new Set<string>();
+      if (targetNode.type === "generate") {
+        generateNodeIds.add(targetNode.id);
+      } else {
+        outputNodeIds.add(targetNode.id);
+        for (const generateNodeId of findConnectedNodeIdsByType(
+          currentNodes,
+          currentEdges,
+          targetNode.id,
+          "generate",
+        )) {
+          const generateNode = currentNodes.find((node) => node.id === generateNodeId);
+          if (
+            generationRunManagerRef.current.has(generateNodeId) ||
+            generateNode?.data.status === "loading"
+          ) {
+            generateNodeIds.add(generateNodeId);
+          }
+        }
+      }
+
+      for (const generateNodeId of generateNodeIds) {
+        for (const outputNodeId of findConnectedNodeIdsByType(
+          currentNodes,
+          currentEdges,
+          generateNodeId,
+          "imageOutput",
+        )) {
+          outputNodeIds.add(outputNodeId);
+        }
+      }
+
+      const affectedNodeIds = new Set([...generateNodeIds, ...outputNodeIds]);
+      const hadLoadingState = currentNodes.some(
+        (node) => affectedNodeIds.has(node.id) && node.data.status === "loading",
+      );
+      let abortedRequest = false;
+      for (const generateNodeId of generateNodeIds) {
+        abortedRequest = generationRunManagerRef.current.cancel(generateNodeId) || abortedRequest;
+      }
+
+      if (!abortedRequest && !hadLoadingState) return false;
+      setCanvasNodes((canvasNodes) =>
+        canvasNodes.map((node) =>
+          affectedNodeIds.has(node.id)
+            ? { ...node, data: { ...node.data, status: "idle", error: undefined } }
+            : node,
+        ),
+      );
+      return true;
+    },
+    [setCanvasNodes],
   );
 
   const writeGeneratedImageToOutput = useCallback(
@@ -1282,6 +1417,7 @@ function Editor({
 
   const deleteNode = useCallback(
     (id: string) => {
+      cancelGenerationRun(id);
       // If a group is being removed, release its children back to the canvas at
       // their current absolute centers (otherwise their parentId dangles).
       const centerById = new Map<string, XYPosition>();
@@ -1305,7 +1441,7 @@ function Editor({
       // Drop any wires that were attached to the removed node.
       setCanvasEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
     },
-    [getNodes, getInternalNode, setCanvasNodes, setCanvasEdges],
+    [cancelGenerationRun, getNodes, getInternalNode, setCanvasNodes, setCanvasEdges],
   );
 
   const ungroupNode = useCallback(
@@ -1527,6 +1663,7 @@ function Editor({
       generate: GenerateNode,
       imageOutput: OutputNode,
       suppler: SupplerNode,
+      product: ProductNode,
       action: ActionNode,
       pantone: PantoneNode,
     }),
@@ -1618,6 +1755,11 @@ function Editor({
 
   const edgeTypes = useMemo<EdgeTypes>(() => ({ deletable: DeletableEdge }), []);
 
+  const liveCanvas = useMemo(
+    () => (canvas ? { ...canvas, content: { nodes, edges } } : null),
+    [canvas, edges, nodes],
+  );
+
   const actions = useMemo(
     () => ({
       updateNodeData,
@@ -1625,6 +1767,10 @@ function Editor({
       hasConnectedOutputNode,
       getConnectedOutputState,
       updateConnectedOutputData,
+      startGenerationRun,
+      isGenerationRunCurrent,
+      finishGenerationRun,
+      cancelGenerationRun,
       writeGeneratedImageToOutput,
       deleteNode,
       ungroupNode,
@@ -1639,6 +1785,10 @@ function Editor({
       hasConnectedOutputNode,
       getConnectedOutputState,
       updateConnectedOutputData,
+      startGenerationRun,
+      isGenerationRunCurrent,
+      finishGenerationRun,
+      cancelGenerationRun,
       writeGeneratedImageToOutput,
       deleteNode,
       ungroupNode,
@@ -1875,6 +2025,7 @@ function Editor({
               </div>
             </ConnectionHighlightContext.Provider>
           </ReferenceHoverContext.Provider>
+          {liveCanvas ? <CanvasLogPanel canvas={liveCanvas} project={project ?? null} /> : null}
         </CanvasActionsContext.Provider>
       </div>
     </div>

@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 
 interface GenerateRouteDependencies {
   configured: boolean;
-  generate: (input: XiangsuGenerateInput) => Promise<XiangsuGenerateOutput>;
+  generate: (input: XiangsuGenerateInput, signal?: AbortSignal) => Promise<XiangsuGenerateOutput>;
 }
 
 export function createGeneratePostHandler({ configured, generate }: GenerateRouteDependencies) {
@@ -40,7 +40,7 @@ export function createGeneratePostHandler({ configured, generate }: GenerateRout
     }
 
     try {
-      return NextResponse.json(await generate(parsed.data));
+      return NextResponse.json(await generate(parsed.data, request.signal));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed.";
       return NextResponse.json({ error: message }, { status: 502 });

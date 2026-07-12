@@ -6,6 +6,7 @@ import type {
   ImageGenerationSize,
 } from "@/lib/image-generation-models";
 import type { SupplierProductType } from "@/lib/workspace-records";
+import type { GenericNodeImage } from "@/lib/workspace-settings";
 import type { PantoneCatalog } from "./pantone";
 
 /** Registered canvas node type identifiers (kept in sync with the registry). */
@@ -17,6 +18,7 @@ export const NODE_TYPES = [
   "generate",
   "imageOutput",
   "suppler",
+  "product",
   "action",
   "pantone",
 ] as const;
@@ -49,6 +51,9 @@ export interface InputNodeData {
   storagePath?: string | null;
   genericDefinitionId?: string;
   genericDefinitionName?: string;
+  /** Definition images are snapshotted when the node is created. */
+  genericImages?: GenericNodeImage[];
+  selectedGenericImageId?: string | null;
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
   height?: number;
@@ -116,6 +121,22 @@ export interface SupplerNodeData {
   [key: string]: unknown;
 }
 
+export interface ProductNodeData {
+  alias: string;
+  customerQuery: string;
+  customerId: string | null;
+  customerName: string | null;
+  productId: string | null;
+  productSubject: string | null;
+  variantId: string | null;
+  variantImageUrl: string | null;
+  variantImageName: string | null;
+  /** Node size in pixels; set by the resize handle. Absent = type default. */
+  width?: number;
+  height?: number;
+  [key: string]: unknown;
+}
+
 export interface ActionNodeData {
   title: string;
   notes: string;
@@ -159,5 +180,6 @@ export type GroupCanvasNode = Node<GroupNodeData, "group">;
 export type GenerateCanvasNode = Node<GenerateNodeData, "generate">;
 export type OutputCanvasNode = Node<OutputNodeData, "imageOutput">;
 export type SupplerCanvasNode = Node<SupplerNodeData, "suppler">;
+export type ProductCanvasNode = Node<ProductNodeData, "product">;
 export type ActionCanvasNode = Node<ActionNodeData, "action">;
 export type PantoneCanvasNode = Node<PantoneNodeData, "pantone">;

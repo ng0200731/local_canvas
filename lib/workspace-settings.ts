@@ -15,24 +15,66 @@ export const workspaceOptionSchema = z.object({
 export const workspaceOptionListSchema = z.array(workspaceOptionSchema);
 export type WorkspaceOption = z.infer<typeof workspaceOptionSchema>;
 
-export const genericNodeDefinitionSchema = z.object({
+export const MAX_GENERIC_NODE_IMAGES = 50;
+
+export const genericNodeImageSchema = z.object({
   id: z.string().trim().min(1),
-  name: z.string().trim().min(1).max(80),
-  imageUrl: z.string().trim().min(1),
+  name: z.string().trim().min(1).max(255),
+  url: z.string().trim().min(1),
   storagePath: z.string().trim().min(1).nullable(),
-  sortIndex: z.number().int().min(0),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
 });
 
-export const genericNodeDefinitionInputSchema = genericNodeDefinitionSchema.pick({
-  name: true,
-  imageUrl: true,
-  storagePath: true,
+export const genericNodeImageListSchema = z
+  .array(genericNodeImageSchema)
+  .min(1, "Upload at least one image.")
+  .max(MAX_GENERIC_NODE_IMAGES, `Upload no more than ${MAX_GENERIC_NODE_IMAGES} images.`);
+
+export const genericNodeDefinitionInputSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  images: genericNodeImageListSchema,
 });
+
+const genericNodeDefinitionRecordSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    name: z.string().trim().min(1).max(80),
+    images: genericNodeImageListSchema.optional(),
+    // Accepted while reading records saved before multi-image definitions.
+    imageUrl: z.string().trim().min(1).optional(),
+    storagePath: z.string().trim().min(1).nullable().optional(),
+    sortIndex: z.number().int().min(0),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .superRefine((value, context) => {
+    if (!value.images?.length && !value.imageUrl) {
+      context.addIssue({
+        code: "custom",
+        path: ["images"],
+        message: "Upload at least one image.",
+      });
+    }
+  })
+  .transform(({ imageUrl, storagePath, ...value }) => ({
+    ...value,
+    images:
+      value.images ??
+      [
+        {
+          id: `${value.id}:image:0`,
+          name: "Image 1",
+          url: imageUrl ?? "",
+          storagePath: storagePath ?? null,
+        },
+      ],
+  }));
+
+/** Reads both current multi-image records and legacy single-image records. */
+export const genericNodeDefinitionSchema = genericNodeDefinitionRecordSchema;
 
 export type GenericNodeDefinition = z.infer<typeof genericNodeDefinitionSchema>;
 export type GenericNodeDefinitionInput = z.infer<typeof genericNodeDefinitionInputSchema>;
+export type GenericNodeImage = z.infer<typeof genericNodeImageSchema>;
 
 interface IntlWithSupportedValues {
   supportedValuesOf?: (key: "currency") => string[];

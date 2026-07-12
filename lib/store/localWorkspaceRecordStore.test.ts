@@ -274,18 +274,37 @@ describe("localWorkspaceRecordStore", () => {
 
     const first = await localWorkspaceRecordStore.upsertGenericNodeDefinition(null, {
       name: "Front view",
-      imageUrl: "data:image/webp;base64,front",
-      storagePath: null,
+      images: [
+        {
+          id: "front-1",
+          name: "front.webp",
+          url: "data:image/webp;base64,front",
+          storagePath: null,
+        },
+        {
+          id: "front-2",
+          name: "front-detail.webp",
+          url: "data:image/webp;base64,front-detail",
+          storagePath: null,
+        },
+      ],
     });
     const second = await localWorkspaceRecordStore.upsertGenericNodeDefinition(null, {
       name: "Back view",
-      imageUrl: "data:image/webp;base64,back",
-      storagePath: null,
+      images: [
+        {
+          id: "back-1",
+          name: "back.webp",
+          url: "data:image/webp;base64,back",
+          storagePath: null,
+        },
+      ],
     });
     const reordered = await localWorkspaceRecordStore.reorderGenericNodeDefinitions([
       second.id,
       first.id,
     ]);
     expect(reordered.map((definition) => definition.name)).toEqual(["Back view", "Front view"]);
+    expect(reordered.find((definition) => definition.id === first.id)?.images).toHaveLength(2);
   });
 });

@@ -59,10 +59,12 @@ export function createGenericPresetNode(
     data: {
       ...node.data,
       alias: parsed.name,
-      imageUrl: parsed.imageUrl,
-      storagePath: parsed.storagePath,
+      imageUrl: null,
+      storagePath: null,
       genericDefinitionId: parsed.id,
       genericDefinitionName: parsed.name,
+      genericImages: parsed.images.map((image) => ({ ...image })),
+      selectedGenericImageId: null,
     },
   };
 }

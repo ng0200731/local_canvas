@@ -83,7 +83,6 @@ import {
   useUpsertSupplier,
 } from "@/lib/hooks/use-workspace-records";
 import { productRecordSearchText } from "@/lib/product-image-gallery";
-import { useProjects } from "@/lib/hooks/use-projects";
 import { uploadImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 
@@ -1222,7 +1221,7 @@ function buildProductInput(form: ProductFormState) {
     ownerKind: form.ownerKind,
     supplierId: form.ownerKind === "supplier" ? form.supplierId : null,
     customerId: form.ownerKind === "customer" ? form.customerId : null,
-    projectId: form.ownerKind === "customer" ? form.projectId : null,
+    projectId: null,
     productType: form.productType,
     subject: form.subject,
     detail: form.detail,
@@ -1271,6 +1270,11 @@ function getZodFieldErrors(result: FieldParseResult) {
     }
   }
   return errors;
+}
+
+function getFirstZodErrorMessage(result: FieldParseResult): string | null {
+  if (result.success) return null;
+  return result.error.issues[0]?.message ?? "Please complete the required product fields.";
 }
 
 function FormField({
@@ -2510,13 +2514,13 @@ function ProductWorkspacePanel({
   const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
   const [submitted, setSubmitted] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isImageDragOver, setIsImageDragOver] = useState(false);
   const [dummyInputCount, setDummyInputCount] = useState(0);
   const [parameterDummyInputCount, setParameterDummyInputCount] = useState(0);
   const [imageError, setImageError] = useState<string | null>(null);
   const suppliers = useSuppliers();
   const customers = useCustomers();
   const products = useProducts();
-  const projects = useProjects();
   const upsertProduct = useUpsertProduct();
 
   const supplierOptions = suppliers.data ?? [];
@@ -2551,6 +2555,14 @@ function ProductWorkspacePanel({
         : supplierProductTypes;
   const productParameterFields = getProductParameterTemplate(form.productType).fields;
   const activeVariant = getActiveVariant(form);
+  const activeVariantErrors = submitted
+    ? {
+        image: activeVariant.image ? undefined : "Add at least one product image.",
+        material: activeVariant.material.trim() ? undefined : "Material is required.",
+        colorNotes: activeVariant.colorNotes.trim() ? undefined : "Color notes are required.",
+        unitPrice: activeVariant.unitPrice.trim() ? undefined : "Unit price is required.",
+      }
+    : {};
   const parseResult = productSchema.safeParse(buildProductInput(form));
   const errors = submitted ? getZodFieldErrors(parseResult) : {};
   const visibleProducts = (products.data ?? []).filter(
@@ -2561,9 +2573,6 @@ function ProductWorkspacePanel({
           ? product.supplierId === activeSupplierId
           : product.customerId === activeCustomerId)) &&
       getProductSearchText(product).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-  );
-  const customerProjectOptions = (projects.data ?? []).filter(
-    (project) => project.customerId === activeCustomerId,
   );
   const visibleFormVariants = normalizeVariants(form.variants).filter((variant) => {
     const normalizedQuery = variantImageQuery.trim().toLocaleLowerCase();
@@ -2591,6 +2600,7 @@ function ProductWorkspacePanel({
       activeVariantId: next.variants[0]?.id ?? null,
     });
     setImageError(null);
+    setIsImageDragOver(false);
     setEditingId(null);
     setSubmitted(false);
   }
@@ -2675,7 +2685,25 @@ function ProductWorkspacePanel({
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
+    setIsImageDragOver(false);
     void setImagesFromFiles(event.dataTransfer.files);
+  }
+
+  function handleDragEnter(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    if (event.dataTransfer.types.includes("Files")) setIsImageDragOver(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (event.dataTransfer.types.includes("Files")) setIsImageDragOver(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+    setIsImageDragOver(false);
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -2739,11 +2767,16 @@ function ProductWorkspacePanel({
   async function saveProduct() {
     setSubmitted(true);
     const result = productSchema.safeParse(buildProductInput(form));
-    if (!result.success) return;
+    if (!result.success) {
+      toast.error(getFirstZodErrorMessage(result) ?? "Please complete the product form.");
+      return;
+    }
 
     try {
       await upsertProduct.mutateAsync({ id: editingId, input: result.data });
-      toast.success("Product saved");
+      toast.success(
+        ownerKind === "customer" ? "Customer product image saved" : "Product saved",
+      );
       setEditingId(null);
       onModeChange("records");
     } catch (error) {
@@ -3014,47 +3047,6 @@ function ProductWorkspacePanel({
                 </div>
               </FormField>
             ) : null}
-            {ownerKind === "customer" ? (
-              <FormField label="Customer project" error={errors.projectId}>
-                {projects.isLoading ? (
-                  <p className="text-muted-foreground rounded-md border px-3 py-3 text-sm">
-                    Loading customer projects...
-                  </p>
-                ) : projects.isError ? (
-                  <p className="text-destructive rounded-md border px-3 py-3 text-sm">
-                    Failed to load customer projects.
-                  </p>
-                ) : customerProjectOptions.length ? (
-                  <Select
-                    value={form.projectId || null}
-                    onValueChange={(projectId) =>
-                      setForm((current) => ({ ...current, projectId: projectId ?? "" }))
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Choose a project">
-                        {customerProjectOptions.find((project) => project.id === form.projectId)
-                          ?.name ?? "Choose a project"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent align="start">
-                      <SelectGroup>
-                        <SelectLabel>Projects for this customer</SelectLabel>
-                        {customerProjectOptions.map((project) => (
-                          <SelectItem key={project.id} value={project.id}>
-                            {project.name}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-sm">
-                    Create a project for this customer before saving a product.
-                  </p>
-                )}
-              </FormField>
-            ) : null}
             <FormField label="Product type" error={errors.productType}>
               <Select value={form.productType} onValueChange={updateProductType}>
                 <SelectTrigger className="w-full">
@@ -3103,7 +3095,7 @@ function ProductWorkspacePanel({
               />
             </FormField>
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Material">
+              <FormField label="Material" error={activeVariantErrors.material}>
                 <Input
                   value={activeVariant.material}
                   onChange={(event) =>
@@ -3112,7 +3104,7 @@ function ProductWorkspacePanel({
                   placeholder="Woven polyester, cotton, alloy..."
                 />
               </FormField>
-              <FormField label="Color notes">
+              <FormField label="Color notes" error={activeVariantErrors.colorNotes}>
                 <Input
                   value={activeVariant.colorNotes}
                   onChange={(event) =>
@@ -3144,7 +3136,7 @@ function ProductWorkspacePanel({
                 </FormField>
               ))}
             </div>
-            <FormField label="Unit price">
+            <FormField label="Unit price" error={activeVariantErrors.unitPrice}>
               <div className="flex">
                 <Input
                   value={activeVariant.unitPrice}
@@ -3186,7 +3178,7 @@ function ProductWorkspacePanel({
                 aria-label="Search uploaded product images"
               />
             </div>
-            <div className="grid max-h-48 grid-cols-3 gap-2 overflow-y-auto pr-1">
+            <div className="grid max-h-72 grid-cols-3 gap-2 overflow-y-auto pr-1">
               {visibleFormVariants.map((variant, index) => (
                 <button
                   key={variant.id}
@@ -3201,12 +3193,12 @@ function ProductWorkspacePanel({
                 >
                   {variant.image ? (
                     <>
-                      <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
+                      <span className="bg-background flex aspect-square w-full items-center justify-center overflow-hidden">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={variant.image.url}
                           alt={`Uploaded variant ${index + 1}`}
-                          className="max-h-full max-w-full object-contain p-1"
+                          className="h-full w-full object-contain p-2"
                         />
                       </span>
                       <span className="block truncate px-2 py-1 text-[0.68rem]">
@@ -3260,17 +3252,27 @@ function ProductWorkspacePanel({
             tabIndex={0}
             aria-label="Product image upload area"
             onPaste={handlePaste}
-            onDragOver={(event) => event.preventDefault()}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className="border-input focus-visible:ring-ring/50 grid min-h-72 place-items-center rounded-lg border border-dashed p-4 text-center outline-none focus-visible:ring-3"
+            className={cn(
+              "border-input focus-visible:ring-ring/50 relative grid min-h-72 place-items-center rounded-lg border border-dashed p-4 text-center transition-colors outline-none focus-visible:ring-3",
+              isImageDragOver && "border-primary bg-primary/5 ring-primary/20 ring-2",
+            )}
           >
+            {isImageDragOver ? (
+              <div className="bg-background/90 text-primary pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-md border border-dashed border-current text-sm font-semibold shadow-sm backdrop-blur-sm">
+                Drop images to add variants
+              </div>
+            ) : null}
             {activeVariant.image ? (
-              <div className="grid gap-3">
+              <div className="grid w-full justify-items-center gap-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={activeVariant.image.url}
                   alt="Product preview"
-                  className="max-h-64 w-full rounded-md object-contain"
+                  className="max-h-72 max-w-full rounded-md object-contain"
                 />
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-muted-foreground truncate text-xs">
@@ -3324,6 +3326,11 @@ function ProductWorkspacePanel({
 
           {imageError ? (
             <p className="text-destructive mt-3 text-xs leading-5">{imageError}</p>
+          ) : null}
+          {activeVariantErrors.image ? (
+            <p className="text-destructive mt-3 text-xs leading-5">
+              {activeVariantErrors.image}
+            </p>
           ) : null}
 
           <div className="mt-4 flex justify-end">

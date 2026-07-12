@@ -4,6 +4,7 @@ import {
   Image as ImageIcon,
   Download,
   Package,
+  PackageOpen,
   Palette,
   Sparkles,
   Square,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ImageThumbnailStack } from "@/components/image-thumbnail-stack";
 import { PALETTE_DRAG_MIME_TYPE, serializePaletteDragPayload } from "@/lib/nodes/palette";
 import { NODE_META, PALETTE_NODE_TYPES } from "@/lib/nodes/registry";
 import type { CanvasNode, NodeType } from "@/lib/nodes/types";
@@ -28,6 +30,7 @@ const ICONS: Record<NodeType, LucideIcon> = {
   generate: Sparkles,
   imageOutput: Download,
   suppler: Package,
+  product: PackageOpen,
   action: Zap,
   pantone: Palette,
 };
@@ -131,15 +134,13 @@ export function NodePalette({
               onClick={() => onAddGenericNode(definition)}
               className="focus-visible:ring-ring bg-background hover:border-primary/30 hover:bg-accent/60 flex h-9 cursor-grab items-center gap-2 rounded-md border px-2 text-sm shadow-sm transition-colors outline-none focus-visible:ring-2 active:cursor-grabbing"
             >
-              <span className="bg-muted grid size-5 shrink-0 place-items-center overflow-hidden rounded-sm border">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={definition.imageUrl}
-                  alt=""
-                  draggable={false}
-                  className="size-full object-contain"
-                />
-              </span>
+              <ImageThumbnailStack
+                images={definition.images}
+                maximumVisible={2}
+                className="w-7 shrink-0"
+                thumbnailClassName="size-5 -ml-3 rounded-sm"
+                remainingClassName="size-5 -ml-3 text-[0.5rem]"
+              />
               <span className="min-w-0 truncate">{definition.name}</span>
             </button>
           ))

@@ -254,13 +254,6 @@ export const productRecordInputSchema = z
         message: "Customer is required.",
       });
     }
-    if (!value.projectId) {
-      context.addIssue({
-        code: "custom",
-        path: ["projectId"],
-        message: "Choose a project for this customer.",
-      });
-    }
     if (!isCustomerProductType(value.productType)) {
       context.addIssue({
         code: "custom",

@@ -14,8 +14,20 @@ function genericDefinition(overrides: Partial<GenericNodeDefinition> = {}): Gene
   return {
     id: "generic-1",
     name: "Rib texture",
-    imageUrl: "https://example.com/rib.webp",
-    storagePath: "user/rib.webp",
+    images: [
+      {
+        id: "rib-front",
+        name: "rib-front.webp",
+        url: "https://example.com/rib.webp",
+        storagePath: "user/rib.webp",
+      },
+      {
+        id: "rib-back",
+        name: "rib-back.webp",
+        url: "https://example.com/rib-back.webp",
+        storagePath: "user/rib-back.webp",
+      },
+    ],
     sortIndex: 0,
     createdAt: "2026-07-12T00:00:00.000Z",
     updatedAt: "2026-07-12T00:00:00.000Z",
@@ -44,17 +56,32 @@ describe("canvas node palette helpers", () => {
     const definition = genericDefinition();
     const node = createGenericPresetNode(definition, { x: 24, y: 48 });
     definition.name = "Changed later";
-    definition.imageUrl = "https://example.com/changed.webp";
+    definition.images[0].url = "https://example.com/changed.webp";
 
     expect(node).toMatchObject({
       type: "imageInput",
       position: { x: 24, y: 48 },
       data: {
         alias: "Rib texture",
-        imageUrl: "https://example.com/rib.webp",
-        storagePath: "user/rib.webp",
+        imageUrl: null,
+        storagePath: null,
         genericDefinitionId: "generic-1",
         genericDefinitionName: "Rib texture",
+        genericImages: [
+          {
+            id: "rib-front",
+            name: "rib-front.webp",
+            url: "https://example.com/rib.webp",
+            storagePath: "user/rib.webp",
+          },
+          {
+            id: "rib-back",
+            name: "rib-back.webp",
+            url: "https://example.com/rib-back.webp",
+            storagePath: "user/rib-back.webp",
+          },
+        ],
+        selectedGenericImageId: null,
       },
     });
   });

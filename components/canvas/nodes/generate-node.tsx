@@ -8,7 +8,7 @@ import {
   type UIEvent as ReactUIEvent,
 } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { Loader2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -47,6 +47,7 @@ import {
   resolutionForImageGenerationModel,
 } from "@/lib/image-generation-models";
 import { isStaleGenerationConfigurationError } from "@/lib/generation-errors";
+import { isAbortError } from "@/lib/generation-run";
 import { persistGeneratedImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
@@ -333,6 +334,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     hasConnectedOutputNode,
     getConnectedOutputState,
     updateConnectedOutputData,
+    startGenerationRun,
+    isGenerationRunCurrent,
+    finishGenerationRun,
+    cancelGenerationRun,
     writeGeneratedImageToOutput,
     deleteEdge,
   } = useCanvasActions();
@@ -341,8 +346,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const { hoveredReferenceNodeId, setHoveredReferenceNodeId } = useReferenceHover();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const generatingRef = useRef(false);
-  const [loading, setLoading] = useState(false);
   const [mention, setMention] = useState<MentionState | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
   const [promptDraft, setPromptDraft] = useState(data.prompt);
@@ -400,7 +403,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   );
   const geminiVersion = geminiVersionForModel(model);
   const selectedModel = getModelCatalogEntry(model);
-  const isGenerating = loading || data.status === "loading";
+  const isGenerating = data.status === "loading";
   const mentionSuggestions = mention
     ? connectedReferences.filter((reference) => {
         const query = mention.query.toLowerCase();
@@ -590,7 +593,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   }
 
   async function onGenerate() {
-    if (generatingRef.current) return;
     const prompt = promptDraft.trim();
     if (!prompt) {
       toast.error("Enter a prompt first");
@@ -601,16 +603,15 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       return;
     }
 
-    generatingRef.current = true;
-    setLoading(true);
+    const run = startGenerationRun(id);
+    if (!run) return;
 
     const outputReady = updateConnectedOutputData(id, {
       status: "loading",
       error: undefined,
     });
     if (!outputReady) {
-      generatingRef.current = false;
-      setLoading(false);
+      finishGenerationRun(id, run.runId);
       toast.error("Connect an Output node before generating");
       return;
     }
@@ -628,6 +629,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: run.signal,
         body: JSON.stringify({
           model,
           prompt,
@@ -637,17 +639,17 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           references: allGenerationReferences,
         }),
       });
+      if (!isGenerationRunCurrent(id, run.runId)) return;
       const json: unknown = await res.json();
+      if (!isGenerationRunCurrent(id, run.runId)) return;
       const parsed = imageGenerationResponseSchema.safeParse(json);
       if (!res.ok || !parsed.success) {
         const error = imageGenerationErrorSchema.safeParse(json);
         throw new Error(error.success ? error.data.error : "Generation failed");
       }
-      const persisted = await persistGeneratedImage(parsed.data.url, outputFormat);
-      const generationDurationMs = Math.max(
-        0,
-        nowMs() - generationStartedAt,
-      );
+      const persisted = await persistGeneratedImage(parsed.data.url, outputFormat, run.signal);
+      if (!isGenerationRunCurrent(id, run.runId)) return;
+      const generationDurationMs = Math.max(0, nowMs() - generationStartedAt);
       updateNodeData(id, {
         status: "done",
         resultUrl: persisted.url,
@@ -672,13 +674,21 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       }
       toast.success("Image generated and saved to Renders.");
     } catch (err) {
+      const cancelled =
+        run.signal.aborted || !isGenerationRunCurrent(id, run.runId) || isAbortError(err);
+      if (cancelled) return;
       const message = err instanceof Error ? err.message : "Generation failed";
       updateNodeData(id, { status: "error", error: message });
       updateConnectedOutputData(id, { status: "error", error: message });
       toast.error(message);
     } finally {
-      generatingRef.current = false;
-      setLoading(false);
+      finishGenerationRun(id, run.runId);
+    }
+  }
+
+  function stopGeneration() {
+    if (cancelGenerationRun(id)) {
+      toast.info("Generation stopped.");
     }
   }
 
@@ -701,6 +711,19 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       <div className="bg-card relative z-20 flex h-11 shrink-0 items-center gap-2 border-b px-3 pr-10 text-sm font-medium shadow-sm">
         <Sparkles className="size-4" />
         Generate
+        {isGenerating ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="destructive"
+            title="Stop generation"
+            aria-label="Stop generation"
+            className="nodrag nopan ml-auto"
+            onClick={stopGeneration}
+          >
+            <Square className="fill-current" />
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto p-3">

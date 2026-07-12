@@ -9,6 +9,7 @@ export const NODE_PORT_COLORS: Record<NodeType, string> = {
   generate: "#a855f7", // purple
   imageOutput: "#84cc16", // lime
   suppler: "#0ea5e9", // sky
+  product: "#14b8a6", // teal
   action: "#f43f5e", // rose
   pantone: "#f97316", // orange
 };

@@ -59,14 +59,17 @@ describe("POST /api/generate", () => {
       url: "data:image/png;base64,aW1hZ2U=",
       model: "gpt-image-2",
     });
-    expect(generate).toHaveBeenCalledWith({
-      model: "gpt-image-2",
-      prompt: "A clean studio photograph",
-      size: "1024x1024",
-      outputFormat: "webp",
-      resolution: "preview",
-      references: [],
-    });
+    expect(generate).toHaveBeenCalledWith(
+      {
+        model: "gpt-image-2",
+        prompt: "A clean studio photograph",
+        size: "1024x1024",
+        outputFormat: "webp",
+        resolution: "preview",
+        references: [],
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   it("validates and forwards reference image URLs", async () => {
@@ -89,14 +92,17 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(generate).toHaveBeenCalledWith({
-      model: "gemini-3.1-flash-image-preview",
-      prompt: "Keep @product and apply @texture",
-      size: "1024x1024",
-      outputFormat: "webp",
-      resolution: "preview",
-      references,
-    });
+    expect(generate).toHaveBeenCalledWith(
+      {
+        model: "gemini-3.1-flash-image-preview",
+        prompt: "Keep @product and apply @texture",
+        size: "1024x1024",
+        outputFormat: "webp",
+        resolution: "preview",
+        references,
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   it("validates and forwards image generation settings", async () => {
@@ -117,14 +123,17 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(generate).toHaveBeenCalledWith({
-      model: "gpt-image-1.5",
-      prompt: "A campaign image",
-      size: "1536x1024",
-      outputFormat: "png",
-      resolution: "4K",
-      references: [],
-    });
+    expect(generate).toHaveBeenCalledWith(
+      {
+        model: "gpt-image-1.5",
+        prompt: "A campaign image",
+        size: "1536x1024",
+        outputFormat: "png",
+        resolution: "4K",
+        references: [],
+      },
+      expect.any(AbortSignal),
+    );
   });
 
   it("rejects invalid reference URLs and more than 14 references", async () => {

@@ -9,6 +9,7 @@ import type {
   ImageGenerationResolution,
   ImageGenerationSize,
 } from "@/lib/image-generation-models";
+import type { GenerationRunHandle } from "@/lib/generation-run";
 
 export interface ConnectedImageReference {
   edgeId: string;
@@ -51,6 +52,14 @@ export interface CanvasActions {
   getConnectedOutputState: (generateNodeId: string) => ConnectedOutputState | null;
   /** Patch the Output node connected to a Generate node. Returns false when no Output is wired. */
   updateConnectedOutputData: (generateNodeId: string, patch: Record<string, unknown>) => boolean;
+  /** Claim the single active generation slot for a Generate node. */
+  startGenerationRun: (generateNodeId: string) => GenerationRunHandle | null;
+  /** True only while this exact request is still allowed to write canvas state. */
+  isGenerationRunCurrent: (generateNodeId: string, runId: string) => boolean;
+  /** Release a run without affecting a newer request for the same node. */
+  finishGenerationRun: (generateNodeId: string, runId: string) => void;
+  /** Abort active work and reset a Generate node or connected Output node to idle. */
+  cancelGenerationRun: (nodeId: string) => boolean;
   /** Store a generated image URL on the connected Output node and record it in image history. */
   writeGeneratedImageToOutput: (
     generateNodeId: string,

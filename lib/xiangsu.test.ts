@@ -234,4 +234,25 @@ describe("Xiangsu image generator", () => {
 
     await expect(generate(input)).rejects.toThrow("timed out");
   });
+
+  it("forwards caller cancellation to the provider request", async () => {
+    const fetcher = vi.fn<typeof fetch>((_url, init) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      });
+    });
+    const generate = createXiangsuImageGenerator({
+      apiKey: "secret",
+      fetcher,
+      timeoutMs: 60_000,
+    });
+    const controller = new AbortController();
+
+    const request = generate(input, controller.signal);
+    controller.abort(new DOMException("Stopped by user", "AbortError"));
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

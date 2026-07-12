@@ -1,5 +1,8 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+For real Canvas Send delivery and the Settings test-email function, see
+[SMTP email setup](docs/email-setup.md).
+
 ## Getting Started
 
 First, run the development server:

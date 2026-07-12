@@ -5,6 +5,7 @@ import { Boxes, Edit3, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ImageThumbnailStack } from "@/components/image-thumbnail-stack";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,7 +30,7 @@ import {
 } from "@/lib/workspace-settings";
 import { OrderControls } from "./order-controls";
 import { SettingsPanelHeader } from "./settings-panel-header";
-import { SingleImageUploadField } from "./single-image-upload-field";
+import { MultiImageUploadField } from "./multi-image-upload-field";
 
 function GenericNodeEditorDialog({
   open,
@@ -48,19 +49,18 @@ function GenericNodeEditorDialog({
 }) {
   const nameId = useId();
   const [name, setName] = useState(definition?.name ?? "");
-  const [imageUrl, setImageUrl] = useState(definition?.imageUrl ?? "");
-  const [storagePath, setStoragePath] = useState<string | null>(definition?.storagePath ?? null);
+  const [images, setImages] = useState(definition?.images ?? []);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = genericNodeDefinitionInputSchema.safeParse({ name, imageUrl, storagePath });
+    const parsed = genericNodeDefinitionInputSchema.safeParse({ name, images });
     if (!parsed.success) {
       const firstIssue = parsed.error.issues[0];
       setError(
-        firstIssue?.path[0] === "imageUrl"
-          ? "Upload an image for this node."
+        firstIssue?.path[0] === "images"
+          ? "Upload at least one image for this node."
           : (firstIssue?.message ?? "Check the form."),
       );
       return;
@@ -100,14 +100,18 @@ function GenericNodeEditorDialog({
           </div>
 
           <div className="grid gap-1.5">
-            <Label>Node image</Label>
-            <SingleImageUploadField
-              imageUrl={imageUrl}
+            <div className="flex items-center justify-between gap-3">
+              <Label>Node images</Label>
+              <span className="text-muted-foreground text-xs tabular-nums">
+                {images.length} image{images.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <MultiImageUploadField
+              images={images}
               disabled={pending}
               onBusyChange={setUploading}
-              onChange={(result) => {
-                setImageUrl(result?.url ?? "");
-                setStoragePath(result?.storagePath ?? null);
+              onChange={(nextImages) => {
+                setImages(nextImages);
                 setError(null);
               }}
             />
@@ -279,7 +283,7 @@ export function GenericNodeSettingsPanel() {
               <thead className="bg-muted/80 text-muted-foreground sticky top-0 z-10 text-xs uppercase">
                 <tr>
                   <th className="w-20 px-4 py-3 font-semibold">Sequence</th>
-                  <th className="w-20 px-4 py-3 font-semibold">Image</th>
+                  <th className="w-32 px-4 py-3 font-semibold">Images</th>
                   <th className="px-4 py-3 font-semibold">Node name</th>
                   <th className="w-44 px-4 py-3 text-right font-semibold">Actions</th>
                 </tr>
@@ -295,14 +299,12 @@ export function GenericNodeSettingsPanel() {
                         {definition.sortIndex + 1}
                       </td>
                       <td className="px-4 py-2.5">
-                        <span className="bg-muted flex size-11 items-center justify-center overflow-hidden rounded-md border">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={definition.imageUrl}
-                            alt=""
-                            className="size-full object-cover"
-                          />
-                        </span>
+                        <div className="flex items-center gap-2" title={`${definition.images.length} images`}>
+                          <ImageThumbnailStack images={definition.images} />
+                          <span className="text-muted-foreground text-xs tabular-nums">
+                            {definition.images.length}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 font-medium">{definition.name}</td>
                       <td className="px-4 py-2.5">

@@ -18,15 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchableOptionPicker } from "@/components/searchable-option-picker";
 import { useCustomers, useWorkspaceOptions } from "@/lib/hooks/use-workspace-records";
 import { useCreateProject } from "@/lib/hooks/use-projects";
 import type { Project } from "@/lib/store";
@@ -63,6 +55,8 @@ export function CreateProjectDialog({
   const [employeeQuery, setEmployeeQuery] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedEmployeeKey, setSelectedEmployeeKey] = useState<string | null>(null);
+  const [currencyQuery, setCurrencyQuery] = useState("");
+  const [destinationQuery, setDestinationQuery] = useState("");
   const [selectedCurrencyId, setSelectedCurrencyId] = useState<string | null>(null);
   const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
   const create = useCreateProject();
@@ -81,6 +75,18 @@ export function CreateProjectDialog({
     currencies.data?.find((currency) => currency.id === selectedCurrencyId) ?? null;
   const selectedDestination =
     destinations.data?.find((destination) => destination.id === selectedDestinationId) ?? null;
+  const currencyOptions = (currencies.data ?? []).map((currency) => ({
+    value: currency.id,
+    label: `${currency.code} - ${currency.name}`,
+    description: currency.symbol ?? undefined,
+    searchText: `${currency.code} ${currency.name} ${currency.symbol ?? ""}`,
+  }));
+  const destinationOptions = (destinations.data ?? []).map((destination) => ({
+    value: destination.id,
+    label: destination.name,
+    description: destination.code,
+    searchText: `${destination.name} ${destination.code}`,
+  }));
   const visibleCustomers = customerOptions.filter((customer) =>
     fuzzyMatch(
       `${customer.company.companyName} ${customer.company.emailDomainSuffix}`,
@@ -101,6 +107,8 @@ export function CreateProjectDialog({
     setName("");
     setCustomerQuery("");
     setEmployeeQuery("");
+    setCurrencyQuery("");
+    setDestinationQuery("");
     setSelectedCustomerId(null);
     setSelectedEmployeeKey(null);
     setSelectedCurrencyId(null);
@@ -268,65 +276,36 @@ export function CreateProjectDialog({
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Currency</Label>
-              <Select value={selectedCurrencyId} onValueChange={setSelectedCurrencyId}>
-                <SelectTrigger
-                  className="w-full"
-                  disabled={currencies.isLoading || currencies.isError || !currencies.data?.length}
-                >
-                  <SelectValue placeholder="Choose currency">
-                    {selectedCurrency
-                      ? `${selectedCurrency.code} - ${selectedCurrency.name}`
-                      : currencies.isLoading
-                        ? "Loading currencies..."
-                        : currencies.isError
-                          ? "Unable to load currencies"
-                          : "Choose currency"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="start" className="max-h-80">
-                  <SelectGroup>
-                    <SelectLabel>Currency</SelectLabel>
-                    {(currencies.data ?? []).map((currency) => (
-                      <SelectItem key={currency.id} value={currency.id}>
-                        {currency.code} - {currency.name}
-                        {currency.symbol ? ` (${currency.symbol})` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="project-currency">Currency</Label>
+              <SearchableOptionPicker
+                id="project-currency"
+                query={currencyQuery}
+                value={selectedCurrencyId}
+                options={currencyOptions}
+                placeholder="Type a code, name, or symbol"
+                emptyMessage="No currencies are configured. Add one in Settings."
+                noMatchesMessage="No currency matches this search."
+                loading={currencies.isLoading}
+                error={currencies.isError}
+                onQueryChange={setCurrencyQuery}
+                onValueChange={setSelectedCurrencyId}
+              />
             </div>
             <div className="grid gap-2">
-              <Label>Delivery destination</Label>
-              <Select value={selectedDestinationId} onValueChange={setSelectedDestinationId}>
-                <SelectTrigger
-                  className="w-full"
-                  disabled={
-                    destinations.isLoading || destinations.isError || !destinations.data?.length
-                  }
-                >
-                  <SelectValue placeholder="Choose destination">
-                    {selectedDestination
-                      ? selectedDestination.name
-                      : destinations.isLoading
-                        ? "Loading countries..."
-                        : destinations.isError
-                          ? "Unable to load countries"
-                          : "Choose destination"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="start" className="max-h-80">
-                  <SelectGroup>
-                    <SelectLabel>Destination country</SelectLabel>
-                    {(destinations.data ?? []).map((destination) => (
-                      <SelectItem key={destination.id} value={destination.id}>
-                        {destination.name} ({destination.code})
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="project-destination">Delivery destination</Label>
+              <SearchableOptionPicker
+                id="project-destination"
+                query={destinationQuery}
+                value={selectedDestinationId}
+                options={destinationOptions}
+                placeholder="Type a country name or code"
+                emptyMessage="No destinations are configured. Add one in Settings."
+                noMatchesMessage="No destination matches this search."
+                loading={destinations.isLoading}
+                error={destinations.isError}
+                onQueryChange={setDestinationQuery}
+                onValueChange={setSelectedDestinationId}
+              />
             </div>
           </div>
           <DialogFooter>

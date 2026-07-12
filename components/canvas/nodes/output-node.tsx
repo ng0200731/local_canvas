@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { Download, ImageIcon, Link2, Loader2 } from "lucide-react";
+import { Download, ImageIcon, Link2, Loader2, Square } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
@@ -31,7 +31,7 @@ function formatDuration(ms?: number): string | null {
 }
 
 export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCanvasNode>) {
-  const { updateNodeData } = useCanvasActions();
+  const { cancelGenerationRun, updateNodeData } = useCanvasActions();
   const [downloading, setDownloading] = useState(false);
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
@@ -55,13 +55,15 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
         outputFormat: data.outputFormat,
       });
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Unable to download this image.",
-      );
+      toast.error(error instanceof Error ? error.message : "Unable to download this image.");
     } finally {
       setDownloading(false);
+    }
+  }
+
+  function stopGeneration() {
+    if (cancelGenerationRun(id)) {
+      toast.info("Generation stopped.");
     }
   }
 
@@ -80,10 +82,22 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.imageOutput} />
-      <div className="flex items-center gap-2 text-sm font-medium">
+      <div className="flex items-center gap-2 pr-6 text-sm font-medium">
         <Download className="size-4" />
         Output
-        {durationLabel ? (
+        {data.status === "loading" ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="destructive"
+            title="Stop generation"
+            aria-label="Stop generation"
+            className="nodrag nopan ml-auto"
+            onClick={stopGeneration}
+          >
+            <Square className="fill-current" />
+          </Button>
+        ) : durationLabel ? (
           <span className="text-muted-foreground ml-auto text-[0.68rem] tabular-nums">
             {durationLabel}
           </span>

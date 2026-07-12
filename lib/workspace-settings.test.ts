@@ -1,36 +1,43 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultWorkspaceOptions, normalizeWorkspaceOptions } from "./workspace-settings";
+import {
+  genericNodeDefinitionInputSchema,
+  genericNodeDefinitionSchema,
+} from "./workspace-settings";
 
-describe("workspace settings", () => {
-  it("provides complete built-in currency and destination lists", () => {
-    expect(defaultWorkspaceOptions("currency").length).toBeGreaterThan(100);
-    expect(defaultWorkspaceOptions("destination-country").length).toBeGreaterThan(240);
+describe("generic node settings", () => {
+  it("normalizes a legacy single-image definition", () => {
+    expect(
+      genericNodeDefinitionSchema.parse({
+        id: "legacy-logo",
+        name: "Logo",
+        imageUrl: "https://example.com/logo.webp",
+        storagePath: "user/logo.webp",
+        sortIndex: 0,
+        createdAt: "2026-07-12T00:00:00.000Z",
+        updatedAt: "2026-07-12T00:00:00.000Z",
+      }),
+    ).toMatchObject({
+      images: [
+        {
+          id: "legacy-logo:image:0",
+          name: "Image 1",
+          url: "https://example.com/logo.webp",
+          storagePath: "user/logo.webp",
+        },
+      ],
+    });
   });
 
-  it("normalizes saved sequence indexes", () => {
-    const options = normalizeWorkspaceOptions("currency", [
-      {
-        id: "currency:USD",
-        kind: "currency",
-        code: "USD",
-        name: "US Dollar",
-        symbol: "$",
-        sortIndex: 8,
-      },
-      {
-        id: "currency:CNY",
-        kind: "currency",
-        code: "CNY",
-        name: "Chinese Yuan",
-        symbol: "CN¥",
-        sortIndex: 2,
-      },
-    ]);
-
-    expect(options.map((option) => [option.code, option.sortIndex])).toEqual([
-      ["CNY", 0],
-      ["USD", 1],
-    ]);
+  it("requires at least one validated image", () => {
+    expect(genericNodeDefinitionInputSchema.safeParse({ name: "Logo", images: [] }).success).toBe(
+      false,
+    );
+    expect(
+      genericNodeDefinitionInputSchema.safeParse({
+        name: "Logo",
+        images: [{ id: "logo-1", name: "logo.webp", url: "", storagePath: null }],
+      }).success,
+    ).toBe(false);
   });
 });

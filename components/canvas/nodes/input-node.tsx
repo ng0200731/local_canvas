@@ -8,23 +8,26 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
 } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { FolderOpen, ImageIcon, Loader2, Upload, X } from "lucide-react";
+import { BookOpen, FolderOpen, ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
+import { ImageThumbnailStack } from "@/components/image-thumbnail-stack";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { InputCanvasNode } from "@/lib/nodes/types";
 import { uploadImage } from "@/lib/upload";
+import { genericNodeImageListSchema } from "@/lib/workspace-settings";
 import {
   useCanvasActions,
   useConnectionHighlight,
   useGroupAccent,
   useReferenceHover,
 } from "../canvas-context";
+import { GenericImageBookDialog } from "../generic-image-book-dialog";
 import { NodeDeleteButton } from "./delete-button";
 import { InputPort, OutputPort } from "./port";
 import { ResizeHandle } from "./resize-handle";
@@ -57,7 +60,7 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
       setUploading(true);
       try {
         const { url, storagePath } = await uploadImage(file);
-        updateNodeData(id, { imageUrl: url, storagePath });
+        updateNodeData(id, { imageUrl: url, storagePath, selectedGenericImageId: null });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Upload failed");
       } finally {
@@ -95,6 +98,16 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
     typeof data.genericDefinitionName === "string" && data.genericDefinitionName.trim()
       ? data.genericDefinitionName.trim()
       : null;
+  const parsedGenericImages = genericNodeImageListSchema.safeParse(data.genericImages);
+  const genericImages = parsedGenericImages.success ? parsedGenericImages.data : [];
+  const selectedGenericImageId =
+    typeof data.selectedGenericImageId === "string" &&
+    genericImages.some((image) => image.id === data.selectedGenericImageId)
+      ? data.selectedGenericImageId
+      : null;
+  const selectedGenericImageIndex = selectedGenericImageId
+    ? genericImages.findIndex((image) => image.id === selectedGenericImageId)
+    : 0;
   const HeaderIcon = genericDefinitionName ? ImageIcon : Upload;
   const isReferenceHovered = hoveredReferenceNodeId === id;
 
@@ -116,11 +129,54 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
     >
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.imageInput} />
+
+      <Input
+        data-new-node-focus-field
+        value={data.alias}
+        placeholder="alias"
+        aria-label="Input alias"
+        className="nodrag nopan h-8 pr-6 text-sm"
+        onChange={(event) => updateNodeData(id, { alias: event.target.value })}
+      />
+
       <div className="flex items-center gap-2 text-sm font-medium">
         <HeaderIcon className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate" title={genericDefinitionName ?? "Input"}>
           {genericDefinitionName ?? "Input"}
         </span>
+        {genericImages.length ? (
+          <GenericImageBookDialog
+            images={genericImages}
+            selectedImageId={selectedGenericImageId}
+            title={`${genericDefinitionName ?? alias} image book`}
+            onSelect={(image) =>
+              updateNodeData(id, {
+                imageUrl: image.url,
+                storagePath: image.storagePath,
+                selectedGenericImageId: image.id,
+              })
+            }
+            trigger={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-label="Open saved image book"
+                title="Open saved image book"
+                className="nodrag nopan max-w-24 gap-1 px-1.5"
+              >
+                <ImageThumbnailStack
+                  images={genericImages}
+                  maximumVisible={2}
+                  className="max-w-14"
+                  thumbnailClassName="size-5 -ml-3 rounded-sm"
+                  remainingClassName="size-5 -ml-3 text-[0.5rem]"
+                />
+                <BookOpen className="size-3.5" />
+              </Button>
+            }
+          />
+        ) : null}
         <Button
           type="button"
           size="icon-sm"
@@ -133,15 +189,6 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
           <FolderOpen />
         </Button>
       </div>
-
-      <Input
-        data-new-node-focus-field
-        value={data.alias}
-        placeholder="alias"
-        aria-label="Input alias"
-        className="nodrag nopan h-8 text-sm"
-        onChange={(event) => updateNodeData(id, { alias: event.target.value })}
-      />
 
       <div
         tabIndex={0}
@@ -158,6 +205,12 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
               src={imageUrl}
               alt={`${alias} input`}
               title={`@${alias} input image`}
+              gallery={
+                selectedGenericImageId
+                  ? genericImages.map((image) => ({ src: image.url, alt: image.name }))
+                  : undefined
+              }
+              initialIndex={selectedGenericImageIndex}
               trigger={
                 <button
                   type="button"
@@ -183,6 +236,7 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
                 updateNodeData(id, {
                   imageUrl: null,
                   storagePath: null,
+                  selectedGenericImageId: null,
                 })
               }
               trigger={
@@ -204,7 +258,7 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
         ) : (
           <div className="text-muted-foreground flex flex-col items-center gap-1 text-xs">
             <ImageIcon className="size-6" />
-            <span>Paste or drop image</span>
+            <span>{genericImages.length ? "Select from the image book" : "Paste or drop image"}</span>
           </div>
         )}
         <input

@@ -137,10 +137,15 @@ function isGeminiImageModel(model: ImageGenerationModelId): boolean {
   return model.startsWith("gemini-");
 }
 
-async function geminiParts(prompt: string, imageUrls: readonly string[], fetcher: typeof fetch) {
+async function geminiParts(
+  prompt: string,
+  imageUrls: readonly string[],
+  fetcher: typeof fetch,
+  signal: AbortSignal,
+) {
   const parts: Array<Record<string, unknown>> = [{ text: prompt }];
   for (const url of imageUrls) {
-    const blob = await blobFromReferenceUrl(url, fetcher);
+    const blob = await blobFromReferenceUrl(url, fetcher, signal);
     const data = Buffer.from(await blob.arrayBuffer()).toString("base64");
     parts.push({ inline_data: { mime_type: blob.type || "image/png", data } });
   }
@@ -171,10 +176,15 @@ function blobFromDataUrl(url: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
-async function blobFromReferenceUrl(url: string, fetcher: typeof fetch): Promise<Blob> {
+async function blobFromReferenceUrl(
+  url: string,
+  fetcher: typeof fetch,
+  signal: AbortSignal,
+): Promise<Blob> {
+  signal.throwIfAborted();
   if (url.startsWith("data:")) return blobFromDataUrl(url);
 
-  const response = await fetcher(url);
+  const response = await fetcher(url, { signal });
   if (!response.ok) {
     throw new Error(`Reference image request failed with ${response.status}.`);
   }
@@ -186,9 +196,10 @@ async function appendEditImages(
   form: FormData,
   imageUrls: readonly string[],
   fetcher: typeof fetch,
+  signal: AbortSignal,
 ): Promise<void> {
   for (const [index, imageUrl] of imageUrls.entries()) {
-    const blob = await blobFromReferenceUrl(imageUrl, fetcher);
+    const blob = await blobFromReferenceUrl(imageUrl, fetcher, signal);
     const extension = extensionForMimeType(blob.type);
     form.append("image", blob, `reference-${index + 1}.${extension}`);
   }
@@ -199,7 +210,10 @@ export function createXiangsuImageGenerator({
   fetcher = fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }: XiangsuGeneratorOptions) {
-  return async function generateImage(input: XiangsuGenerateInput): Promise<XiangsuGenerateOutput> {
+  return async function generateImage(
+    input: XiangsuGenerateInput,
+    requestSignal?: AbortSignal,
+  ): Promise<XiangsuGenerateOutput> {
     if (!apiKey) {
       throw new Error("AI generation is disabled. Set XIANGSU_API_KEY in .env.local.");
     }
@@ -210,22 +224,35 @@ export function createXiangsuImageGenerator({
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    const compiled = compileReferencePrompt(input.prompt, input.references);
-
-    if (compiled.imageUrls.length > 0 && isDallEModel(input.model)) {
-      throw new Error(
-        "DALL-E models do not support reference-image editing. Use a GPT Image model.",
-      );
+    const abortFromRequest = () => controller.abort(requestSignal?.reason);
+    if (requestSignal?.aborted) {
+      abortFromRequest();
+    } else {
+      requestSignal?.addEventListener("abort", abortFromRequest, { once: true });
     }
-
     try {
+      const compiled = compileReferencePrompt(input.prompt, input.references);
+
+      if (compiled.imageUrls.length > 0 && isDallEModel(input.model)) {
+        throw new Error(
+          "DALL-E models do not support reference-image editing. Use a GPT Image model.",
+        );
+      }
+
       const response = isGeminiImageModel(input.model)
         ? await fetcher(`${XIANGSU_GEMINI_BASE_URL}/${input.model}:generateContent`, {
             method: "POST",
             headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
             body: JSON.stringify({
               contents: [
-                { parts: await geminiParts(compiled.prompt, compiled.imageUrls, fetcher) },
+                {
+                  parts: await geminiParts(
+                    compiled.prompt,
+                    compiled.imageUrls,
+                    fetcher,
+                    controller.signal,
+                  ),
+                },
               ],
               generationConfig: {
                 imageConfig: {
@@ -246,7 +273,7 @@ export function createXiangsuImageGenerator({
               form.append("background", "auto");
               form.append("quality", "auto");
               form.append("output_format", input.outputFormat);
-              await appendEditImages(form, compiled.imageUrls, fetcher);
+              await appendEditImages(form, compiled.imageUrls, fetcher, controller.signal);
 
               return fetcher(XIANGSU_EDIT_URL, {
                 method: "POST",
@@ -318,6 +345,11 @@ export function createXiangsuImageGenerator({
       return { url, model: input.model };
     } catch (error) {
       if (isAbortError(error)) {
+        if (requestSignal?.aborted) {
+          throw requestSignal.reason instanceof Error
+            ? requestSignal.reason
+            : new DOMException("Generation cancelled", "AbortError");
+        }
         throw new Error("Image generation timed out. Please try again.");
       }
       if (isNetworkFetchError(error)) {
@@ -328,6 +360,7 @@ export function createXiangsuImageGenerator({
       throw error;
     } finally {
       clearTimeout(timeout);
+      requestSignal?.removeEventListener("abort", abortFromRequest);
     }
   };
 }
