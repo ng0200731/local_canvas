@@ -102,6 +102,7 @@ const NEW_NODE_DISPLACEMENT = 32;
 const POSITION_EPSILON = 1;
 const MAX_PLACEMENT_PROBES = 40;
 const FIELD_FOCUS_RETRIES = 12;
+const GROUP_FIT_PADDING = 18;
 
 type HoverTarget = {
   kind: "node" | "edge";
@@ -220,6 +221,44 @@ function findNewNodePosition(base: XYPosition, nodes: CanvasNode[]): XYPosition 
   };
 }
 
+function findFreePositionInRect(
+  base: XYPosition,
+  rect: { x: number; y: number; w: number; h: number },
+  occupiedRects: Array<{ x: number; y: number; w: number; h: number }>,
+  nodeSize = { width: 240, height: 240 },
+): XYPosition {
+  const halfW = nodeSize.width / 2;
+  const halfH = nodeSize.height / 2;
+  const clampInside = (position: XYPosition): XYPosition => ({
+    x: Math.min(rect.x + rect.w - halfW, Math.max(rect.x + halfW, position.x)),
+    y: Math.min(rect.y + rect.h - halfH, Math.max(rect.y + halfH, position.y)),
+  });
+  const overlaps = (position: XYPosition) => {
+    const candidate = {
+      x: position.x - halfW,
+      y: position.y - halfH,
+      w: nodeSize.width,
+      h: nodeSize.height,
+    };
+    return occupiedRects.some((occupied) => rectsOverlap(candidate, occupied));
+  };
+
+  const first = clampInside(base);
+  if (!overlaps(first)) return first;
+
+  for (let row = 0; row < 10; row += 1) {
+    for (let column = 0; column < 10; column += 1) {
+      const position = clampInside({
+        x: rect.x + halfW + column * (nodeSize.width + 24),
+        y: rect.y + halfH + row * (nodeSize.height + 24),
+      });
+      if (!overlaps(position)) return position;
+    }
+  }
+
+  return first;
+}
+
 function getNodeSizeFromData(node: CanvasNode, fallback: { width: number; height: number }) {
   return {
     width: typeof node.data.width === "number" ? node.data.width : fallback.width,
@@ -234,6 +273,39 @@ function getGroupRectFromNode(node: CanvasNode): { x: number; y: number; w: numb
     y: node.position.y - size.height / 2,
     w: size.width,
     h: size.height,
+  };
+}
+
+function getAbsoluteNodeCenter(
+  node: CanvasNode,
+  nodesById: Map<string, CanvasNode>,
+  fallbackGroupRect?: { x: number; y: number; w: number; h: number },
+): XYPosition {
+  if (!node.parentId) return node.position;
+  const parent = nodesById.get(node.parentId);
+  const parentRect = fallbackGroupRect ?? (parent ? getGroupRectFromNode(parent) : null);
+  if (!parentRect) return node.position;
+  return {
+    x: parentRect.x + node.position.x,
+    y: parentRect.y + node.position.y,
+  };
+}
+
+function getFallbackNodeRect(
+  node: CanvasNode,
+  nodesById: Map<string, CanvasNode>,
+  fallbackSize: { width: number; height: number },
+  fallbackGroupRect?: { x: number; y: number; w: number; h: number },
+) {
+  const size = getNodeSizeFromData(node, fallbackSize);
+  const center = getAbsoluteNodeCenter(node, nodesById, fallbackGroupRect);
+  return {
+    x: center.x - size.width / 2,
+    y: center.y - size.height / 2,
+    w: size.width,
+    h: size.height,
+    cx: center.x,
+    cy: center.y,
   };
 }
 
@@ -737,7 +809,7 @@ function Editor({
         setGroupDialogOpen(false);
         return;
       }
-      const padding = 40;
+      const padding = GROUP_FIT_PADDING;
       const left = Math.min(...selected.map(({ rect }) => rect.x)) - padding;
       const top = Math.min(...selected.map(({ rect }) => rect.y)) - padding;
       const right = Math.max(...selected.map(({ rect }) => rect.x + rect.w)) + padding;
@@ -827,22 +899,28 @@ function Editor({
       const children = nodesToFit.filter((node) => node.parentId === groupId);
       if (children.length === 0) return nodesToFit;
 
+      const nodesById = new Map(nodesToFit.map((node) => [node.id, node] as const));
       const groupRect = rectOf(getInternalNode(groupId)) ?? getGroupRectFromNode(group);
-      const padding = 40;
+      const padding = GROUP_FIT_PADDING;
       const childRects = children
         .map((child) => {
           const measured = rectOf(getInternalNode(child.id));
           const center = centersByNodeId.get(child.id);
           if (measured) return { id: child.id, ...measured };
-          const size = getNodeSizeFromData(child, { width: 220, height: 160 });
-          const cx = center?.x ?? groupRect.x + child.position.x;
-          const cy = center?.y ?? groupRect.y + child.position.y;
+          const fallbackRect = getFallbackNodeRect(
+            child,
+            nodesById,
+            { width: 220, height: 160 },
+            groupRect,
+          );
+          const cx = center?.x ?? fallbackRect.cx;
+          const cy = center?.y ?? fallbackRect.cy;
           return {
             id: child.id,
-            x: cx - size.width / 2,
-            y: cy - size.height / 2,
-            w: size.width,
-            h: size.height,
+            x: cx - fallbackRect.w / 2,
+            y: cy - fallbackRect.h / 2,
+            w: fallbackRect.w,
+            h: fallbackRect.h,
             cx,
             cy,
           };
@@ -906,16 +984,25 @@ function Editor({
       setCanvasNodes((current) => {
         const group = current.find((candidate) => candidate.id === groupId);
         if (!group) return current;
+        const nodesById = new Map(current.map((node) => [node.id, node] as const));
         const groupRect = rectOf(getInternalNode(groupId)) ?? getGroupRectFromNode(group);
+        const occupiedRects = current
+          .filter((node) => node.parentId === groupId && node.id !== nodeId)
+          .map(
+            (node) =>
+              rectOf(getInternalNode(node.id)) ??
+              getFallbackNodeRect(node, nodesById, { width: 240, height: 240 }, groupRect),
+          );
+        const nextCenter = findFreePositionInRect(center, groupRect, occupiedRects);
         const nextNodes = current.map((node) => {
           if (node.id !== nodeId) return node;
           return {
             ...node,
             parentId: groupId,
-            position: { x: center.x - groupRect.x, y: center.y - groupRect.y },
+            position: { x: nextCenter.x - groupRect.x, y: nextCenter.y - groupRect.y },
           };
         });
-        return fitGroupToChildren(groupId, nextNodes, new Map([[nodeId, center]]));
+        return fitGroupToChildren(groupId, nextNodes, new Map([[nodeId, nextCenter]]));
       });
       toast.success("Node added to group");
     },

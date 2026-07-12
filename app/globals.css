@@ -192,32 +192,6 @@
   outline-offset: 3px;
 }
 
-.react-flow__node.canvas-group-drop-target {
-  z-index: 15 !important;
-}
-
-.react-flow__node.canvas-group-drop-target > * {
-  animation: canvas-group-drop-pulse 700ms ease-in-out infinite;
-  outline: 4px solid #ef4444;
-  outline-offset: 6px;
-}
-
-@keyframes canvas-group-drop-pulse {
-  0%,
-  100% {
-    filter: drop-shadow(0 0 0 rgb(239 68 68 / 0));
-  }
-  50% {
-    filter: drop-shadow(0 0 28px rgb(239 68 68 / 0.9));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .react-flow__node.canvas-group-drop-target > * {
-    animation: none;
-  }
-}
-
 /* Placeholder for the note node's rich-text editor (contentEditable). */
 [contenteditable][data-placeholder]:empty:before {
   content: attr(data-placeholder);

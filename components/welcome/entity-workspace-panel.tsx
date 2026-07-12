@@ -1957,6 +1957,11 @@ function PartyWorkspacePanel({
                       const hasProductImages = productRecords.some((product) =>
                         product.variants.some((variant) => variant.image),
                       );
+                      const productImageCount = productRecords.reduce(
+                        (count, product) =>
+                          count + product.variants.filter((variant) => variant.image).length,
+                        0,
+                      );
 
                       return (
                         <tr key={record.id} className="hover:bg-muted/30">
@@ -1983,13 +1988,13 @@ function PartyWorkspacePanel({
                                   title={`${record.company.companyName} product images`}
                                   trigger={
                                     <Button type="button" variant="ghost" size="sm">
-                                      View products
+                                      View product ({productImageCount})
                                     </Button>
                                   }
                                 />
                               ) : (
                                 <Button type="button" variant="ghost" size="sm" disabled>
-                                  View products
+                                  View product (0)
                                 </Button>
                               )}
                               <Button
