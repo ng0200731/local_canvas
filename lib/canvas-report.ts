@@ -141,7 +141,7 @@ function productDetails(product: ProductRecord, ownerName: string): CanvasReport
         ]
       : []),
     ...parameterDetails(variant),
-  ].filter((item) => item.value.trim());
+  ].filter((item) => typeof item.value === "string" && item.value.trim());
 }
 
 function byNodePosition(left: CanvasNode, right: CanvasNode): number {
@@ -216,17 +216,6 @@ function outputBlockForNode(node: CanvasNode): CanvasReportBlock {
         }
       : null,
   };
-}
-
-function generatedImageForSupplier(
-  supplierNode: CanvasNode,
-  nodesById: Map<string, CanvasNode>,
-  edges: readonly CanvasEdge[],
-): CanvasReportImage | null {
-  const output = findOutputForSource(supplierNode.id, nodesById, edges);
-  if (!output) return null;
-  const resultUrl = nullableString(asRecord(output.data).resultUrl);
-  return resultUrl ? { url: resultUrl, alt: "Generated supplier output" } : null;
 }
 
 function finalOutputImage(outputBlocks: readonly CanvasReportBlock[]): CanvasReportImage | null {
@@ -511,8 +500,13 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
                     {
                       label: "Total sample charge",
                       value: `${sampleChargeParts
-                        .map((part) => `${part.supplierName}: ${formatCurrencyAmount(part.prefix, part.amount)}`)
-                        .join(" + ")} = ${formatCurrencyAmount(sampleChargeParts[0]?.prefix ?? "", sampleChargeTotal)}`,
+                        .map(
+                          (part) =>
+                            `${part.supplierName}: ${formatCurrencyAmount(part.prefix, part.amount)}`,
+                        )
+                        .join(
+                          " + ",
+                        )} = ${formatCurrencyAmount(sampleChargeParts[0]?.prefix ?? "", sampleChargeTotal)}`,
                     },
                   ]
                 : []),

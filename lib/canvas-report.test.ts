@@ -26,25 +26,46 @@ const project: Project = {
   updatedAt: now,
 };
 
-const supplier: SupplierRecord = {
-  id: "supplier-1",
-  company: {
-    companyName: "Bright Sample Factory",
-    emailDomainSuffix: "factory.example",
-    productTypes: ["woven-label"],
-  },
-  employees: [
-    {
-      id: "supplier-employee-1",
-      userName: "Sam",
-      emailPrefix: "sam",
-      title: "Sales",
-      tel: "+86 755 0000",
+const suppliers: SupplierRecord[] = [
+  {
+    id: "supplier-1",
+    company: {
+      companyName: "Bright Sample Factory",
+      emailDomainSuffix: "factory.example",
+      productTypes: ["woven-label"],
     },
-  ],
-  createdAt: now,
-  updatedAt: now,
-};
+    employees: [
+      {
+        id: "supplier-employee-1",
+        userName: "Sam",
+        emailPrefix: "sam",
+        title: "Sales",
+        tel: "+86 755 0000",
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "supplier-2",
+    company: {
+      companyName: "Elastic Works",
+      emailDomainSuffix: "elastic.example",
+      productTypes: ["elastic"],
+    },
+    employees: [
+      {
+        id: "supplier-employee-2",
+        userName: "Eve",
+        emailPrefix: "eve",
+        title: "Sales",
+        tel: "+86 755 1111",
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  },
+];
 
 const products: ProductRecord[] = [
   {
@@ -107,6 +128,38 @@ const products: ProductRecord[] = [
     createdAt: now,
     updatedAt: now,
   },
+  {
+    id: "supplier-product-2",
+    ownerKind: "supplier",
+    supplierId: "supplier-2",
+    customerId: null,
+    projectId: null,
+    productType: "elastic",
+    subject: "EL-202",
+    detail: "Elastic tape",
+    variants: [
+      {
+        id: "supplier-variant-2",
+        sortIndex: 0,
+        material: "Nylon",
+        colorNotes: "Black",
+        parameters: {
+          sampleLeadTime: "5 days",
+          sampleCharge: "USD 25",
+          bulkLeadTime: "20 days",
+        },
+        unitPrice: "0.42",
+        priceUnit: "per meter",
+        image: {
+          name: "elastic.png",
+          url: "data:image/png;base64,aW1hZ2U=",
+          storagePath: null,
+        },
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  },
 ];
 
 const canvas: Canvas = {
@@ -148,6 +201,21 @@ const canvas: Canvas = {
         },
       },
       {
+        id: "supplier-node-2",
+        type: "suppler",
+        position: { x: 300, y: 200 },
+        data: {
+          alias: "elastic",
+          supplierId: "supplier-2",
+          supplierName: "Elastic Works",
+          productId: "supplier-product-2",
+          productSubject: "EL-202",
+          variantId: "supplier-variant-2",
+          variantImageUrl: "data:image/png;base64,aW1hZ2U=",
+          variantImageName: "elastic.png",
+        },
+      },
+      {
         id: "generate-node",
         type: "generate",
         position: { x: 600, y: 0 },
@@ -172,6 +240,7 @@ const canvas: Canvas = {
     ],
     edges: [
       { id: "edge-1", source: "supplier-node", target: "generate-node" },
+      { id: "edge-1b", source: "supplier-node-2", target: "generate-node" },
       { id: "edge-2", source: "generate-node", target: "output-node" },
     ],
   },
@@ -185,7 +254,7 @@ describe("buildCanvasReport", () => {
       canvas,
       project,
       customers: [],
-      suppliers: [supplier],
+      suppliers,
       products,
       images,
     });
@@ -204,12 +273,19 @@ describe("buildCanvasReport", () => {
       label: "Input prompt",
       value: "Generate label mockup from @supplier",
     });
-    expect(report.supplierBreakdowns[0]?.details).toEqual([
-      { label: "Production cost", value: "0.18 per pc" },
-      { label: "Sample Lead Time", value: "7 days" },
-      { label: "Sample Charge", value: "USD 45" },
-      { label: "Production Lead Time", value: "18 days" },
-    ]);
+    expect(report.supplierBreakdowns).toHaveLength(1);
+    expect(report.supplierBreakdowns[0]?.details).toContainEqual({
+      label: "Total sample charge",
+      value: "Bright Sample Factory: USD 45 + Elastic Works: USD 25 = USD 70",
+    });
+    expect(report.supplierBreakdowns[0]?.details).toContainEqual({
+      label: "Bright Sample Factory - Production cost",
+      value: "0.18 per pc",
+    });
+    expect(report.supplierBreakdowns[0]?.details).toContainEqual({
+      label: "Elastic Works - Bulk Lead Time",
+      value: "20 days",
+    });
     expect(report.supplierBreakdowns[0]?.image?.url).toBe("data:image/png;base64,aW1hZ2U=");
     expect(report.html.match(/Supplier details/g)).toHaveLength(1);
     expect(report.html).toContain("Output and input prompt");
