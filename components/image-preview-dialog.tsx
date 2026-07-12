@@ -6,9 +6,10 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
+  type KeyboardEvent as ReactKeyboardEvent,
   type WheelEvent,
 } from "react";
-import { Mouse, Move, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Mouse, Move, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,13 @@ interface ImagePreviewDialogProps {
   alt: string;
   title: string;
   trigger: ReactElement;
+  gallery?: readonly ImagePreviewItem[];
+  initialIndex?: number;
+}
+
+export interface ImagePreviewItem {
+  src: string;
+  alt: string;
 }
 
 const MIN_ZOOM = 1;
@@ -46,11 +54,24 @@ function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
 }
 
-export function ImagePreviewDialog({ src, alt, title, trigger }: ImagePreviewDialogProps) {
+export function ImagePreviewDialog({
+  src,
+  alt,
+  title,
+  trigger,
+  gallery,
+  initialIndex = 0,
+}: ImagePreviewDialogProps) {
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const dragRef = useRef<DragState | null>(null);
+  const previewItems = gallery?.length ? gallery : [{ src, alt }];
+  const safeIndex = Math.min(Math.max(currentIndex, 0), previewItems.length - 1);
+  const currentItem = previewItems[safeIndex];
+  const hasPrevious = safeIndex > 0;
+  const hasNext = safeIndex < previewItems.length - 1;
 
   const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -103,12 +124,42 @@ export function ImagePreviewDialog({ src, alt, title, trigger }: ImagePreviewDia
     dragRef.current = null;
   }, []);
 
+  const showImage = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= previewItems.length) return;
+      setCurrentIndex(index);
+      resetPreview();
+    },
+    [previewItems.length, resetPreview],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "ArrowLeft" && hasPrevious) {
+        event.preventDefault();
+        showImage(safeIndex - 1);
+      }
+      if (event.key === "ArrowRight" && hasNext) {
+        event.preventDefault();
+        showImage(safeIndex + 1);
+      }
+    },
+    [hasNext, hasPrevious, safeIndex, showImage],
+  );
+
   return (
-    <Dialog onOpenChange={(open) => open && resetPreview()}>
+    <Dialog
+      onOpenChange={(open) => {
+        if (!open) return;
+        setCurrentIndex(initialIndex);
+        resetPreview();
+      }}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent
         showCloseButton={false}
         className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-lg bg-black/90 p-3 ring-white/15 sm:max-w-[calc(100vw-2rem)]"
+        onKeyDown={handleKeyDown}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">
@@ -138,12 +189,43 @@ export function ImagePreviewDialog({ src, alt, title, trigger }: ImagePreviewDia
           </div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={src}
-            alt={alt}
+            src={currentItem.src}
+            alt={currentItem.alt}
             draggable={false}
-            className="max-h-full max-w-full select-none object-contain transition-transform duration-100 ease-out"
+            className="max-h-full max-w-full object-contain transition-transform duration-100 ease-out select-none"
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
           />
+          {hasPrevious && (
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="absolute left-2 z-20 size-11 rounded-full shadow-xl sm:left-4"
+              aria-label="Previous rendered image"
+              title="Previous rendered image"
+              onClick={() => showImage(safeIndex - 1)}
+            >
+              <ChevronLeft className="size-5" />
+            </Button>
+          )}
+          {hasNext && (
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              className="absolute right-2 z-20 size-11 rounded-full shadow-xl sm:right-4"
+              aria-label="Next rendered image"
+              title="Next rendered image"
+              onClick={() => showImage(safeIndex + 1)}
+            >
+              <ChevronRight className="size-5" />
+            </Button>
+          )}
+          {previewItems.length > 1 && (
+            <span className="pointer-events-none absolute top-0 left-0 rounded-md bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-white/20">
+              {safeIndex + 1} of {previewItems.length}
+            </span>
+          )}
           <DialogClose
             render={
               <Button

@@ -53,6 +53,10 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const previewItems = images.map((image) => ({
+    src: image.url,
+    alt: image.prompt ?? "Generated image",
+  }));
 
   async function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
@@ -102,7 +106,7 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 pt-5 sm:grid-cols-2 lg:grid-cols-3">
-              {images.map((image) => (
+              {images.map((image, index) => (
                 <article
                   key={image.id}
                   className="group bg-card overflow-hidden rounded-md border shadow-sm"
@@ -112,6 +116,8 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
                       src={image.url}
                       alt={image.prompt ?? "Generated image"}
                       title="Rendered image preview"
+                      gallery={previewItems}
+                      initialIndex={index}
                       trigger={
                         <button
                           type="button"

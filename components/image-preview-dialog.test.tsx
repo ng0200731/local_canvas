@@ -133,4 +133,57 @@ describe("ImagePreviewDialog", () => {
       root.unmount();
     });
   });
+
+  it("navigates a gallery and only shows available directions", async () => {
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ImagePreviewDialog
+          src="first.png"
+          alt="First image"
+          title="Render history"
+          trigger={<button type="button">Open gallery</button>}
+          gallery={[
+            { src: "first.png", alt: "First image" },
+            { src: "second.png", alt: "Second image" },
+            { src: "third.png", alt: "Third image" },
+          ]}
+        />,
+      );
+    });
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("button")?.click();
+    });
+
+    expect(document.querySelector('button[aria-label="Previous rendered image"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Next rendered image"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("1 of 3");
+
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Next rendered image"]')
+        ?.click();
+    });
+
+    expect(document.querySelector<HTMLImageElement>('img[alt="Second image"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Previous rendered image"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Next rendered image"]')).not.toBeNull();
+
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-slot="dialog-content"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+
+    expect(document.querySelector<HTMLImageElement>('img[alt="Third image"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Previous rendered image"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label="Next rendered image"]')).toBeNull();
+    expect(document.body.textContent).toContain("3 of 3");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });
