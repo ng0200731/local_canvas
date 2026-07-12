@@ -290,27 +290,19 @@ describe("buildCanvasReport", () => {
       value: "Bright Sample Factory: 18 days + Elastic Works: 20 days = 20 days",
     });
     expect(report.supplierBreakdowns[0]?.table).toEqual({
-      columns: ["Bright Sample Factory", "Elastic Works"],
+      columns: ["Sample cost", "Sample lead time", "Bulk cost", "Bulk lead time"],
       rows: [
         {
-          label: "Sample cost",
-          values: ["USD 45", "USD 25"],
-          total: "USD 70",
+          label: "Bright Sample Factory",
+          values: ["USD 45", "7 days", "0.18 per pc", "18 days"],
         },
         {
-          label: "Sample lead time",
-          values: ["7 days", "5 days"],
-          total: "7 days",
+          label: "Elastic Works",
+          values: ["USD 25", "5 days", "0.42 per meter", "20 days"],
         },
         {
-          label: "Bulk cost",
-          values: ["0.18 per pc", "0.42 per meter"],
-          total: "0.60 mixed units",
-        },
-        {
-          label: "Bulk lead time",
-          values: ["18 days", "20 days"],
-          total: "20 days",
+          label: "Total",
+          values: ["USD 70", "7 days", "0.60 mixed units", "20 days"],
         },
       ],
     });

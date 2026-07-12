@@ -43,24 +43,16 @@ function supportedMimeFromBuffer(buffer: Buffer): SupportedPdfImageMime | null {
   return null;
 }
 
-function supportedMimeFromType(value: string): SupportedPdfImageMime | null {
-  const mime = value.split(";")[0]?.trim().toLocaleLowerCase();
-  if (mime === "image/png") return "image/png";
-  if (mime === "image/jpeg" || mime === "image/jpg") return "image/jpeg";
-  return null;
-}
-
 function isDataImageUrl(value: string): boolean {
   return /^data:image\/[-+.\w]+;base64,/i.test(value);
 }
 
 async function convertToPdfImageBuffer(buffer: Buffer): Promise<Buffer | null> {
-  if (supportedMimeFromBuffer(buffer)) return buffer;
-
   try {
     const sharpModule = await import("sharp");
     return await sharpModule.default(buffer).png().toBuffer();
   } catch (error) {
+    if (supportedMimeFromBuffer(buffer)) return buffer;
     console.warn("Canvas report PDF image conversion failed.", {
       errorName: error instanceof Error ? error.name : "UnknownError",
       errorMessage: error instanceof Error ? error.message : "Unknown error",
@@ -74,8 +66,6 @@ async function imageBufferFromDataUrl(value: string): Promise<Buffer | null> {
   if (!match) return null;
 
   const buffer = Buffer.from(match[2] ?? "", "base64");
-  if (supportedMimeFromType(match[1] ?? "") || supportedMimeFromBuffer(buffer)) return buffer;
-
   return convertToPdfImageBuffer(buffer);
 }
 
@@ -95,9 +85,7 @@ async function imageBufferFromUrl(value: string): Promise<Buffer | null> {
   try {
     const response = await fetch(parsed, { signal: controller.signal });
     if (!response.ok) return null;
-    const contentType = response.headers.get("content-type") ?? "";
     const buffer = Buffer.from(await response.arrayBuffer());
-    if (supportedMimeFromType(contentType) || supportedMimeFromBuffer(buffer)) return buffer;
     return convertToPdfImageBuffer(buffer);
   } catch {
     return null;
@@ -224,7 +212,7 @@ function drawSupplierMatrix(
   y: number,
   width: number,
 ): number {
-  const columns = ["Item", ...table.columns, "Total"];
+  const columns = ["Supplier", ...table.columns];
   const rowHeight = 26;
   const headerHeight = 24;
   const firstColumnWidth = 86;
@@ -249,16 +237,16 @@ function drawSupplierMatrix(
 
   table.rows.forEach((row, rowIndex) => {
     const rowY = y + headerHeight + rowIndex * rowHeight;
-    const values = [row.label, ...row.values, row.total];
+    const values = [row.label, ...row.values];
     cursorX = x;
     values.forEach((value, columnIndex) => {
       const columnWidth = columnWidths[columnIndex] ?? otherColumnWidth;
       const isHeaderColumn = columnIndex === 0;
-      const isTotalColumn = columnIndex === values.length - 1;
-      const fill = isHeaderColumn ? "#fff8ea" : isTotalColumn ? "#fff4d8" : "#ffffff";
+      const isTotalRow = row.label.toLocaleLowerCase() === "total";
+      const fill = isHeaderColumn ? "#fff8ea" : isTotalRow ? "#fff4d8" : "#ffffff";
       doc.rect(cursorX, rowY, columnWidth, rowHeight).fillAndStroke(fill, "#eadfca");
       doc
-        .font(isHeaderColumn || isTotalColumn ? "Helvetica-Bold" : "Helvetica")
+        .font(isHeaderColumn || isTotalRow ? "Helvetica-Bold" : "Helvetica")
         .fontSize(7)
         .fillColor("#111111")
         .text(value, cursorX + 4, rowY + 6, {

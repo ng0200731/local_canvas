@@ -18,7 +18,6 @@ export interface CanvasReportTable {
   rows: Array<{
     label: string;
     values: string[];
-    total: string;
   }>;
 }
 
@@ -347,7 +346,7 @@ function totalTableValue(
 }
 
 function supplierBreakdownTable(supplierBlocks: readonly CanvasReportBlock[]): CanvasReportTable {
-  const metricRows = [
+  const metrics = [
     {
       label: "Sample cost",
       labels: ["Sample charge", "Sample cost"],
@@ -369,23 +368,28 @@ function supplierBreakdownTable(supplierBlocks: readonly CanvasReportBlock[]): C
       mode: "max" as const,
     },
   ];
-
-  return {
-    columns: supplierBlocks.map((block) => block.title),
-    rows: metricRows.map((row) => {
-      const values = supplierBlocks.map((block) => detailValue(block, row.labels));
-      return {
-        label: row.label,
-        values: values.map((value) => value?.raw ?? "—"),
-        total: totalTableValue(
-          values.filter(
+  const supplierRows = supplierBlocks.map((block) => ({
+    label: block.title,
+    values: metrics.map((metric) => detailValue(block, metric.labels)?.raw ?? "—"),
+  }));
+  const totalRow = {
+    label: "Total",
+    values: metrics.map((metric) =>
+      totalTableValue(
+        supplierBlocks
+          .map((block) => detailValue(block, metric.labels))
+          .filter(
             (value): value is { raw: string; parsed: ReturnType<typeof parseQuantityAmount> } =>
               value !== null,
           ),
-          row.mode,
-        ),
-      };
-    }),
+        metric.mode,
+      ),
+    ),
+  };
+
+  return {
+    columns: metrics.map((metric) => metric.label),
+    rows: [...supplierRows, totalRow],
   };
 }
 
@@ -408,14 +412,14 @@ function nodeTitle(node: CanvasNode | undefined): string {
 function blockHtml(block: CanvasReportBlock): string {
   const isSupplierBreakdown = block.id === "supplier-total-breakdown";
   const supplierTable = block.table
-    ? `<table class="supplier-matrix"><thead><tr><th>Item</th>${block.table.columns
+    ? `<table class="supplier-matrix"><thead><tr><th>Supplier</th>${block.table.columns
         .map((column) => `<th>${escapeHtml(column)}</th>`)
-        .join("")}<th>Total</th></tr></thead><tbody>${block.table.rows
+        .join("")}</tr></thead><tbody>${block.table.rows
         .map(
           (row) =>
             `<tr><th>${escapeHtml(row.label)}</th>${row.values
               .map((value) => `<td>${lineBreaks(value)}</td>`)
-              .join("")}<td class="matrix-total">${lineBreaks(row.total)}</td></tr>`,
+              .join("")}</tr>`,
         )
         .join("")}</tbody></table>`
     : "";
@@ -452,7 +456,7 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
     .supplier-matrix th,.supplier-matrix td{border:1px solid #eadfca;padding:8px;text-align:left}
     .supplier-matrix thead th{background:#f5ead0;color:#111;font-weight:700}
     .supplier-matrix tbody th{background:#fff8ea;color:#333;font-weight:700}
-    .supplier-matrix .matrix-total{background:#fff4d8;font-weight:700}
+    .supplier-matrix tbody tr:last-child th,.supplier-matrix tbody tr:last-child td{background:#fff4d8;font-weight:700}
     .image{min-height:160px;background:#f1f1ef;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#777;font-size:12px}
     img{max-width:100%;max-height:260px;object-fit:contain}
     .page-break{break-before:page;border-top:1px solid #ddd;margin-top:32px;padding-top:8px}
@@ -497,10 +501,8 @@ function makeText(report: Omit<CanvasReport, "html" | "text">): string {
     for (const block of section.blocks) {
       lines.push(`- ${block.title}`);
       if (block.table) {
-        lines.push(["Item", ...block.table.columns, "Total"].join(" | "));
-        block.table.rows.forEach((row) =>
-          lines.push([row.label, ...row.values, row.total].join(" | ")),
-        );
+        lines.push(["Supplier", ...block.table.columns].join(" | "));
+        block.table.rows.forEach((row) => lines.push([row.label, ...row.values].join(" | ")));
       }
       block.details.forEach((detail) => lines.push(`  ${detail.label}: ${detail.value}`));
       if (block.image?.url) lines.push(`  Image: ${block.image.url}`);
