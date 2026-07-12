@@ -56,6 +56,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCanvas } from "@/lib/hooks/use-canvas";
+import { useGenericNodeDefinitions } from "@/lib/hooks/use-workspace-records";
 import {
   normalizeImageGenerationModel,
   normalizeImageGenerationOutputFormat,
@@ -67,6 +68,12 @@ import {
   type ImageGenerationOutputFormat,
 } from "@/lib/image-generation-models";
 import { getCanvasStore } from "@/lib/store";
+import {
+  createGenericPresetNode,
+  PALETTE_DRAG_MIME_TYPE,
+  parsePaletteDragPayload,
+  sortGenericNodeDefinitions,
+} from "@/lib/nodes/palette";
 import { createNode } from "@/lib/nodes/registry";
 import {
   colorForNodeType,
@@ -77,6 +84,7 @@ import {
 } from "@/lib/nodes/ports";
 import type { CanvasContent, CanvasEdge, CanvasNode, NodeType } from "@/lib/nodes/types";
 import { cn } from "@/lib/utils";
+import type { GenericNodeDefinition } from "@/lib/workspace-settings";
 import {
   CanvasActionsContext,
   ConnectionHighlightContext,
@@ -131,6 +139,10 @@ type PendingGroupMembershipChange =
       groupId: string;
       center: XYPosition;
     };
+
+type NodeCreationRequest =
+  | { kind: "registered-node"; type: NodeType }
+  | { kind: "generic-preset"; definition: GenericNodeDefinition };
 
 function getClientPoint(event: MouseEvent | TouchEvent): ClientPoint | null {
   if ("changedTouches" in event) {
@@ -493,7 +505,10 @@ function findConnectedInputReferences(
         typeof node.data.name === "string" && node.data.name.trim() ? node.data.name.trim() : null;
       const code =
         typeof node.data.code === "string" && node.data.code.trim() ? node.data.code.trim() : null;
-      const alias = name ?? code ?? "pantone";
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : (name ?? code ?? "pantone");
       const label = name
         ? name
             .split("-")
@@ -551,6 +566,15 @@ function Editor({
   onBack?: () => void;
 }) {
   const { data: canvas, isLoading } = useCanvas(canvasId);
+  const genericNodeDefinitionsQuery = useGenericNodeDefinitions();
+  const genericNodeDefinitions = useMemo(
+    () => sortGenericNodeDefinitions(genericNodeDefinitionsQuery.data ?? []),
+    [genericNodeDefinitionsQuery.data],
+  );
+  const genericNodeDefinitionsById = useMemo(
+    () => new Map(genericNodeDefinitions.map((definition) => [definition.id, definition] as const)),
+    [genericNodeDefinitions],
+  );
   const [nodes, setNodes] = useNodesState<CanvasNode>([]);
   const [edges, setEdges] = useEdgesState<CanvasEdge>([]);
   const nodesRef = useRef<CanvasNode[]>([]);
@@ -965,7 +989,8 @@ function Editor({
         if (!node?.parentId) return current;
         sourceGroupId = node.parentId;
         const measured = rectOf(getInternalNode(nodeId));
-        const center = centerOverride ?? (measured ? { x: measured.cx, y: measured.cy } : node.position);
+        const center =
+          centerOverride ?? (measured ? { x: measured.cx, y: measured.cy } : node.position);
         const detachedNodes = current.map((candidate) => {
           if (candidate.id !== nodeId) return candidate;
           const detached = { ...candidate, position: center };
@@ -1039,10 +1064,7 @@ function Editor({
         pendingGroupMembershipChange.center,
       );
     } else {
-      detachNodeFromGroup(
-        pendingGroupMembershipChange.nodeId,
-        pendingGroupMembershipChange.center,
-      );
+      detachNodeFromGroup(pendingGroupMembershipChange.nodeId, pendingGroupMembershipChange.center);
     }
     setPendingGroupMembershipChange(null);
   }
@@ -1314,7 +1336,11 @@ function Editor({
 
   const disconnectGroupNode = useCallback(
     (id: string) => {
-      const childIds = new Set(getNodes().filter((node) => node.parentId === id).map((node) => node.id));
+      const childIds = new Set(
+        getNodes()
+          .filter((node) => node.parentId === id)
+          .map((node) => node.id),
+      );
       if (childIds.size === 0) {
         toast.info("This group has no child nodes to disconnect.");
         return;
@@ -1396,15 +1422,19 @@ function Editor({
   );
 
   const addNodeAtPosition = useCallback(
-    (type: NodeType, position: XYPosition) => {
+    (request: NodeCreationRequest, position: XYPosition) => {
+      const type = request.kind === "registered-node" ? request.type : "imageInput";
       let targetGroupId: string | null = null;
       if (type !== "group") {
         targetGroupId = findGroupAtPosition(position);
       }
-      const node = createNode(
-        type,
-        targetGroupId ? position : findNewNodePosition(position, nodesRef.current),
-      );
+      const nodePosition = targetGroupId
+        ? position
+        : findNewNodePosition(position, nodesRef.current);
+      const node =
+        request.kind === "generic-preset"
+          ? createGenericPresetNode(request.definition, nodePosition)
+          : createNode(type, nodePosition);
       setCanvasNodes((nds) => appendSelectedNode(nds, node));
       if (targetGroupId) {
         setPendingGroupMembershipChange({
@@ -1414,7 +1444,7 @@ function Editor({
           center: position,
         });
       }
-      if (nodeNeedsInitialFieldFocus(type)) {
+      if (request.kind === "registered-node" && nodeNeedsInitialFieldFocus(type)) {
         focusNewNodeField(node.id);
       }
     },
@@ -1427,7 +1457,18 @@ function Editor({
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
-      addNodeAtPosition(type, position);
+      addNodeAtPosition({ kind: "registered-node", type }, position);
+    },
+    [addNodeAtPosition, screenToFlowPosition],
+  );
+
+  const addGenericNodeAtCenter = useCallback(
+    (definition: GenericNodeDefinition) => {
+      const position = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      addNodeAtPosition({ kind: "generic-preset", definition }, position);
     },
     [addNodeAtPosition, screenToFlowPosition],
   );
@@ -1436,22 +1477,32 @@ function Editor({
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       setDragOverGroupId(null);
-      const type = event.dataTransfer.getData("application/ica-node") as NodeType;
-      if (!type) return;
+      const payload = parsePaletteDragPayload(event.dataTransfer.getData(PALETTE_DRAG_MIME_TYPE));
+      if (!payload) return;
       const position = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
       });
-      addNodeAtPosition(type, position);
+      if (payload.kind === "registered-node") {
+        addNodeAtPosition(payload, position);
+        return;
+      }
+
+      const definition = genericNodeDefinitionsById.get(payload.definitionId);
+      if (!definition) {
+        toast.error("This generic node is no longer available.");
+        return;
+      }
+      addNodeAtPosition({ kind: "generic-preset", definition }, position);
     },
-    [addNodeAtPosition, screenToFlowPosition],
+    [addNodeAtPosition, genericNodeDefinitionsById, screenToFlowPosition],
   );
 
   const onDragOverCanvas = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
-      const type = event.dataTransfer.types.includes("application/ica-node");
+      const type = event.dataTransfer.types.includes(PALETTE_DRAG_MIME_TYPE);
       if (!type) {
         setDragOverGroupId(null);
         return;
@@ -1753,7 +1804,14 @@ function Editor({
 
       <div className="flex min-h-0 flex-1">
         <CanvasActionsContext.Provider value={actions}>
-          <NodePalette nodes={nodes} onAdd={addNodeAtCenter} />
+          <NodePalette
+            nodes={nodes}
+            onAdd={addNodeAtCenter}
+            genericNodeDefinitions={genericNodeDefinitions}
+            genericNodeDefinitionsLoading={genericNodeDefinitionsQuery.isLoading}
+            genericNodeDefinitionsError={genericNodeDefinitionsQuery.isError}
+            onAddGenericNode={addGenericNodeAtCenter}
+          />
           <ReferenceHoverContext.Provider value={referenceHover}>
             <ConnectionHighlightContext.Provider value={connectionHighlight}>
               <div

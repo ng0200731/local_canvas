@@ -47,6 +47,8 @@ export interface InputNodeData {
   alias: string;
   imageUrl: string | null;
   storagePath?: string | null;
+  genericDefinitionId?: string;
+  genericDefinitionName?: string;
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
   height?: number;
@@ -125,6 +127,7 @@ export interface ActionNodeData {
 }
 
 export interface PantoneNodeData {
+  alias: string;
   query: string;
   code: string | null;
   name: string | null;

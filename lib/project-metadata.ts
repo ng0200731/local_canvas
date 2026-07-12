@@ -97,9 +97,11 @@ export function mergeProjectMetadata(
   description: string | null,
 ): ProjectMetadata {
   const legacy = parseLegacyProjectDescription(description);
+  const definedCurrent = Object.fromEntries(
+    Object.entries(current).filter((entry) => entry[1] !== undefined),
+  );
   const candidate = Object.fromEntries(
-    Object.entries({ ...legacy, ...current }).map(([key, value]) => [key, value ?? null]),
+    Object.entries({ ...legacy, ...definedCurrent }).map(([key, value]) => [key, value ?? null]),
   );
   return projectMetadataSchema.parse(candidate);
 }
-

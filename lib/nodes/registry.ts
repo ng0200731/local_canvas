@@ -133,6 +133,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     description: "Find Pantone library colors",
     palette: true,
     defaultData: () => ({
+      alias: "pantone",
       query: "",
       code: null,
       name: null,

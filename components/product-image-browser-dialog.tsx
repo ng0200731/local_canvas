@@ -27,7 +27,7 @@ import {
   getProductImageGalleryItems,
   type ProductImageGalleryItem,
 } from "@/lib/product-image-gallery";
-import { supplierProductTypeLabels, type ProductRecord } from "@/lib/workspace-records";
+import { getWorkspaceProductTypeLabel, type ProductRecord } from "@/lib/workspace-records";
 import { cn } from "@/lib/utils";
 
 interface ProductImageBrowserDialogProps {
@@ -171,39 +171,39 @@ function ProductDetails({
   return (
     <aside className="bg-card flex min-h-0 flex-col gap-3 rounded-md border p-4">
       <div className="flex flex-wrap gap-1">
-        <Badge variant="secondary">{supplierProductTypeLabels[item.product.productType]}</Badge>
+        <Badge variant="secondary">{getWorkspaceProductTypeLabel(item.product.productType)}</Badge>
         <Badge variant="outline">Variant {item.variantIndex + 1}</Badge>
       </div>
       <div>
-        <p className="text-xs text-muted-foreground">Internal code</p>
+        <p className="text-muted-foreground text-xs">Internal code</p>
         <p className="font-medium">{item.product.subject}</p>
       </div>
       <div>
-        <p className="text-xs text-muted-foreground">Details</p>
+        <p className="text-muted-foreground text-xs">Details</p>
         <p className="text-sm leading-5">{item.product.detail}</p>
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div>
-          <p className="text-xs text-muted-foreground">Material</p>
+          <p className="text-muted-foreground text-xs">Material</p>
           <p>{item.variant.material || "Unknown"}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Color</p>
+          <p className="text-muted-foreground text-xs">Color</p>
           <p>{item.variant.colorNotes || "Unknown"}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Price</p>
+          <p className="text-muted-foreground text-xs">Price</p>
           <p>
             {item.variant.unitPrice} {item.variant.priceUnit}
           </p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Image</p>
+          <p className="text-muted-foreground text-xs">Image</p>
           <p className="truncate">{item.variant.image.name}</p>
         </div>
       </div>
       <div className="min-h-0 overflow-y-auto rounded-md border p-2">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">Parameters</p>
+        <p className="text-muted-foreground mb-2 text-xs font-medium">Parameters</p>
         <div className="grid gap-1 text-xs">
           {Object.entries(item.variant.parameters).length ? (
             Object.entries(item.variant.parameters).map(([key, value]) => (
@@ -368,7 +368,7 @@ export function ProductImageBrowserDialog({
                         key={item.id}
                         type="button"
                         className={cn(
-                          "bg-muted group relative overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "bg-muted group focus-visible:ring-ring relative overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2",
                           selectedItemId === item.id && "ring-primary ring-2",
                         )}
                         onClick={() => {

@@ -15,6 +15,32 @@ describe("localCanvasStore", () => {
     expect(list[1].id).toBe(a.id);
   });
 
+  it("persists structured project customer, contact, currency, and destination fields", async () => {
+    const project = await localCanvasStore.createProject({
+      name: "Harborline launch",
+      customerId: "customer-1",
+      customerName: "Harborline Retail Ltd.",
+      employeeId: "employee-1",
+      employeeName: "Mia Chen 2",
+      employeeTitle: "Merchandising Manager",
+      employeeEmail: "eric.brilliant@gmail.com",
+      employeeTel: "+86 755 8821 1042",
+      currencyCode: "USD",
+      currencyName: "US Dollar",
+      currencySymbol: "$",
+      destinationCountryCode: "US",
+      destinationCountryName: "United States",
+    });
+
+    const saved = await localCanvasStore.getProject(project.id);
+    expect(saved).toMatchObject({
+      customerName: "Harborline Retail Ltd.",
+      employeeEmail: "eric.brilliant@gmail.com",
+      currencyCode: "USD",
+      destinationCountryCode: "US",
+    });
+  });
+
   it("creates a canvas with empty content", async () => {
     const p = await localCanvasStore.createProject({ name: "P" });
     const c = await localCanvasStore.createCanvas({

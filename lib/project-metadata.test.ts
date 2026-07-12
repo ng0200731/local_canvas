@@ -43,4 +43,3 @@ describe("project metadata", () => {
     ).toBe("new@example.com");
   });
 });
-

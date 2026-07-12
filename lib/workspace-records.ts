@@ -18,7 +18,76 @@ export const supplierProductTypes = [
 
 export type SupplierProductType = (typeof supplierProductTypes)[number];
 
+export const customerProductTypeGroups = [
+  {
+    label: "Upper Garments (Tops)",
+    types: ["shirt", "blouse", "t-shirt", "sweater", "tank-top", "cardigan"],
+  },
+  {
+    label: "Lower Garments (Bottoms)",
+    types: ["pants", "jeans", "skirt", "shorts", "leggings", "trousers"],
+  },
+  {
+    label: "Whole-Body Garments",
+    types: ["dress", "jumpsuit", "romper", "overalls"],
+  },
+  {
+    label: "Outerwear",
+    types: ["coat", "jacket", "hoodie", "raincoat", "parka", "blazer"],
+  },
+  {
+    label: "Foundation & Innerwear",
+    types: ["bra", "briefs", "boxers", "undershirt", "socks", "corset"],
+  },
+  {
+    label: "Functional & Special Wear",
+    types: ["swimsuit", "uniform", "apron", "scrub", "sportswear"],
+  },
+] as const;
+
+export const customerProductTypes = customerProductTypeGroups.flatMap((group) => group.types);
+export type CustomerProductType = (typeof customerProductTypes)[number];
+export type WorkspaceProductType = SupplierProductType | CustomerProductType;
+export type ProductOwnerKind = "supplier" | "customer";
+
+export const customerProductTypeLabels: Record<CustomerProductType, string> = {
+  shirt: "Shirt",
+  blouse: "Blouse",
+  "t-shirt": "T-shirt",
+  sweater: "Sweater",
+  "tank-top": "Tank top",
+  cardigan: "Cardigan",
+  pants: "Pants",
+  jeans: "Jeans",
+  skirt: "Skirt",
+  shorts: "Shorts",
+  leggings: "Leggings",
+  trousers: "Trousers",
+  dress: "Dress",
+  jumpsuit: "Jumpsuit",
+  romper: "Romper",
+  overalls: "Overalls",
+  coat: "Coat",
+  jacket: "Jacket",
+  hoodie: "Hoodie",
+  raincoat: "Raincoat",
+  parka: "Parka",
+  blazer: "Blazer",
+  bra: "Bra",
+  briefs: "Briefs",
+  boxers: "Boxers",
+  undershirt: "Undershirt",
+  socks: "Socks",
+  corset: "Corset",
+  swimsuit: "Swimsuit",
+  uniform: "Uniform",
+  apron: "Apron",
+  scrub: "Scrub",
+  sportswear: "Sportswear",
+};
+
 export const defaultSupplierProductType = "woven-label" satisfies SupplierProductType;
+export const defaultCustomerProductType = "shirt" satisfies CustomerProductType;
 
 export const supplierProductTypeLabels: Record<SupplierProductType, string> = {
   "woven-label": "Woven label",
@@ -55,11 +124,35 @@ export function normalizeSupplierProductTypes(values: readonly string[]): Suppli
   return Array.from(new Set(normalized));
 }
 
-export function normalizeSupplierProductType(value: string | null | undefined): SupplierProductType {
+export function normalizeSupplierProductType(
+  value: string | null | undefined,
+): SupplierProductType {
   return normalizeSupplierProductTypes(value ? [value] : [])[0] ?? defaultSupplierProductType;
 }
 
-export function getProductPriceUnit(productType: SupplierProductType): string {
+export function normalizeCustomerProductType(
+  value: string | null | undefined,
+): CustomerProductType {
+  return customerProductTypes.includes(value as CustomerProductType)
+    ? (value as CustomerProductType)
+    : defaultCustomerProductType;
+}
+
+export function isSupplierProductType(value: string): value is SupplierProductType {
+  return supplierProductTypes.includes(value as SupplierProductType);
+}
+
+export function isCustomerProductType(value: string): value is CustomerProductType {
+  return customerProductTypes.includes(value as CustomerProductType);
+}
+
+export function getWorkspaceProductTypeLabel(productType: WorkspaceProductType): string {
+  return isSupplierProductType(productType)
+    ? supplierProductTypeLabels[productType]
+    : customerProductTypeLabels[productType];
+}
+
+export function getProductPriceUnit(productType: WorkspaceProductType): string {
   if (productType === "elastic" || productType === "drawcord") return "per meter";
   if (productType === "thread") return "per cone";
   if (productType === "polybag") return "per bag";
@@ -124,13 +217,58 @@ export const productVariantRecordSchema = productVariantInputSchema.extend({
   image: productImageSchema.nullable(),
 });
 
-export const productRecordInputSchema = z.object({
-  supplierId: z.string().trim().min(1, "Supplier is required."),
-  productType: z.enum(supplierProductTypes),
-  subject: z.string().trim().min(1, "Subject is required."),
-  detail: z.string().trim().min(1, "Product detail is required."),
-  variants: z.array(productVariantInputSchema).min(1, "Add at least one product image."),
-});
+export const productRecordInputSchema = z
+  .object({
+    ownerKind: z.enum(["supplier", "customer"]).default("supplier"),
+    supplierId: z.string().trim().min(1).nullable().optional(),
+    customerId: z.string().trim().min(1).nullable().optional(),
+    projectId: z.string().trim().min(1).nullable().optional(),
+    productType: z.union([z.enum(supplierProductTypes), z.enum(customerProductTypes)]),
+    subject: z.string().trim().min(1, "Subject is required."),
+    detail: z.string().trim().min(1, "Product detail is required."),
+    variants: z.array(productVariantInputSchema).min(1, "Add at least one product image."),
+  })
+  .superRefine((value, context) => {
+    if (value.ownerKind === "supplier") {
+      if (!value.supplierId) {
+        context.addIssue({
+          code: "custom",
+          path: ["supplierId"],
+          message: "Supplier is required.",
+        });
+      }
+      if (!isSupplierProductType(value.productType)) {
+        context.addIssue({
+          code: "custom",
+          path: ["productType"],
+          message: "Choose a supplier product type.",
+        });
+      }
+      return;
+    }
+
+    if (!value.customerId) {
+      context.addIssue({
+        code: "custom",
+        path: ["customerId"],
+        message: "Customer is required.",
+      });
+    }
+    if (!value.projectId) {
+      context.addIssue({
+        code: "custom",
+        path: ["projectId"],
+        message: "Choose a project for this customer.",
+      });
+    }
+    if (!isCustomerProductType(value.productType)) {
+      context.addIssue({
+        code: "custom",
+        path: ["productType"],
+        message: "Choose a customer garment type.",
+      });
+    }
+  });
 
 export const productSchema = productRecordInputSchema;
 
@@ -139,7 +277,7 @@ export type SupplierCompanyInput = z.infer<typeof supplierCompanySchema>;
 export type EmployeeInput = z.infer<typeof employeeSchema>;
 export type ProductImageInput = z.infer<typeof productImageSchema>;
 export type ProductVariantInput = z.infer<typeof productVariantInputSchema>;
-export type ProductInput = z.infer<typeof productSchema>;
+export type ProductInput = z.input<typeof productSchema>;
 
 export interface EmployeeRecord extends EmployeeInput {
   id: string;
@@ -167,8 +305,11 @@ export interface ProductVariantRecord extends Omit<ProductVariantInput, "image">
 
 export interface ProductRecord {
   id: string;
+  ownerKind: ProductOwnerKind;
   supplierId: string | null;
-  productType: SupplierProductType;
+  customerId: string | null;
+  projectId: string | null;
+  productType: WorkspaceProductType;
   subject: string;
   detail: string;
   variants: ProductVariantRecord[];
@@ -188,23 +329,20 @@ export const supplierRecordInputSchema = z.object({
 
 export type CustomerRecordInput = z.infer<typeof customerRecordInputSchema>;
 export type SupplierRecordInput = z.infer<typeof supplierRecordInputSchema>;
-export type ProductRecordInput = z.infer<typeof productRecordInputSchema>;
+export type ProductRecordInput = z.input<typeof productRecordInputSchema>;
 export type ProductVariantRecordInput = z.infer<typeof productVariantRecordSchema>;
 
 function normalizeProductUnitPrice(value: unknown): string {
   return typeof value === "string" && value.trim() ? value : "0";
 }
 
-function normalizeProductPriceUnit(
-  value: unknown,
-  productType: SupplierProductType,
-): string {
+function normalizeProductPriceUnit(value: unknown, productType: WorkspaceProductType): string {
   return typeof value === "string" && value.trim() ? value : getProductPriceUnit(productType);
 }
 
 export function normalizeProductVariant(
   value: unknown,
-  fallbackProductType: SupplierProductType,
+  fallbackProductType: WorkspaceProductType,
   fallbackSortIndex = 0,
 ): ProductVariantRecord {
   const candidate =
@@ -222,7 +360,10 @@ export function normalizeProductVariant(
     parameters: normalizeProductParameters(candidate.parameters),
     unitPrice: normalizeProductUnitPrice(candidate.unitPrice),
     priceUnit: normalizeProductPriceUnit(candidate.priceUnit, fallbackProductType),
-    image: productImageSchema.nullable().catch(null).parse(candidate.image ?? null),
+    image: productImageSchema
+      .nullable()
+      .catch(null)
+      .parse(candidate.image ?? null),
   });
 
   return parsed.success
@@ -244,9 +385,16 @@ export function normalizeProductRecord(value: unknown): ProductRecord {
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  const productType = normalizeSupplierProductType(
-    typeof candidate.productType === "string" ? candidate.productType : null,
-  );
+  const ownerKind: ProductOwnerKind =
+    candidate.ownerKind === "customer" ||
+    (typeof candidate.customerId === "string" && candidate.customerId.trim())
+      ? "customer"
+      : "supplier";
+  const rawProductType = typeof candidate.productType === "string" ? candidate.productType : null;
+  const productType: WorkspaceProductType =
+    ownerKind === "customer"
+      ? normalizeCustomerProductType(rawProductType)
+      : normalizeSupplierProductType(rawProductType);
   const variantsValue = Array.isArray(candidate.variants) ? candidate.variants : [];
   const variants =
     variantsValue.length > 0
@@ -270,9 +418,18 @@ export function normalizeProductRecord(value: unknown): ProductRecord {
 
   return {
     id: typeof candidate.id === "string" ? candidate.id : "",
+    ownerKind,
     supplierId:
       typeof candidate.supplierId === "string" && candidate.supplierId.trim()
         ? candidate.supplierId
+        : null,
+    customerId:
+      typeof candidate.customerId === "string" && candidate.customerId.trim()
+        ? candidate.customerId
+        : null,
+    projectId:
+      typeof candidate.projectId === "string" && candidate.projectId.trim()
+        ? candidate.projectId
         : null,
     productType,
     subject: typeof candidate.subject === "string" ? candidate.subject : "",

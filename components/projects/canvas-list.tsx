@@ -18,16 +18,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateCanvasDialog } from "@/components/projects/create-canvas-dialog";
 import { useCanvases, useDeleteCanvas } from "@/lib/hooks/use-canvases";
+import { useProject } from "@/lib/hooks/use-projects";
 import { formatDate } from "@/lib/format";
 import { getCanvasStore, type Canvas, type ImageRecord } from "@/lib/store";
 
-function SendCanvasDialog({
-  canvas,
-  projectId,
-}: {
-  canvas: Canvas;
-  projectId: string;
-}) {
+function SendCanvasDialog({ canvas }: { canvas: Canvas }) {
   const [open, setOpen] = useState(false);
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
@@ -99,9 +94,7 @@ function SendCanvasDialog({
                     }`}
                     onClick={() =>
                       setSelectedImageIds((current) =>
-                        selected
-                          ? current.filter((id) => id !== image.id)
-                          : [...current, image.id],
+                        selected ? current.filter((id) => id !== image.id) : [...current, image.id],
                       )
                     }
                   >
@@ -126,7 +119,7 @@ function SendCanvasDialog({
           {sentRecords.length ? (
             <div className="rounded-md border p-3">
               <p className="mb-2 text-sm font-medium">Send out record</p>
-              <div className="grid gap-1 text-xs text-muted-foreground">
+              <div className="text-muted-foreground grid gap-1 text-xs">
                 {sentRecords.map((record) => (
                   <p key={record}>{record}</p>
                 ))}
@@ -170,12 +163,7 @@ function CanvasActions({
   return (
     <div className="flex justify-end gap-2">
       {onOpen ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onOpen(canvas.id)}
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => onOpen(canvas.id)}>
           <ArrowUpRight />
           View/Edit
         </Button>
@@ -190,7 +178,7 @@ function CanvasActions({
           View/Edit
         </Button>
       )}
-      <SendCanvasDialog canvas={canvas} projectId={projectId} />
+      <SendCanvasDialog canvas={canvas} />
       <ConfirmDialog
         title="Delete canvas?"
         description="This permanently deletes the canvas."
@@ -217,6 +205,7 @@ export function CanvasList({
   onCanvasCreated?: (canvasId: string) => void;
 }) {
   const { data: canvases, isLoading, isError, error } = useCanvases(projectId);
+  const project = useProject(projectId);
 
   return (
     <div className="flex flex-col gap-5">
@@ -253,6 +242,7 @@ export function CanvasList({
                   <th className="px-4 py-3">Canvas name</th>
                   <th className="px-4 py-3">Create time</th>
                   <th className="px-4 py-3">Last update</th>
+                  <th className="px-4 py-3">Employer email</th>
                   <th className="px-4 py-3 text-right">Action</th>
                 </tr>
               </thead>
@@ -270,6 +260,20 @@ export function CanvasList({
                     </td>
                     <td className="text-muted-foreground px-4 py-3">
                       {formatDate(canvas.updatedAt)}
+                    </td>
+                    <td className="text-muted-foreground px-4 py-3">
+                      {project.isLoading ? (
+                        <Skeleton className="h-4 w-36" />
+                      ) : project.data?.employeeEmail ? (
+                        <a
+                          href={`mailto:${project.data.employeeEmail}`}
+                          className="hover:text-foreground underline-offset-4 hover:underline"
+                        >
+                          {project.data.employeeEmail}
+                        </a>
+                      ) : (
+                        "Not set"
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <CanvasActions canvas={canvas} projectId={projectId} onOpen={onOpenCanvas} />

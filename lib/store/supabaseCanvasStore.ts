@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { EMPTY_CANVAS_CONTENT, NODE_TYPES, type CanvasContent } from "@/lib/nodes/types";
+import { mergeProjectMetadata, type ProjectMetadata } from "@/lib/project-metadata";
 import {
   parseCanvasContent,
   parseCanvasEdge,
@@ -32,6 +33,18 @@ interface ProjectRow {
   id: string;
   name: string;
   description: string | null;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  employee_id?: string | null;
+  employee_name?: string | null;
+  employee_title?: string | null;
+  employee_email?: string | null;
+  employee_tel?: string | null;
+  currency_code?: string | null;
+  currency_name?: string | null;
+  currency_symbol?: string | null;
+  destination_country_code?: string | null;
+  destination_country_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -69,6 +82,18 @@ const projectRowSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullable(),
+  customer_id: z.string().nullable().optional(),
+  customer_name: z.string().nullable().optional(),
+  employee_id: z.string().nullable().optional(),
+  employee_name: z.string().nullable().optional(),
+  employee_title: z.string().nullable().optional(),
+  employee_email: z.string().nullable().optional(),
+  employee_tel: z.string().nullable().optional(),
+  currency_code: z.string().nullable().optional(),
+  currency_name: z.string().nullable().optional(),
+  currency_symbol: z.string().nullable().optional(),
+  destination_country_code: z.string().nullable().optional(),
+  destination_country_name: z.string().nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -129,14 +154,63 @@ const canvasEdgeRowSchema = z.object({
 
 const mapProject = (value: unknown): Project => {
   const r: ProjectRow = projectRowSchema.parse(value);
+  const metadata = mergeProjectMetadata(
+    {
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      employeeId: r.employee_id,
+      employeeName: r.employee_name,
+      employeeTitle: r.employee_title,
+      employeeEmail: r.employee_email,
+      employeeTel: r.employee_tel,
+      currencyCode: r.currency_code,
+      currencyName: r.currency_name,
+      currencySymbol: r.currency_symbol,
+      destinationCountryCode: r.destination_country_code,
+      destinationCountryName: r.destination_country_name,
+    },
+    r.description,
+  );
   return {
     id: r.id,
     name: r.name,
     description: r.description,
+    ...metadata,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 };
+
+const PROJECT_COLUMNS =
+  "id, name, description, customer_id, customer_name, employee_id, employee_name, employee_title, employee_email, employee_tel, currency_code, currency_name, currency_symbol, destination_country_code, destination_country_name, created_at, updated_at";
+const LEGACY_PROJECT_COLUMNS = "id, name, description, created_at, updated_at";
+
+function isProjectMetadataSchemaMismatch(message: string): boolean {
+  return [
+    "customer_id",
+    "customer_name",
+    "employee_id",
+    "currency_code",
+    "destination_country_code",
+  ].some((column) => message.includes(column));
+}
+
+function metadataColumns(metadata: ProjectMetadata): Record<string, string | null> {
+  return {
+    customer_id: metadata.customerId,
+    customer_name: metadata.customerName,
+    employee_id: metadata.employeeId,
+    employee_name: metadata.employeeName,
+    employee_title: metadata.employeeTitle,
+    employee_email: metadata.employeeEmail,
+    employee_tel: metadata.employeeTel,
+    currency_code: metadata.currencyCode,
+    currency_name: metadata.currencyName,
+    currency_symbol: metadata.currencySymbol,
+    destination_country_code: metadata.destinationCountryCode,
+    destination_country_name: metadata.destinationCountryName,
+  };
+}
 
 const mapCanvas = (value: unknown, content?: CanvasContent): Canvas => {
   const r: CanvasRow = canvasRowSchema.parse(value);
@@ -275,51 +349,100 @@ export function createSupabaseCanvasStore(): CanvasStore {
   return {
     // ── Projects ────────────────────────────────────────────────────────
     async listProjects() {
-      const { data, error } = await supabase
+      const query = await supabase
         .from("projects")
-        .select("id, name, description, created_at, updated_at")
+        .select(PROJECT_COLUMNS)
         .order("updated_at", { ascending: false });
-      assertNoError({ error }, "listProjects");
-      return toUnknownArray(data).map(mapProject);
+      if (!query.error) return toUnknownArray(query.data).map(mapProject);
+      if (!isProjectMetadataSchemaMismatch(query.error.message)) {
+        assertNoError({ error: query.error }, "listProjects");
+      }
+      const legacy = await supabase
+        .from("projects")
+        .select(LEGACY_PROJECT_COLUMNS)
+        .order("updated_at", { ascending: false });
+      assertNoError({ error: legacy.error }, "listProjects");
+      return toUnknownArray(legacy.data).map(mapProject);
     },
 
     async getProject(id) {
-      const { data, error } = await supabase
+      const query = await supabase
         .from("projects")
-        .select("id, name, description, created_at, updated_at")
+        .select(PROJECT_COLUMNS)
         .eq("id", id)
         .maybeSingle();
-      assertNoError({ error }, "getProject");
-      return data ? mapProject(data) : null;
+      if (!query.error) return query.data ? mapProject(query.data) : null;
+      if (!isProjectMetadataSchemaMismatch(query.error.message)) {
+        assertNoError({ error: query.error }, "getProject");
+      }
+      const legacy = await supabase
+        .from("projects")
+        .select(LEGACY_PROJECT_COLUMNS)
+        .eq("id", id)
+        .maybeSingle();
+      assertNoError({ error: legacy.error }, "getProject");
+      return legacy.data ? mapProject(legacy.data) : null;
     },
 
     async createProject(input: CreateProjectInput) {
       const userId = await getCurrentUserId();
-      const { data, error } = await supabase
+      const description = input.description?.trim() ?? null;
+      const metadata = mergeProjectMetadata(input, description);
+      const query = await supabase
         .from("projects")
         .insert({
           user_id: userId,
           name: input.name.trim(),
-          description: input.description?.trim() ?? null,
+          description,
+          ...metadataColumns(metadata),
         })
-        .select("id, name, description, created_at, updated_at")
+        .select(PROJECT_COLUMNS)
         .single();
-      assertNoError({ error }, "createProject");
-      return mapProject(data);
+      if (!query.error) return mapProject(query.data);
+      if (!isProjectMetadataSchemaMismatch(query.error.message)) {
+        assertNoError({ error: query.error }, "createProject");
+      }
+      const legacy = await supabase
+        .from("projects")
+        .insert({ user_id: userId, name: input.name.trim(), description })
+        .select(LEGACY_PROJECT_COLUMNS)
+        .single();
+      assertNoError({ error: legacy.error }, "createProject");
+      return mapProject(legacy.data);
     },
 
     async updateProject(id, input: ProjectUpdate) {
       const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
       if (input.name !== undefined) patch.name = input.name;
       if (input.description !== undefined) patch.description = input.description;
-      const { data, error } = await supabase
+      const current = await this.getProject(id);
+      if (!current) throw new Error("Project not found");
+      const metadata = mergeProjectMetadata(
+        { ...current, ...input },
+        input.description ?? current.description,
+      );
+      Object.assign(patch, metadataColumns(metadata));
+      const query = await supabase
         .from("projects")
         .update(patch)
         .eq("id", id)
-        .select("id, name, description, created_at, updated_at")
+        .select(PROJECT_COLUMNS)
         .single();
-      assertNoError({ error }, "updateProject");
-      return mapProject(data);
+      if (!query.error) return mapProject(query.data);
+      if (!isProjectMetadataSchemaMismatch(query.error.message)) {
+        assertNoError({ error: query.error }, "updateProject");
+      }
+      const legacyPatch: Record<string, unknown> = { updated_at: patch.updated_at };
+      if (input.name !== undefined) legacyPatch.name = input.name;
+      if (input.description !== undefined) legacyPatch.description = input.description;
+      const legacy = await supabase
+        .from("projects")
+        .update(legacyPatch)
+        .eq("id", id)
+        .select(LEGACY_PROJECT_COLUMNS)
+        .single();
+      assertNoError({ error: legacy.error }, "updateProject");
+      return mapProject(legacy.data);
     },
 
     async deleteProject(id) {

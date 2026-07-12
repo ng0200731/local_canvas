@@ -1,6 +1,7 @@
 "use client";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import { ProjectMetadataSummary } from "@/components/projects/project-metadata-summary";
 import { useProject } from "@/lib/hooks/use-projects";
 
 export function ProjectHeader({ projectId }: { projectId: string }) {
@@ -19,9 +20,7 @@ export function ProjectHeader({ projectId }: { projectId: string }) {
     <div className="flex flex-col gap-2">
       <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">Project</p>
       <h1 className="text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
-      {project?.description && (
-        <p className="text-muted-foreground max-w-2xl text-sm leading-6">{project.description}</p>
-      )}
+      {project ? <ProjectMetadataSummary project={project} className="mt-2" /> : null}
     </div>
   );
 }

@@ -91,6 +91,11 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
 
   const imageUrl = data.imageUrl;
   const alias = data.alias.trim() || "image";
+  const genericDefinitionName =
+    typeof data.genericDefinitionName === "string" && data.genericDefinitionName.trim()
+      ? data.genericDefinitionName.trim()
+      : null;
+  const HeaderIcon = genericDefinitionName ? ImageIcon : Upload;
   const isReferenceHovered = hoveredReferenceNodeId === id;
 
   return (
@@ -112,15 +117,17 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
       <NodeDeleteButton id={id} />
       <InputPort color={NODE_PORT_COLORS.imageInput} />
       <div className="flex items-center gap-2 text-sm font-medium">
-        <Upload className="size-4" />
-        <span>Input</span>
+        <HeaderIcon className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate" title={genericDefinitionName ?? "Input"}>
+          {genericDefinitionName ?? "Input"}
+        </span>
         <Button
           type="button"
           size="icon-sm"
           variant="ghost"
           aria-label="Browse local image"
           title="Browse local image"
-          className="nodrag ml-auto"
+          className="nodrag shrink-0"
           onClick={() => fileInputRef.current?.click()}
         >
           <FolderOpen />

@@ -44,7 +44,7 @@ export const RECOVERY_KEYS = {
 } as const;
 
 const PRODUCT_DB_NAME = "ica:workspace-record-store";
-const PRODUCT_DB_VERSION = 1;
+const PRODUCT_DB_VERSION = 2;
 const PRODUCT_STORE = "products";
 
 type RecoverableCollection = keyof typeof RECOVERY_KEYS;
@@ -81,7 +81,7 @@ async function readIndexedCanvasContent(id: string): Promise<unknown | null> {
   if (!canUseIndexedDb()) return null;
 
   return new Promise((resolve) => {
-    const request = indexedDB.open("ica:local-store", 1);
+    const request = indexedDB.open("ica:local-store", 2);
     request.onerror = () => resolve(null);
     request.onsuccess = () => {
       const db = request.result;
@@ -208,7 +208,10 @@ export async function importLocalRecoveryArchive(value: unknown): Promise<LocalR
 
     const current = parseCollection(localStorage.getItem(RECOVERY_KEYS[name]));
     const incoming = archive[name];
-    localStorage.setItem(RECOVERY_KEYS[name], JSON.stringify(mergeRecoveryRecords(current, incoming)));
+    localStorage.setItem(
+      RECOVERY_KEYS[name],
+      JSON.stringify(mergeRecoveryRecords(current, incoming)),
+    );
   }
   return archive;
 }

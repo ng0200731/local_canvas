@@ -1,4 +1,5 @@
 import { EMPTY_CANVAS_CONTENT, type CanvasContent } from "@/lib/nodes/types";
+import { mergeProjectMetadata } from "@/lib/project-metadata";
 
 import type {
   Canvas,
@@ -197,24 +198,33 @@ function delay<T>(value: T): Promise<T> {
   return Promise.resolve(value);
 }
 
+function normalizeProject(project: Project): Project {
+  return {
+    ...project,
+    ...mergeProjectMetadata(project, project.description),
+  };
+}
+
 export const localCanvasStore: CanvasStore = {
   // ── Projects ──────────────────────────────────────────────────────────
   async listProjects() {
-    const projects = read<Project[]>(KEYS.projects, []);
+    const projects = read<Project[]>(KEYS.projects, []).map(normalizeProject);
     return delay(projects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   },
 
   async getProject(id) {
-    const projects = read<Project[]>(KEYS.projects, []);
+    const projects = read<Project[]>(KEYS.projects, []).map(normalizeProject);
     return delay(projects.find((p) => p.id === id) ?? null);
   },
 
   async createProject(input: CreateProjectInput) {
     const projects = read<Project[]>(KEYS.projects, []);
+    const description = input.description?.trim() ?? null;
     const project: Project = {
       id: uid(),
       name: input.name.trim(),
-      description: input.description?.trim() ?? null,
+      description,
+      ...mergeProjectMetadata(input, description),
       createdAt: nowISO(),
       updatedAt: nowISO(),
     };
@@ -226,12 +236,15 @@ export const localCanvasStore: CanvasStore = {
     const projects = read<Project[]>(KEYS.projects, []);
     const idx = projects.findIndex((p) => p.id === id);
     if (idx === -1) throw new Error("Project not found");
+    const existing = normalizeProject(projects[idx]);
+    const description = input.description !== undefined ? input.description : existing.description;
     const updated: Project = {
-      ...projects[idx],
+      ...existing,
       ...("name" in input && input.name !== undefined ? { name: input.name } : {}),
       ...("description" in input && input.description !== undefined
         ? { description: input.description }
         : {}),
+      ...mergeProjectMetadata({ ...existing, ...input }, description),
       updatedAt: nowISO(),
     };
     projects[idx] = updated;

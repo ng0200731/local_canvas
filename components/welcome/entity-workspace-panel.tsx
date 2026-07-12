@@ -44,10 +44,17 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   customerCompanySchema,
+  customerProductTypeGroups,
+  customerProductTypes,
+  defaultCustomerProductType,
   defaultSupplierProductType,
   employeeSchema,
   getProductPriceUnit,
+  getWorkspaceProductTypeLabel,
   hadAtSymbol,
+  isCustomerProductType,
+  isSupplierProductType,
+  normalizeCustomerProductType,
   normalizeEmailDomainSuffix,
   normalizeSupplierProductTypes,
   normalizeSupplierProductType,
@@ -58,11 +65,13 @@ import {
   type CustomerRecord,
   type CustomerCompanyInput,
   type EmployeeInput,
+  type ProductOwnerKind,
   type ProductRecord,
   type ProductVariantRecord,
   type SupplierCompanyInput,
   type SupplierRecord,
   type SupplierProductType,
+  type WorkspaceProductType,
 } from "@/lib/workspace-records";
 import {
   useCustomers,
@@ -74,6 +83,7 @@ import {
   useUpsertSupplier,
 } from "@/lib/hooks/use-workspace-records";
 import { productRecordSearchText } from "@/lib/product-image-gallery";
+import { useProjects } from "@/lib/hooks/use-projects";
 import { uploadImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 
@@ -98,8 +108,11 @@ interface ProductImageState {
 }
 
 interface ProductFormState {
+  ownerKind: ProductOwnerKind;
   supplierId: string;
-  productType: SupplierProductType;
+  customerId: string;
+  projectId: string;
+  productType: WorkspaceProductType;
   subject: string;
   detail: string;
   variants: ProductVariantFormState[];
@@ -957,26 +970,82 @@ const productParameterTemplates: Record<SupplierProductType, ProductParameterTem
   },
 };
 
-function getDefaultProductParameters(productType: SupplierProductType): Record<string, string> {
+const supplierCommercialParameterFields: ProductParameterField[] = [
+  { key: "sampleCharge", label: "Sample charge", placeholder: "USD 50" },
+  { key: "sampleLeadTime", label: "Sample lead time", placeholder: "7 days" },
+  { key: "bulkLeadTime", label: "Bulk lead time", placeholder: "25 days" },
+];
+
+const customerProductParameterTemplate: ProductParameterTemplate = {
+  fields: [
+    { key: "sizeRange", label: "Size range", placeholder: "XS-XL" },
+    { key: "composition", label: "Composition", placeholder: "100% cotton" },
+    { key: "fabricWeight", label: "Fabric weight", placeholder: "220 gsm" },
+    { key: "fit", label: "Fit", placeholder: "Regular, slim, oversized..." },
+    { key: "construction", label: "Construction", placeholder: "Key seams and finish" },
+  ],
+  dummySets: [
+    {
+      parameters: {
+        sizeRange: "XS-XL",
+        composition: "100% cotton",
+        fabricWeight: "220 gsm",
+        fit: "Regular fit",
+        construction: "Reinforced main seams",
+      },
+      unitPrice: "12.5",
+    },
+    {
+      parameters: {
+        sizeRange: "S-XXL",
+        composition: "80% cotton / 20% recycled polyester",
+        fabricWeight: "280 gsm",
+        fit: "Relaxed fit",
+        construction: "Double-needle cover stitch",
+      },
+      unitPrice: "16.8",
+    },
+  ],
+};
+
+function getProductParameterTemplate(productType: WorkspaceProductType): ProductParameterTemplate {
+  if (!isSupplierProductType(productType)) return customerProductParameterTemplate;
+  const template = productParameterTemplates[productType];
+  return { ...template, fields: [...template.fields, ...supplierCommercialParameterFields] };
+}
+
+function getDefaultProductParameters(productType: WorkspaceProductType): Record<string, string> {
   return Object.fromEntries(
-    productParameterTemplates[productType].fields.map((field) => [field.key, ""]),
+    getProductParameterTemplate(productType).fields.map((field) => [field.key, ""]),
   );
 }
 
 function getProductParameterDummySet(
-  productType: SupplierProductType,
+  productType: WorkspaceProductType,
   index: number,
 ): ProductParameterDummySet {
-  const template = productParameterTemplates[productType];
+  const template = getProductParameterTemplate(productType);
   const combinationIndex = index % 20;
   const dummy = template.dummySets[combinationIndex % template.dummySets.length];
   const productionRuns = ["Prototype", "Low MOQ", "Standard", "Recycled option", "Premium"];
   const packingMethods = ["Bulk packed", "Bundled", "Individual packed", "Export packed"];
-  const fieldToVary = template.fields.at(-1)?.key;
+  const fieldToVary = isSupplierProductType(productType)
+    ? productParameterTemplates[productType].fields.at(-1)?.key
+    : template.fields.at(-1)?.key;
   const variation = `${productionRuns[combinationIndex % productionRuns.length]}, ${packingMethods[Math.floor(combinationIndex / productionRuns.length)]}`;
   const price = Number.parseFloat(dummy.unitPrice);
   const priceMultiplier = 1 + combinationIndex * 0.015;
-  const parameters = { ...getDefaultProductParameters(productType), ...dummy.parameters };
+  const parameters: Record<string, string> = {
+    ...getDefaultProductParameters(productType),
+    ...dummy.parameters,
+    ...(isSupplierProductType(productType)
+      ? {
+          sampleCharge: `USD ${25 + combinationIndex * 5}`,
+          sampleLeadTime: `${5 + (combinationIndex % 5)} days`,
+          bulkLeadTime: `${20 + (combinationIndex % 4) * 5} days`,
+        }
+      : {}),
+  };
 
   if (fieldToVary) {
     parameters[fieldToVary] = `${parameters[fieldToVary]} (${variation})`;
@@ -991,7 +1060,7 @@ function getProductParameterDummySet(
 }
 
 function createProductForm(
-  productType: SupplierProductType,
+  productType: WorkspaceProductType,
   input: Omit<ProductFormState, "productType">,
 ): ProductFormState {
   return {
@@ -1036,13 +1105,17 @@ function normalizeProductDimensions(parameters: Record<string, string>): Record<
 
 function getDummyProduct(
   index: number,
-  availableProductTypes: readonly SupplierProductType[] = supplierProductTypes,
+  availableProductTypes: readonly WorkspaceProductType[] = supplierProductTypes,
+  ownerKind: ProductOwnerKind = "supplier",
 ): ProductFormState {
-  const productTypes = availableProductTypes.length ? availableProductTypes : supplierProductTypes;
-  const productType = productTypes[index % productTypes.length] ?? defaultSupplierProductType;
+  const fallbackTypes = ownerKind === "customer" ? customerProductTypes : supplierProductTypes;
+  const productTypes = availableProductTypes.length ? availableProductTypes : fallbackTypes;
+  const productType =
+    productTypes[index % productTypes.length] ??
+    (ownerKind === "customer" ? defaultCustomerProductType : defaultSupplierProductType);
   const parameterCycle = Math.floor(index / productTypes.length);
   const dummy = getProductParameterDummySet(productType, parameterCycle);
-  const label = supplierProductTypeLabels[productType];
+  const label = getWorkspaceProductTypeLabel(productType);
 
   const variants: ProductVariantFormState[] = [
     {
@@ -1058,7 +1131,10 @@ function getDummyProduct(
   ];
 
   return createProductForm(productType, {
+    ownerKind,
     supplierId: "",
+    customerId: "",
+    projectId: "",
     subject: `${label} sample ${parameterCycle + 1}`,
     detail: `Generic ${label.toLocaleLowerCase()} specification. Confirm construction, tolerance, finishing, packing, and production approval sample before bulk order.`,
     variants,
@@ -1076,7 +1152,8 @@ function getDummySupplierCompany(index: number): SupplierCompanyState {
 }
 
 function emptyProductForm(
-  productType: SupplierProductType = defaultSupplierProductType,
+  productType: WorkspaceProductType = defaultSupplierProductType,
+  ownerKind: ProductOwnerKind = "supplier",
 ): ProductFormState {
   const variants: ProductVariantFormState[] = [
     {
@@ -1092,7 +1169,10 @@ function emptyProductForm(
   ];
 
   return {
+    ownerKind,
     supplierId: "",
+    customerId: "",
+    projectId: "",
     productType,
     subject: "",
     detail: "",
@@ -1139,7 +1219,10 @@ function setVariantField(
 
 function buildProductInput(form: ProductFormState) {
   return {
-    supplierId: form.supplierId,
+    ownerKind: form.ownerKind,
+    supplierId: form.ownerKind === "supplier" ? form.supplierId : null,
+    customerId: form.ownerKind === "customer" ? form.customerId : null,
+    projectId: form.ownerKind === "customer" ? form.projectId : null,
     productType: form.productType,
     subject: form.subject,
     detail: form.detail,
@@ -1163,7 +1246,7 @@ function getProductSearchText(product: ProductRecord) {
 
 function getProductFormVariantSearchText(form: ProductFormState, variant: ProductVariantFormState) {
   return [
-    supplierProductTypeLabels[form.productType],
+    getWorkspaceProductTypeLabel(form.productType),
     form.subject,
     form.detail,
     variant.material,
@@ -1691,7 +1774,8 @@ function PartyWorkspacePanel({
   const [searchCollapsedRecordKeys, setSearchCollapsedRecordKeys] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
-  const [showSupplierNextStep, setShowSupplierNextStep] = useState(false);
+  const [showProductNextStep, setShowProductNextStep] = useState(false);
+  const [savedCustomerId, setSavedCustomerId] = useState<string | null>(null);
   const [savedSupplierId, setSavedSupplierId] = useState<string | null>(null);
   const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
   const [supplierFilters, setSupplierFilters] = useState<SupplierTableFilters>(
@@ -1723,6 +1807,7 @@ function PartyWorkspacePanel({
     setSearchCollapsedRecordKeys([]);
     setEditingId(null);
     setActiveSubTab("company");
+    setSavedCustomerId(null);
     setSavedSupplierId(null);
     setSelectedSupplierIds([]);
     setSupplierFilters(emptySupplierTableFilters());
@@ -1732,10 +1817,11 @@ function PartyWorkspacePanel({
     const company = kind === "customer" ? customerCompany : supplierCompany;
     try {
       if (kind === "customer") {
-        await upsertCustomer.mutateAsync({
+        const savedCustomer = await upsertCustomer.mutateAsync({
           id: editingId,
           input: { company: company as CustomerCompanyState, employees },
         });
+        setSavedCustomerId(savedCustomer.id);
       } else {
         const savedSupplier = await upsertSupplier.mutateAsync({
           id: editingId,
@@ -1746,20 +1832,17 @@ function PartyWorkspacePanel({
       toast.success(`${partyLabels[kind]} saved`);
       setEditingId(null);
       setSearchCollapsedRecordKeys([]);
-      if (kind === "supplier") {
-        setShowSupplierNextStep(true);
-      } else {
-        setActiveSubTab("company");
-        onModeChange("records");
-      }
+      setShowProductNextStep(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : `Failed to save ${kind}`);
     }
   }
 
   function editRecord(record: PartyRecord, tab: PartySubTab) {
-    if (kind === "customer") setCustomerCompany(record.company as CustomerCompanyState);
-    else {
+    if (kind === "customer") {
+      setCustomerCompany(record.company as CustomerCompanyState);
+      setSavedCustomerId(record.id);
+    } else {
       setSupplierCompany(record.company as SupplierCompanyState);
       setSavedSupplierId(record.id);
     }
@@ -2118,6 +2201,15 @@ function PartyWorkspacePanel({
                   </tr>
                 </thead>
                 {visibleRecords.map((record) => {
+                  const customerProducts = (products.data ?? []).filter(
+                    (product) =>
+                      product.ownerKind === "customer" && product.customerId === record.id,
+                  );
+                  const customerProductImageCount = customerProducts.reduce(
+                    (count, product) =>
+                      count + product.variants.filter((variant) => variant.image).length,
+                    0,
+                  );
                   const matchingEmployees = normalizedQuery
                     ? record.employees.filter((employee) =>
                         fuzzyMatches(
@@ -2163,18 +2255,42 @@ function PartyWorkspacePanel({
                           @{record.company.emailDomainSuffix}
                         </td>
                         <td className="px-4 py-3">
-                          <Badge variant="secondary">{employeeCountLabel}</Badge>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="secondary">{employeeCountLabel}</Badge>
+                            {kind === "customer" && customerProducts.length ? (
+                              <ProductImageBrowserDialog
+                                products={customerProducts}
+                                title={`${record.company.companyName} product images`}
+                                trigger={
+                                  <Button type="button" variant="outline" size="sm">
+                                    View product ({customerProductImageCount})
+                                  </Button>
+                                }
+                              />
+                            ) : null}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => editRecord(record, "company")}
-                          >
-                            <Pencil />
-                            Company Edit
-                          </Button>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => editRecord(record, "product")}
+                            >
+                              <ImagePlus />
+                              Add product
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => editRecord(record, "company")}
+                            >
+                              <Pencil />
+                              Company Edit
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                       {isExpanded
@@ -2265,16 +2381,14 @@ function PartyWorkspacePanel({
           >
             Employee
           </SubTabButton>
-          {kind === "supplier" ? (
-            <SubTabButton
-              active={activeSubTab === "product"}
-              onClick={() => {
-                if (companyIsComplete) setActiveSubTab("product");
-              }}
-            >
-              Product
-            </SubTabButton>
-          ) : null}
+          <SubTabButton
+            active={activeSubTab === "product"}
+            onClick={() => {
+              if (companyIsComplete) setActiveSubTab("product");
+            }}
+          >
+            Product
+          </SubTabButton>
         </div>
       </div>
 
@@ -2305,14 +2419,18 @@ function PartyWorkspacePanel({
           />
         ) : null}
 
-        {activeSubTab === "product" && kind === "supplier" ? (
+        {activeSubTab === "product" ? (
           <ProductWorkspacePanel
             mode="new"
             onModeChange={() => undefined}
             formVersion={formVersion}
-            availableProductTypes={supplierCompany.productTypes}
+            availableProductTypes={
+              kind === "supplier" ? supplierCompany.productTypes : customerProductTypes
+            }
             embedded
-            initialSupplierId={savedSupplierId}
+            ownerKind={kind}
+            initialSupplierId={kind === "supplier" ? savedSupplierId : null}
+            initialCustomerId={kind === "customer" ? savedCustomerId : null}
           />
         ) : null}
       </div>
@@ -2328,12 +2446,12 @@ function PartyWorkspacePanel({
           </div>
         </div>
       ) : null}
-      <Dialog open={showSupplierNextStep} onOpenChange={setShowSupplierNextStep}>
+      <Dialog open={showProductNextStep} onOpenChange={setShowProductNextStep}>
         <DialogContent showCloseButton={false}>
           <DialogHeader>
-            <DialogTitle>Add a product for this supplier?</DialogTitle>
+            <DialogTitle>Add a product for this {kind}?</DialogTitle>
             <DialogDescription>
-              The supplier and employees are saved. You can add a product now or return to supplier
+              The {kind} and employees are saved. You can add a product now or return to {kind}
               records.
             </DialogDescription>
           </DialogHeader>
@@ -2342,7 +2460,7 @@ function PartyWorkspacePanel({
               type="button"
               variant="outline"
               onClick={() => {
-                setShowSupplierNextStep(false);
+                setShowProductNextStep(false);
                 setActiveSubTab("company");
                 onModeChange("records");
               }}
@@ -2352,7 +2470,7 @@ function PartyWorkspacePanel({
             <Button
               type="button"
               onClick={() => {
-                setShowSupplierNextStep(false);
+                setShowProductNextStep(false);
                 setActiveSubTab("product");
               }}
             >
@@ -2371,14 +2489,18 @@ function ProductWorkspacePanel({
   formVersion,
   availableProductTypes = supplierProductTypes,
   embedded = false,
+  ownerKind = "supplier",
   initialSupplierId = null,
+  initialCustomerId = null,
 }: {
   mode: "new" | "records";
   onModeChange: (mode: "new" | "records") => void;
   formVersion: number;
-  availableProductTypes?: readonly SupplierProductType[];
+  availableProductTypes?: readonly WorkspaceProductType[];
   embedded?: boolean;
+  ownerKind?: ProductOwnerKind;
   initialSupplierId?: string | null;
+  initialCustomerId?: string | null;
 }) {
   const fileInputId = useId();
   const [supplierQuery, setSupplierQuery] = useState("");
@@ -2392,35 +2514,56 @@ function ProductWorkspacePanel({
   const [parameterDummyInputCount, setParameterDummyInputCount] = useState(0);
   const [imageError, setImageError] = useState<string | null>(null);
   const suppliers = useSuppliers();
+  const customers = useCustomers();
   const products = useProducts();
+  const projects = useProjects();
   const upsertProduct = useUpsertProduct();
 
   const supplierOptions = suppliers.data ?? [];
-  const initialProductType =
-    normalizeSupplierProductTypes(availableProductTypes)[0] ?? defaultSupplierProductType;
+  const initialProductType: WorkspaceProductType =
+    ownerKind === "customer"
+      ? (availableProductTypes.find(isCustomerProductType) ?? defaultCustomerProductType)
+      : (normalizeSupplierProductTypes(availableProductTypes)[0] ?? defaultSupplierProductType);
   const [form, setForm] = useState<ProductFormState>(() => {
-    const next = emptyProductForm(initialProductType);
+    const next = emptyProductForm(initialProductType, ownerKind);
     return {
       ...next,
       supplierId: initialSupplierId ?? "",
+      customerId: initialCustomerId ?? "",
       activeVariantId: next.variants[0]?.id ?? null,
     };
   });
   const activeSupplierId = embedded ? (initialSupplierId ?? "") : form.supplierId;
+  const activeCustomerId = embedded ? (initialCustomerId ?? "") : form.customerId;
   const selectedSupplier =
     supplierOptions.find((supplier) => supplier.id === activeSupplierId) ?? null;
-  const normalizedAvailableProductTypes = embedded
-    ? normalizeSupplierProductTypes(availableProductTypes)
-    : normalizeSupplierProductTypes(selectedSupplier?.company.productTypes ?? []);
-  const selectableProductTypes = normalizedAvailableProductTypes.length
-    ? normalizedAvailableProductTypes
-    : supplierProductTypes;
-  const productParameterFields = productParameterTemplates[form.productType].fields;
+  const normalizedAvailableProductTypes: WorkspaceProductType[] =
+    ownerKind === "customer"
+      ? availableProductTypes.filter(isCustomerProductType)
+      : embedded
+        ? normalizeSupplierProductTypes(availableProductTypes)
+        : normalizeSupplierProductTypes(selectedSupplier?.company.productTypes ?? []);
+  const selectableProductTypes: readonly WorkspaceProductType[] =
+    normalizedAvailableProductTypes.length
+      ? normalizedAvailableProductTypes
+      : ownerKind === "customer"
+        ? customerProductTypes
+        : supplierProductTypes;
+  const productParameterFields = getProductParameterTemplate(form.productType).fields;
   const activeVariant = getActiveVariant(form);
   const parseResult = productSchema.safeParse(buildProductInput(form));
   const errors = submitted ? getZodFieldErrors(parseResult) : {};
-  const visibleProducts = (products.data ?? []).filter((product) =>
-    getProductSearchText(product).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  const visibleProducts = (products.data ?? []).filter(
+    (product) =>
+      product.ownerKind === ownerKind &&
+      (!embedded ||
+        (ownerKind === "supplier"
+          ? product.supplierId === activeSupplierId
+          : product.customerId === activeCustomerId)) &&
+      getProductSearchText(product).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
+  const customerProjectOptions = (projects.data ?? []).filter(
+    (project) => project.customerId === activeCustomerId,
   );
   const visibleFormVariants = normalizeVariants(form.variants).filter((variant) => {
     const normalizedQuery = variantImageQuery.trim().toLocaleLowerCase();
@@ -2440,10 +2583,11 @@ function ProductWorkspacePanel({
 
   if (activeFormVersion !== formVersion) {
     setActiveFormVersion(formVersion);
-    const next = emptyProductForm(initialProductType);
+    const next = emptyProductForm(initialProductType, ownerKind);
     setForm({
       ...next,
       supplierId: initialSupplierId ?? "",
+      customerId: initialCustomerId ?? "",
       activeVariantId: next.variants[0]?.id ?? null,
     });
     setImageError(null);
@@ -2452,10 +2596,11 @@ function ProductWorkspacePanel({
   }
 
   if (!selectableProductTypes.includes(form.productType)) {
-    const next = emptyProductForm(initialProductType);
+    const next = emptyProductForm(initialProductType, ownerKind);
     setForm({
       ...next,
       supplierId: activeSupplierId,
+      customerId: activeCustomerId,
       activeVariantId: next.variants[0]?.id ?? null,
     });
     setParameterDummyInputCount(0);
@@ -2540,7 +2685,10 @@ function ProductWorkspacePanel({
 
   function updateProductType(value: string | null) {
     if (!value) return;
-    const productType = normalizeSupplierProductType(value);
+    const productType: WorkspaceProductType =
+      ownerKind === "customer"
+        ? normalizeCustomerProductType(value)
+        : normalizeSupplierProductType(value);
     setForm((current) => ({
       ...current,
       productType,
@@ -2562,7 +2710,7 @@ function ProductWorkspacePanel({
   }
 
   function fillDummyProductParameters() {
-    const label = supplierProductTypeLabels[form.productType];
+    const label = getWorkspaceProductTypeLabel(form.productType);
     setForm((current) => ({
       ...current,
       subject: `${label} internal ${parameterDummyInputCount + 1}`,
@@ -2604,7 +2752,10 @@ function ProductWorkspacePanel({
   }
 
   function editProduct(product: ProductRecord) {
-    const productType = normalizeSupplierProductType(product.productType);
+    const productType: WorkspaceProductType =
+      product.ownerKind === "customer"
+        ? normalizeCustomerProductType(product.productType)
+        : normalizeSupplierProductType(product.productType);
     const variants = normalizeVariants(
       product.variants.map((variant) => ({
         id: variant.id,
@@ -2621,7 +2772,10 @@ function ProductWorkspacePanel({
       })),
     );
     setForm({
+      ownerKind: product.ownerKind,
       supplierId: product.supplierId ?? "",
+      customerId: product.customerId ?? "",
+      projectId: product.projectId ?? "",
       productType,
       subject: product.subject,
       detail: product.detail,
@@ -2684,7 +2838,9 @@ function ProductWorkspacePanel({
               <table className="w-full text-left text-sm">
                 <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
                   <tr>
-                    <th className="px-4 py-3">Supplier</th>
+                    <th className="px-4 py-3">
+                      {ownerKind === "customer" ? "Customer" : "Supplier"}
+                    </th>
                     <th className="px-4 py-3">Type</th>
                     <th className="px-4 py-3">Subject</th>
                     <th className="px-4 py-3">Variants</th>
@@ -2695,15 +2851,19 @@ function ProductWorkspacePanel({
                 <tbody className="divide-y">
                   {visibleProducts.map((product) => {
                     const primaryVariant = getProductPrimaryVariant(product);
-                    const supplierName =
-                      supplierOptions.find((supplier) => supplier.id === product.supplierId)
-                        ?.company.companyName ?? "Unknown supplier";
+                    const ownerName =
+                      product.ownerKind === "customer"
+                        ? ((customers.data ?? []).find(
+                            (customer) => customer.id === product.customerId,
+                          )?.company.companyName ?? "Unknown customer")
+                        : (supplierOptions.find((supplier) => supplier.id === product.supplierId)
+                            ?.company.companyName ?? "Unknown supplier");
 
                     return (
                       <tr key={product.id} className="hover:bg-muted/30">
-                        <td className="px-4 py-3">{supplierName}</td>
+                        <td className="px-4 py-3">{ownerName}</td>
                         <td className="text-muted-foreground px-4 py-3">
-                          {supplierProductTypeLabels[product.productType]}
+                          {getWorkspaceProductTypeLabel(product.productType)}
                         </td>
                         <td className="px-4 py-3 font-medium">{product.subject}</td>
                         <td className="px-4 py-3">{product.variants.length}</td>
@@ -2756,7 +2916,9 @@ function ProductWorkspacePanel({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-            {embedded ? "Supplier product form" : "Standard userform"}
+            {embedded
+              ? `${ownerKind === "customer" ? "Customer" : "Supplier"} product form`
+              : "Standard userform"}
           </p>
           {!embedded ? (
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Product (+)</h2>
@@ -2768,8 +2930,10 @@ function ProductWorkspacePanel({
             variant="outline"
             onClick={() => {
               setForm({
-                ...getDummyProduct(dummyInputCount, selectableProductTypes),
+                ...getDummyProduct(dummyInputCount, selectableProductTypes, ownerKind),
                 supplierId: activeSupplierId,
+                customerId: activeCustomerId,
+                projectId: form.projectId,
               });
               setDummyInputCount((count) => count + 1);
               setParameterDummyInputCount(0);
@@ -2802,7 +2966,7 @@ function ProductWorkspacePanel({
             </Button>
           </div>
           <div className="grid gap-4">
-            {!embedded ? (
+            {!embedded && ownerKind === "supplier" ? (
               <FormField label="Supplier" error={errors.supplierId}>
                 <div className="grid gap-2">
                   <Input
@@ -2850,20 +3014,76 @@ function ProductWorkspacePanel({
                 </div>
               </FormField>
             ) : null}
+            {ownerKind === "customer" ? (
+              <FormField label="Customer project" error={errors.projectId}>
+                {projects.isLoading ? (
+                  <p className="text-muted-foreground rounded-md border px-3 py-3 text-sm">
+                    Loading customer projects...
+                  </p>
+                ) : projects.isError ? (
+                  <p className="text-destructive rounded-md border px-3 py-3 text-sm">
+                    Failed to load customer projects.
+                  </p>
+                ) : customerProjectOptions.length ? (
+                  <Select
+                    value={form.projectId || null}
+                    onValueChange={(projectId) =>
+                      setForm((current) => ({ ...current, projectId: projectId ?? "" }))
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choose a project">
+                        {customerProjectOptions.find((project) => project.id === form.projectId)
+                          ?.name ?? "Choose a project"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start">
+                      <SelectGroup>
+                        <SelectLabel>Projects for this customer</SelectLabel>
+                        {customerProjectOptions.map((project) => (
+                          <SelectItem key={project.id} value={project.id}>
+                            {project.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-muted-foreground rounded-md border border-dashed px-3 py-3 text-sm">
+                    Create a project for this customer before saving a product.
+                  </p>
+                )}
+              </FormField>
+            ) : null}
             <FormField label="Product type" error={errors.productType}>
               <Select value={form.productType} onValueChange={updateProductType}>
                 <SelectTrigger className="w-full">
-                  <SelectValue>{supplierProductTypeLabels[form.productType]}</SelectValue>
+                  <SelectValue>{getWorkspaceProductTypeLabel(form.productType)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent align="start" className="max-h-80">
-                  <SelectGroup>
-                    <SelectLabel>Product type</SelectLabel>
-                    {selectableProductTypes.map((productType) => (
-                      <SelectItem key={productType} value={productType}>
-                        {supplierProductTypeLabels[productType]}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
+                  {ownerKind === "customer" ? (
+                    customerProductTypeGroups.map((group) => (
+                      <SelectGroup key={group.label}>
+                        <SelectLabel>{group.label}</SelectLabel>
+                        {group.types
+                          .filter((productType) => selectableProductTypes.includes(productType))
+                          .map((productType) => (
+                            <SelectItem key={productType} value={productType}>
+                              {getWorkspaceProductTypeLabel(productType)}
+                            </SelectItem>
+                          ))}
+                      </SelectGroup>
+                    ))
+                  ) : (
+                    <SelectGroup>
+                      <SelectLabel>Product type</SelectLabel>
+                      {selectableProductTypes.map((productType) => (
+                        <SelectItem key={productType} value={productType}>
+                          {getWorkspaceProductTypeLabel(productType)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
             </FormField>
@@ -2972,10 +3192,12 @@ function ProductWorkspacePanel({
                   key={variant.id}
                   type="button"
                   className={cn(
-                    "bg-muted overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "bg-muted focus-visible:ring-ring overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2",
                     activeVariant.id === variant.id && "ring-primary ring-2",
                   )}
-                  onClick={() => setForm((current) => ({ ...current, activeVariantId: variant.id }))}
+                  onClick={() =>
+                    setForm((current) => ({ ...current, activeVariantId: variant.id }))
+                  }
                 >
                   {variant.image ? (
                     <>

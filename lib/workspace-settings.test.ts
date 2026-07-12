@@ -10,8 +10,22 @@ describe("workspace settings", () => {
 
   it("normalizes saved sequence indexes", () => {
     const options = normalizeWorkspaceOptions("currency", [
-      { id: "currency:USD", kind: "currency", code: "USD", name: "US Dollar", symbol: "$", sortIndex: 8 },
-      { id: "currency:CNY", kind: "currency", code: "CNY", name: "Chinese Yuan", symbol: "CN¥", sortIndex: 2 },
+      {
+        id: "currency:USD",
+        kind: "currency",
+        code: "USD",
+        name: "US Dollar",
+        symbol: "$",
+        sortIndex: 8,
+      },
+      {
+        id: "currency:CNY",
+        kind: "currency",
+        code: "CNY",
+        name: "Chinese Yuan",
+        symbol: "CN¥",
+        sortIndex: 2,
+      },
     ]);
 
     expect(options.map((option) => [option.code, option.sortIndex])).toEqual([

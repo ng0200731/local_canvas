@@ -66,7 +66,10 @@ const productVariantRowSchema = z.object({
 
 const productRowSchema = z.object({
   id: z.string(),
+  owner_kind: z.enum(["supplier", "customer"]).optional(),
   supplier_id: z.string().nullable().optional(),
+  customer_id: z.string().nullable().optional(),
+  project_id: z.string().nullable().optional(),
   product_type: z.string().nullable().optional(),
   subject: z.string(),
   detail: z.string(),
@@ -116,13 +119,20 @@ function toUnknownArray(value: unknown): unknown[] {
 }
 
 function isMissingVariantsRpc(message: string): boolean {
-  return message.includes("upsert_product_with_variants") && message.includes("schema cache");
+  return (
+    (message.includes("upsert_product_with_variants") ||
+      message.includes("upsert_workspace_product_with_variants")) &&
+    message.includes("schema cache")
+  );
 }
 
 function isProductSchemaCacheMismatch(message: string): boolean {
   return (
     isMissingVariantsRpc(message) ||
     message.includes("supplier_id") ||
+    message.includes("owner_kind") ||
+    message.includes("customer_id") ||
+    message.includes("project_id") ||
     message.includes("product_variants")
   );
 }
@@ -198,7 +208,10 @@ function mapProduct(rowValue: unknown): ProductRecord {
   const row = productRowSchema.parse(rowValue);
   return normalizeProductRecord({
     id: row.id,
+    ownerKind: row.owner_kind,
     supplierId: row.supplier_id ?? null,
+    customerId: row.customer_id ?? null,
+    projectId: row.project_id ?? null,
     productType: row.product_type,
     subject: row.subject,
     detail: row.detail,
@@ -344,10 +357,10 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       const query = await supabase
         .from("products")
         .select(
-          "id, supplier_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
+          "id, owner_kind, supplier_id, customer_id, project_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
         )
         .order("updated_at", { ascending: false });
-      if (query.error?.message.includes("supplier_id") || query.error?.message.includes("product_variants")) {
+      if (query.error && isProductSchemaCacheMismatch(query.error.message)) {
         const legacy = await supabase
           .from("products")
           .select(
@@ -365,10 +378,13 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
     async upsertProduct(id, input) {
       const parsed = productRecordInputSchema.parse(input);
       const userId = await getCurrentUserId();
-      const { data, error } = await supabase.rpc("upsert_product_with_variants", {
+      const { data, error } = await supabase.rpc("upsert_workspace_product_with_variants", {
         p_product_id: id,
         p_user_id: userId,
-        p_supplier_id: parsed.supplierId,
+        p_owner_kind: parsed.ownerKind,
+        p_supplier_id: parsed.supplierId ?? null,
+        p_customer_id: parsed.customerId ?? null,
+        p_project_id: parsed.projectId ?? null,
         p_product_type: parsed.productType,
         p_subject: parsed.subject,
         p_detail: parsed.detail,
@@ -386,6 +402,31 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       if (!error) return mapProduct(data);
       if (!isProductSchemaCacheMismatch(error.message)) assertNoError({ error }, "upsertProduct");
 
+      if (parsed.ownerKind === "supplier") {
+        const legacyRpc = await supabase.rpc("upsert_product_with_variants", {
+          p_product_id: id,
+          p_user_id: userId,
+          p_supplier_id: parsed.supplierId,
+          p_product_type: parsed.productType,
+          p_subject: parsed.subject,
+          p_detail: parsed.detail,
+          p_variants: parsed.variants.map((variant) => ({
+            id: variant.id,
+            sortIndex: variant.sortIndex,
+            material: variant.material,
+            colorNotes: variant.colorNotes,
+            parameters: variant.parameters,
+            unitPrice: variant.unitPrice,
+            priceUnit: variant.priceUnit,
+            image: variant.image,
+          })),
+        });
+        if (!legacyRpc.error) return mapProduct(legacyRpc.data);
+        if (!isProductSchemaCacheMismatch(legacyRpc.error.message)) {
+          assertNoError({ error: legacyRpc.error }, "upsertProduct");
+        }
+      }
+
       // PostgREST can temporarily retain an old function cache after the
       // variants migration. Use the same tables directly so the form remains
       // usable; the migration RPC remains the normal atomic path.
@@ -394,7 +435,10 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       const productValues = {
         id: productId,
         user_id: userId,
-        supplier_id: parsed.supplierId,
+        owner_kind: parsed.ownerKind,
+        supplier_id: parsed.ownerKind === "supplier" ? parsed.supplierId : null,
+        customer_id: parsed.ownerKind === "customer" ? parsed.customerId : null,
+        project_id: parsed.ownerKind === "customer" ? parsed.projectId : null,
         product_type: parsed.productType,
         subject: parsed.subject,
         detail: parsed.detail,
@@ -412,7 +456,10 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         if (!isProductSchemaCacheMismatch(productWrite.error.message)) {
           assertNoError({ error: productWrite.error }, "upsertProduct");
         }
-        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+        return localWorkspaceRecordStore.upsertProduct(
+          id ?? productId,
+          parsed satisfies ProductRecordInput,
+        );
       }
 
       const removeVariants = await supabase
@@ -423,7 +470,10 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         if (!isProductSchemaCacheMismatch(removeVariants.error.message)) {
           assertNoError({ error: removeVariants.error }, "upsertProduct variants");
         }
-        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+        return localWorkspaceRecordStore.upsertProduct(
+          id ?? productId,
+          parsed satisfies ProductRecordInput,
+        );
       }
       const variantWrite = await supabase.from("product_variants").insert(
         parsed.variants.map((variant) => ({
@@ -445,13 +495,16 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         if (!isProductSchemaCacheMismatch(variantWrite.error.message)) {
           assertNoError({ error: variantWrite.error }, "upsertProduct variants");
         }
-        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+        return localWorkspaceRecordStore.upsertProduct(
+          id ?? productId,
+          parsed satisfies ProductRecordInput,
+        );
       }
 
       const saved = await supabase
         .from("products")
         .select(
-          "id, supplier_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
+          "id, owner_kind, supplier_id, customer_id, project_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
         )
         .eq("id", productId)
         .single();
@@ -459,7 +512,10 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         if (!isProductSchemaCacheMismatch(saved.error.message)) {
           assertNoError({ error: saved.error }, "upsertProduct");
         }
-        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+        return localWorkspaceRecordStore.upsertProduct(
+          id ?? productId,
+          parsed satisfies ProductRecordInput,
+        );
       }
       return mapProduct(saved.data);
     },
@@ -468,11 +524,11 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       const query = await supabase
         .from("products")
         .select(
-          "id, supplier_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
+          "id, owner_kind, supplier_id, customer_id, project_id, product_type, subject, detail, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path, created_at, updated_at, product_variants(id, sort_index, material, color_notes, parameters, unit_price, price_unit, image_name, image_url, image_storage_path)",
         )
         .eq("id", productId)
         .maybeSingle();
-      if (query.error?.message.includes("supplier_id") || query.error?.message.includes("product_variants")) {
+      if (query.error && isProductSchemaCacheMismatch(query.error.message)) {
         const legacy = await supabase
           .from("products")
           .select(

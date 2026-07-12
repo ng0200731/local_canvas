@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   customerCompanySchema,
+  customerProductTypes,
   hadAtSymbol,
   normalizeProductRecord,
   normalizeEmailDomainSuffix,
@@ -102,6 +103,46 @@ describe("workspace record validation", () => {
     ).toBe(false);
   });
 
+  it("validates customer garment products and requires a customer project", () => {
+    const variant = {
+      id: "variant-1",
+      sortIndex: 0,
+      material: "Cotton jersey",
+      colorNotes: "Pantone Black C",
+      parameters: { sizeRange: "XS-XL" },
+      unitPrice: "9.5",
+      priceUnit: "per pc",
+      image: {
+        name: "shirt.webp",
+        url: "https://example.com/shirt.webp",
+        storagePath: null,
+      },
+    };
+
+    expect(customerProductTypes).toHaveLength(33);
+    expect(
+      productSchema.safeParse({
+        ownerKind: "customer",
+        customerId: "customer-1",
+        projectId: "project-1",
+        productType: "shirt",
+        subject: "SH-001",
+        detail: "Customer shirt sample",
+        variants: [variant],
+      }).success,
+    ).toBe(true);
+    expect(
+      productSchema.safeParse({
+        ownerKind: "customer",
+        customerId: "customer-1",
+        productType: "woven-label",
+        subject: "SH-001",
+        detail: "Missing project",
+        variants: [variant],
+      }).success,
+    ).toBe(false);
+  });
+
   it("normalizes legacy flat product records into one variant", () => {
     const product = normalizeProductRecord({
       id: "product-1",
@@ -127,6 +168,7 @@ describe("workspace record validation", () => {
     });
 
     expect(product.variants).toHaveLength(1);
+    expect(product.ownerKind).toBe("supplier");
     expect(product.variants[0]).toMatchObject({
       id: "variant-1",
       sortIndex: 0,

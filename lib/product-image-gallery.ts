@@ -1,5 +1,5 @@
 import {
-  supplierProductTypeLabels,
+  getWorkspaceProductTypeLabel,
   type ProductImageInput,
   type ProductRecord,
   type ProductVariantRecord,
@@ -15,7 +15,7 @@ export interface ProductImageGalleryItem {
 export function buildProductImageSearchText(item: ProductImageGalleryItem): string {
   const { product, variant } = item;
   return [
-    supplierProductTypeLabels[product.productType],
+    getWorkspaceProductTypeLabel(product.productType),
     product.subject,
     product.detail,
     variant.material,
@@ -32,7 +32,7 @@ export function buildProductImageSearchText(item: ProductImageGalleryItem): stri
 export function productRecordSearchText(product: ProductRecord): string {
   return getProductImageGalleryItems([product])
     .map(buildProductImageSearchText)
-    .concat([supplierProductTypeLabels[product.productType], product.subject, product.detail])
+    .concat([getWorkspaceProductTypeLabel(product.productType), product.subject, product.detail])
     .join(" ")
     .trim();
 }

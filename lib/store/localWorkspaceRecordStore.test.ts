@@ -214,4 +214,78 @@ describe("localWorkspaceRecordStore", () => {
       expect(localStorage.getItem("ica:workspace:products")).toContain("product-1");
     }
   });
+
+  it("persists customer products with their customer project", async () => {
+    await localWorkspaceRecordStore.upsertProduct(null, {
+      ownerKind: "customer",
+      customerId: "customer-1",
+      projectId: "project-1",
+      productType: "shirt",
+      subject: "SH-001",
+      detail: "Cotton shirt",
+      variants: [
+        {
+          id: "variant-1",
+          sortIndex: 0,
+          material: "Cotton",
+          colorNotes: "White",
+          parameters: { sizeRange: "XS-XL" },
+          unitPrice: "11.5",
+          priceUnit: "per pc",
+          image: {
+            name: "shirt.webp",
+            url: "https://example.com/shirt.webp",
+            storagePath: null,
+          },
+        },
+      ],
+    });
+
+    const products = await localWorkspaceRecordStore.listProducts();
+    expect(products[0]).toMatchObject({
+      ownerKind: "customer",
+      customerId: "customer-1",
+      projectId: "project-1",
+      supplierId: null,
+      productType: "shirt",
+    });
+  });
+
+  it("persists ordered settings and generic node definitions", async () => {
+    const currencies = await localWorkspaceRecordStore.replaceWorkspaceOptions("currency", [
+      {
+        id: "currency:CNY",
+        kind: "currency",
+        code: "CNY",
+        name: "Chinese Yuan",
+        symbol: "CN¥",
+        sortIndex: 4,
+      },
+      {
+        id: "currency:USD",
+        kind: "currency",
+        code: "USD",
+        name: "US Dollar",
+        symbol: "$",
+        sortIndex: 8,
+      },
+    ]);
+    expect(currencies.map((currency) => currency.sortIndex)).toEqual([0, 1]);
+
+    const first = await localWorkspaceRecordStore.upsertGenericNodeDefinition(null, {
+      name: "Front view",
+      imageUrl: "data:image/webp;base64,front",
+      storagePath: null,
+    });
+    const second = await localWorkspaceRecordStore.upsertGenericNodeDefinition(null, {
+      name: "Back view",
+      imageUrl: "data:image/webp;base64,back",
+      storagePath: null,
+    });
+    const reordered = await localWorkspaceRecordStore.reorderGenericNodeDefinitions([
+      second.id,
+      first.id,
+    ]);
+    expect(reordered.map((definition) => definition.name)).toEqual(["Back view", "Front view"]);
+  });
 });

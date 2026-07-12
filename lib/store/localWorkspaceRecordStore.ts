@@ -94,9 +94,7 @@ async function readGenericNodesFromIndexedDb(): Promise<GenericNodeDefinition[]>
       request.onsuccess = () => {
         const parsed = genericNodeDefinitionSchema.array().safeParse(request.result);
         resolve(
-          parsed.success
-            ? parsed.data.sort((left, right) => left.sortIndex - right.sortIndex)
-            : [],
+          parsed.success ? parsed.data.sort((left, right) => left.sortIndex - right.sortIndex) : [],
         );
       };
     });
@@ -124,14 +122,18 @@ async function writeGenericNodesToIndexedDb(records: GenericNodeDefinition[]): P
 
 async function listLocalGenericNodes(): Promise<GenericNodeDefinition[]> {
   if (!canUseIndexedDb()) {
-    const parsed = genericNodeDefinitionSchema.array().safeParse(read<unknown[]>(KEYS.genericNodes, []));
+    const parsed = genericNodeDefinitionSchema
+      .array()
+      .safeParse(read<unknown[]>(KEYS.genericNodes, []));
     return parsed.success
       ? parsed.data.sort((left, right) => left.sortIndex - right.sortIndex)
       : [];
   }
 
   const indexed = await readGenericNodesFromIndexedDb();
-  const legacy = genericNodeDefinitionSchema.array().safeParse(read<unknown[]>(KEYS.genericNodes, []));
+  const legacy = genericNodeDefinitionSchema
+    .array()
+    .safeParse(read<unknown[]>(KEYS.genericNodes, []));
   if (!legacy.success || legacy.data.length === 0) return indexed;
 
   const merged = new Map(indexed.map((record) => [record.id, record]));
@@ -198,7 +200,9 @@ async function writeProductsToIndexedDb(records: ProductRecord[]): Promise<void>
 
 async function mergeLegacyProductsIntoIndexedDb(): Promise<ProductRecord[]> {
   const indexedRecords = await readProductsFromIndexedDb();
-  const legacyRecords = read<unknown[]>(KEYS.products, []).map((record) => normalizeProductRecord(record));
+  const legacyRecords = read<unknown[]>(KEYS.products, []).map((record) =>
+    normalizeProductRecord(record),
+  );
 
   if (legacyRecords.length === 0) return newestFirst(indexedRecords);
 
@@ -218,7 +222,9 @@ async function mergeLegacyProductsIntoIndexedDb(): Promise<ProductRecord[]> {
 
 async function listLocalProducts(): Promise<ProductRecord[]> {
   if (!canUseIndexedDb()) {
-    return newestFirst(read<unknown[]>(KEYS.products, []).map((record) => normalizeProductRecord(record)));
+    return newestFirst(
+      read<unknown[]>(KEYS.products, []).map((record) => normalizeProductRecord(record)),
+    );
   }
 
   return mergeLegacyProductsIntoIndexedDb();
@@ -309,7 +315,7 @@ export const localWorkspaceRecordStore: WorkspaceRecordStore = {
     const products = await listLocalProducts();
     await saveLocalProducts(
       products.map((product) =>
-        product.supplierId && idSet.has(product.supplierId)
+        product.ownerKind === "supplier" && product.supplierId && idSet.has(product.supplierId)
           ? { ...product, supplierId: null, updatedAt: nowISO() }
           : product,
       ),
@@ -325,7 +331,10 @@ export const localWorkspaceRecordStore: WorkspaceRecordStore = {
     const records = await listLocalProducts();
     const record = upsertRecord(records, id, (existing, timestamp) => ({
       id: existing?.id ?? id ?? uid(),
-      supplierId: parsed.supplierId,
+      ownerKind: parsed.ownerKind,
+      supplierId: parsed.ownerKind === "supplier" ? (parsed.supplierId ?? null) : null,
+      customerId: parsed.ownerKind === "customer" ? (parsed.customerId ?? null) : null,
+      projectId: parsed.ownerKind === "customer" ? (parsed.projectId ?? null) : null,
       productType: parsed.productType,
       subject: parsed.subject,
       detail: parsed.detail,

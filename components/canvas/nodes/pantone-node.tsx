@@ -100,6 +100,7 @@ export function PantoneNode({
   const height = Math.max(data.height ?? DEFAULT_HEIGHT, MIN_DISPLAY_HEIGHT);
   const isPanelExpanded = height > MIN_DISPLAY_HEIGHT + 8;
   const catalogFilter = persistedCatalogFilter(data.catalogFilter);
+  const alias = typeof data.alias === "string" ? data.alias : "pantone";
   const isReferenceHovered = hoveredReferenceNodeId === id;
 
   useEffect(() => {
@@ -238,6 +239,14 @@ export function PantoneNode({
 
       <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-3 pb-11">
         <div className="nodrag grid gap-2 border-b border-neutral-200 pb-3 dark:border-neutral-800">
+          <Input
+            value={alias}
+            placeholder="alias"
+            aria-label="Pantone alias"
+            onChange={(event) => updateNodeData(id, { alias: event.target.value })}
+            className="nodrag nopan h-8 rounded-none border-neutral-300 bg-white text-sm text-neutral-950 placeholder:text-neutral-500 focus-visible:border-neutral-950 focus-visible:ring-neutral-950/20 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50 dark:placeholder:text-neutral-500 dark:focus-visible:border-neutral-50 dark:focus-visible:ring-neutral-50/20"
+          />
+
           <select
             value={catalogFilter ?? "all"}
             onChange={(event) => handleCatalogFilterChange(event.target.value)}

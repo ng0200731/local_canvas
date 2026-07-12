@@ -55,7 +55,9 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
   const productTypeQuery = data.productTypeQuery ?? "";
   const supplierQuery = data.supplierQuery ?? "";
   const alias = typeof data.alias === "string" ? data.alias : "supplier";
-  const supplierProducts = products.data ?? [];
+  const supplierProducts = (products.data ?? []).filter(
+    (product) => product.ownerKind === "supplier",
+  );
   const selectedSupplierProducts = supplierProducts.filter(
     (product) =>
       product.supplierId === data.supplierId &&
@@ -142,6 +144,7 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
       </div>
 
       <Input
+        data-new-node-focus-field
         value={alias}
         onChange={(event) => updateNodeData(id, { alias: event.target.value })}
         placeholder="alias"
@@ -153,7 +156,6 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
         <div className="relative">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2" />
           <Input
-            data-new-node-focus-field
             value={productTypeQuery}
             onChange={(event) =>
               updateNodeData(id, {
@@ -174,19 +176,19 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
               variant="ghost"
               aria-label="Clear product type"
               className="nodrag absolute top-1/2 right-1 size-6 -translate-y-1/2"
-                onClick={() =>
-                  updateNodeData(id, {
-                    selectedProductType: null,
-                    productTypeQuery: "",
-                    supplierId: null,
-                    supplierName: null,
-                    productId: null,
-                    productSubject: null,
-                    variantId: null,
-                    variantImageUrl: null,
-                    variantImageName: null,
-                  })
-                }
+              onClick={() =>
+                updateNodeData(id, {
+                  selectedProductType: null,
+                  productTypeQuery: "",
+                  supplierId: null,
+                  supplierName: null,
+                  productId: null,
+                  productSubject: null,
+                  variantId: null,
+                  variantImageUrl: null,
+                  variantImageName: null,
+                })
+              }
             >
               <X className="size-3" />
             </Button>
@@ -306,7 +308,9 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={data.variantImageUrl}
-                    alt={data.variantImageName ?? data.productSubject ?? "Selected supplier product"}
+                    alt={
+                      data.variantImageName ?? data.productSubject ?? "Selected supplier product"
+                    }
                     className="aspect-video w-full object-contain"
                   />
                 </button>

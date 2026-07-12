@@ -18,10 +18,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useCustomers } from "@/lib/hooks/use-workspace-records";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useCustomers, useWorkspaceOptions } from "@/lib/hooks/use-workspace-records";
 import { useCreateProject } from "@/lib/hooks/use-projects";
 import type { Project } from "@/lib/store";
-import type { CustomerRecord, EmployeeInput } from "@/lib/workspace-records";
+import type { EmployeeInput } from "@/lib/workspace-records";
 
 function fuzzyMatch(value: string, query: string): boolean {
   const needle = query.trim().toLocaleLowerCase();
@@ -40,23 +49,6 @@ function employeeEmail(employee: EmployeeInput, domain: string): string {
   return `${employee.emailPrefix}@${domain}`;
 }
 
-function buildProjectDescription(customer: CustomerRecord, employee: EmployeeInput): string {
-  return JSON.stringify({
-    version: 1,
-    customer: {
-      id: customer.id,
-      name: customer.company.companyName,
-      domain: customer.company.emailDomainSuffix,
-    },
-    employee: {
-      userName: employee.userName,
-      title: employee.title,
-      email: employeeEmail(employee, customer.company.emailDomainSuffix),
-      tel: employee.tel,
-    },
-  });
-}
-
 export function CreateProjectDialog({
   redirectOnCreate = true,
   onCreated,
@@ -71,20 +63,24 @@ export function CreateProjectDialog({
   const [employeeQuery, setEmployeeQuery] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedEmployeeKey, setSelectedEmployeeKey] = useState<string | null>(null);
+  const [selectedCurrencyId, setSelectedCurrencyId] = useState<string | null>(null);
+  const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
   const create = useCreateProject();
   const customers = useCustomers();
+  const currencies = useWorkspaceOptions("currency");
+  const destinations = useWorkspaceOptions("destination-country");
   const customerOptions = customers.data ?? [];
   const selectedCustomer =
     customerOptions.find((customer) => customer.id === selectedCustomerId) ?? null;
   const employeeOptions = selectedCustomer?.employees ?? [];
   const effectiveEmployeeKey =
-    employeeOptions.length === 1
-      ? `${employeeOptions[0]?.emailPrefix ?? ""}:${employeeOptions[0]?.userName ?? ""}`
-      : selectedEmployeeKey;
+    employeeOptions.length === 1 ? (employeeOptions[0]?.id ?? null) : selectedEmployeeKey;
   const selectedEmployee =
-    employeeOptions.find(
-      (employee) => `${employee.emailPrefix}:${employee.userName}` === effectiveEmployeeKey,
-    ) ?? null;
+    employeeOptions.find((employee) => employee.id === effectiveEmployeeKey) ?? null;
+  const selectedCurrency =
+    currencies.data?.find((currency) => currency.id === selectedCurrencyId) ?? null;
+  const selectedDestination =
+    destinations.data?.find((destination) => destination.id === selectedDestinationId) ?? null;
   const visibleCustomers = customerOptions.filter((customer) =>
     fuzzyMatch(
       `${customer.company.companyName} ${customer.company.emailDomainSuffix}`,
@@ -107,15 +103,35 @@ export function CreateProjectDialog({
     setEmployeeQuery("");
     setSelectedCustomerId(null);
     setSelectedEmployeeKey(null);
+    setSelectedCurrencyId(null);
+    setSelectedDestinationId(null);
   }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!name.trim() || !selectedCustomer || !selectedEmployee) return;
+    if (
+      !name.trim() ||
+      !selectedCustomer ||
+      !selectedEmployee ||
+      !selectedCurrency ||
+      !selectedDestination
+    )
+      return;
     try {
       const project = await create.mutateAsync({
         name,
-        description: buildProjectDescription(selectedCustomer, selectedEmployee),
+        customerId: selectedCustomer.id,
+        customerName: selectedCustomer.company.companyName,
+        employeeId: selectedEmployee.id,
+        employeeName: selectedEmployee.userName,
+        employeeTitle: selectedEmployee.title,
+        employeeEmail: employeeEmail(selectedEmployee, selectedCustomer.company.emailDomainSuffix),
+        employeeTel: selectedEmployee.tel,
+        currencyCode: selectedCurrency.code,
+        currencyName: selectedCurrency.name,
+        currencySymbol: selectedCurrency.symbol,
+        destinationCountryCode: selectedDestination.code,
+        destinationCountryName: selectedDestination.name,
       });
       reset();
       setOpen(false);
@@ -210,7 +226,7 @@ export function CreateProjectDialog({
               <div className="bg-background max-h-40 overflow-y-auto rounded-md border">
                 {visibleEmployees.length ? (
                   visibleEmployees.map((employee) => {
-                    const key = `${employee.emailPrefix}:${employee.userName}`;
+                    const key = employee.id;
                     return (
                       <button
                         key={key}
@@ -250,11 +266,81 @@ export function CreateProjectDialog({
               onChange={(e) => setName(e.target.value)}
             />
           </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>Currency</Label>
+              <Select value={selectedCurrencyId} onValueChange={setSelectedCurrencyId}>
+                <SelectTrigger
+                  className="w-full"
+                  disabled={currencies.isLoading || currencies.isError || !currencies.data?.length}
+                >
+                  <SelectValue placeholder="Choose currency">
+                    {selectedCurrency
+                      ? `${selectedCurrency.code} - ${selectedCurrency.name}`
+                      : currencies.isLoading
+                        ? "Loading currencies..."
+                        : currencies.isError
+                          ? "Unable to load currencies"
+                          : "Choose currency"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" className="max-h-80">
+                  <SelectGroup>
+                    <SelectLabel>Currency</SelectLabel>
+                    {(currencies.data ?? []).map((currency) => (
+                      <SelectItem key={currency.id} value={currency.id}>
+                        {currency.code} - {currency.name}
+                        {currency.symbol ? ` (${currency.symbol})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Delivery destination</Label>
+              <Select value={selectedDestinationId} onValueChange={setSelectedDestinationId}>
+                <SelectTrigger
+                  className="w-full"
+                  disabled={
+                    destinations.isLoading || destinations.isError || !destinations.data?.length
+                  }
+                >
+                  <SelectValue placeholder="Choose destination">
+                    {selectedDestination
+                      ? selectedDestination.name
+                      : destinations.isLoading
+                        ? "Loading countries..."
+                        : destinations.isError
+                          ? "Unable to load countries"
+                          : "Choose destination"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" className="max-h-80">
+                  <SelectGroup>
+                    <SelectLabel>Destination country</SelectLabel>
+                    {(destinations.data ?? []).map((destination) => (
+                      <SelectItem key={destination.id} value={destination.id}>
+                        {destination.name} ({destination.code})
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <DialogFooter>
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button
               type="submit"
-              disabled={create.isPending || !name.trim() || !selectedCustomer || !selectedEmployee}
+              disabled={
+                create.isPending ||
+                !name.trim() ||
+                !selectedCustomer ||
+                !selectedEmployee ||
+                !selectedCurrency ||
+                !selectedDestination
+              }
             >
               {create.isPending ? "Creating..." : "Create"}
             </Button>

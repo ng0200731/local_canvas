@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ProjectMetadataSummary } from "@/components/projects/project-metadata-summary";
 import { useDeleteProject } from "@/lib/hooks/use-projects";
 import { formatDate } from "@/lib/format";
 import type { Project } from "@/lib/store";
@@ -43,11 +44,7 @@ export function ProjectCard({
               </span>
             </span>
           </div>
-          {project.description && (
-            <span className="text-muted-foreground line-clamp-2 text-sm leading-5">
-              {project.description}
-            </span>
-          )}
+          <ProjectMetadataSummary project={project} compact />
           <span className="text-primary mt-auto inline-flex items-center gap-1 text-xs font-medium">
             Open project <ArrowUpRight className="size-3.5" />
           </span>
@@ -68,11 +65,7 @@ export function ProjectCard({
               </span>
             </span>
           </div>
-          {project.description && (
-            <span className="text-muted-foreground line-clamp-2 text-sm leading-5">
-              {project.description}
-            </span>
-          )}
+          <ProjectMetadataSummary project={project} compact />
           <span className="text-primary mt-auto inline-flex items-center gap-1 text-xs font-medium">
             Open project <ArrowUpRight className="size-3.5" />
           </span>

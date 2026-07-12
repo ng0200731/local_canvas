@@ -1,6 +1,7 @@
 import type { CanvasContent } from "@/lib/nodes/types";
+import type { ProjectMetadata } from "@/lib/project-metadata";
 
-export interface Project {
+export interface Project extends ProjectMetadata {
   id: string;
   name: string;
   description: string | null;
@@ -37,7 +38,7 @@ export interface ImageModelDetails {
   durationMs?: number | null;
 }
 
-export interface CreateProjectInput {
+export interface CreateProjectInput extends Partial<ProjectMetadata> {
   name: string;
   description?: string;
 }
@@ -57,7 +58,7 @@ export interface RecordImageInput {
   modelDetails?: ImageModelDetails | null;
 }
 
-export type ProjectUpdate = Partial<Pick<Project, "name" | "description">>;
+export type ProjectUpdate = Partial<Pick<Project, "name" | "description"> & ProjectMetadata>;
 
 /**
  * Persistence boundary for projects, canvases, and image records.
