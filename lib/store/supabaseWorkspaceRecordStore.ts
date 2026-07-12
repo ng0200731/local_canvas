@@ -6,12 +6,14 @@ import {
   normalizeProductRecord,
   normalizeSupplierProductTypes,
   productRecordInputSchema,
+  type ProductRecordInput,
   supplierRecordInputSchema,
   type CustomerRecord,
   type ProductRecord,
   type SupplierRecord,
 } from "@/lib/workspace-records";
 
+import { localWorkspaceRecordStore } from "./localWorkspaceRecordStore";
 import type { WorkspaceRecordStore } from "./workspaceRecordStore";
 
 const employeeRowSchema = z.object({
@@ -88,6 +90,29 @@ function toUnknownArray(value: unknown): unknown[] {
 
 function isMissingVariantsRpc(message: string): boolean {
   return message.includes("upsert_product_with_variants") && message.includes("schema cache");
+}
+
+function isProductSchemaCacheMismatch(message: string): boolean {
+  return (
+    isMissingVariantsRpc(message) ||
+    message.includes("supplier_id") ||
+    message.includes("product_variants")
+  );
+}
+
+function newestProductsFirst(records: ProductRecord[]): ProductRecord[] {
+  return [...records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function mergeProducts(primary: ProductRecord[], secondary: ProductRecord[]): ProductRecord[] {
+  const merged = new Map<string, ProductRecord>();
+  for (const record of [...secondary, ...primary]) {
+    const existing = merged.get(record.id);
+    if (!existing || record.updatedAt.localeCompare(existing.updatedAt) > 0) {
+      merged.set(record.id, record);
+    }
+  }
+  return newestProductsFirst([...merged.values()]);
 }
 
 function mapEmployees(value: unknown) {
@@ -263,7 +288,8 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
           )
           .order("updated_at", { ascending: false });
         assertNoError({ error: legacy.error }, "listProducts");
-        return toUnknownArray(legacy.data).map(mapProduct);
+        const localProducts = await localWorkspaceRecordStore.listProducts();
+        return mergeProducts(toUnknownArray(legacy.data).map(mapProduct), localProducts);
       }
       assertNoError({ error: query.error }, "listProducts");
       return toUnknownArray(query.data).map(mapProduct);
@@ -291,7 +317,7 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         })),
       });
       if (!error) return mapProduct(data);
-      if (!isMissingVariantsRpc(error.message)) assertNoError({ error }, "upsertProduct");
+      if (!isProductSchemaCacheMismatch(error.message)) assertNoError({ error }, "upsertProduct");
 
       // PostgREST can temporarily retain an old function cache after the
       // variants migration. Use the same tables directly so the form remains
@@ -315,13 +341,23 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         image_storage_path: first.image.storagePath,
       };
       const productWrite = await supabase.from("products").upsert(productValues).select().single();
-      assertNoError({ error: productWrite.error }, "upsertProduct");
+      if (productWrite.error) {
+        if (!isProductSchemaCacheMismatch(productWrite.error.message)) {
+          assertNoError({ error: productWrite.error }, "upsertProduct");
+        }
+        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+      }
 
       const removeVariants = await supabase
         .from("product_variants")
         .delete()
         .eq("product_id", productId);
-      assertNoError({ error: removeVariants.error }, "upsertProduct variants");
+      if (removeVariants.error) {
+        if (!isProductSchemaCacheMismatch(removeVariants.error.message)) {
+          assertNoError({ error: removeVariants.error }, "upsertProduct variants");
+        }
+        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+      }
       const variantWrite = await supabase.from("product_variants").insert(
         parsed.variants.map((variant) => ({
           id: variant.id,
@@ -338,7 +374,12 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
           image_storage_path: variant.image.storagePath,
         })),
       );
-      assertNoError({ error: variantWrite.error }, "upsertProduct variants");
+      if (variantWrite.error) {
+        if (!isProductSchemaCacheMismatch(variantWrite.error.message)) {
+          assertNoError({ error: variantWrite.error }, "upsertProduct variants");
+        }
+        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+      }
 
       const saved = await supabase
         .from("products")
@@ -347,7 +388,12 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
         )
         .eq("id", productId)
         .single();
-      assertNoError({ error: saved.error }, "upsertProduct");
+      if (saved.error) {
+        if (!isProductSchemaCacheMismatch(saved.error.message)) {
+          assertNoError({ error: saved.error }, "upsertProduct");
+        }
+        return localWorkspaceRecordStore.upsertProduct(id ?? productId, parsed satisfies ProductRecordInput);
+      }
       return mapProduct(saved.data);
     },
 

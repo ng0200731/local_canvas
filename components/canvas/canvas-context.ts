@@ -68,6 +68,8 @@ export interface CanvasActions {
   deleteNode: (id: string) => void;
   /** Remove a group shell while preserving its children and their connections. */
   ungroupNode: (id: string) => void;
+  /** Remove all external outgoing wires created from a group's direct children. */
+  disconnectGroupNode: (id: string) => void;
   /** Remove a single wire (edge) between nodes. */
   deleteEdge: (id: string) => void;
   /** Resize a node (px). Keeps the top-left corner fixed under nodeOrigin [0.5,0.5]. */

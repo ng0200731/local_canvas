@@ -1,7 +1,7 @@
 "use client";
 
 import { type NodeProps } from "@xyflow/react";
-import { Ungroup } from "lucide-react";
+import { Ungroup, Unplug } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,7 @@ const DEFAULT_WIDTH = 320;
 const DEFAULT_HEIGHT = 192;
 
 export function GroupNode({ id, data, selected }: NodeProps<GroupCanvasNode>) {
-  const { updateNodeData, ungroupNode } = useCanvasActions();
+  const { updateNodeData, ungroupNode, disconnectGroupNode } = useCanvasActions();
   const highlight = useConnectionHighlight(id);
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
@@ -30,17 +30,30 @@ export function GroupNode({ id, data, selected }: NodeProps<GroupCanvasNode>) {
       )}
     >
       <NodeDeleteButton id={id} />
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="outline"
-        className="nodrag absolute top-2 right-10 z-10"
-        aria-label="Disassemble group"
-        title="Disassemble group"
-        onClick={() => ungroupNode(id)}
-      >
-        <Ungroup />
-      </Button>
+      <div className="absolute top-2 right-8 z-10 flex gap-1">
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="outline"
+          className="nodrag"
+          aria-label="Batch disconnect group"
+          title="Batch disconnect group"
+          onClick={() => disconnectGroupNode(id)}
+        >
+          <Unplug />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="outline"
+          className="nodrag"
+          aria-label="Disassemble group"
+          title="Disassemble group"
+          onClick={() => ungroupNode(id)}
+        >
+          <Ungroup />
+        </Button>
+      </div>
       <InputPort color={NODE_PORT_COLORS.group} />
       <input
         value={data.label}

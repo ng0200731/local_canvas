@@ -99,13 +99,15 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
   },
   suppler: {
     type: "suppler",
-    label: "Suppler",
-    description: "Supply context or inputs",
+    label: "Supplier",
+    description: "Choose supplier product references",
     palette: true,
     defaultData: () => ({
-      title: "Suppler",
-      notes: "",
-      status: "draft",
+      selectedProductType: null,
+      productTypeQuery: "",
+      supplierQuery: "",
+      supplierId: null,
+      supplierName: null,
     }),
   },
   action: {

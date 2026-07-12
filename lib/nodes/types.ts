@@ -5,6 +5,7 @@ import type {
   ImageGenerationResolution,
   ImageGenerationSize,
 } from "@/lib/image-generation-models";
+import type { SupplierProductType } from "@/lib/workspace-records";
 import type { PantoneCatalog } from "./pantone";
 
 /** Registered canvas node type identifiers (kept in sync with the registry). */
@@ -92,9 +93,14 @@ export interface OutputNodeData {
 }
 
 export interface SupplerNodeData {
-  title: string;
-  notes: string;
-  status: "draft" | "ready" | "blocked";
+  selectedProductType: SupplierProductType | null;
+  productTypeQuery: string;
+  supplierQuery: string;
+  supplierId: string | null;
+  supplierName: string | null;
+  title?: string;
+  notes?: string;
+  status?: "draft" | "ready" | "blocked";
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
   height?: number;

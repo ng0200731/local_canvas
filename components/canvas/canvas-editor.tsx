@@ -206,6 +206,13 @@ function findNewNodePosition(base: XYPosition, nodes: CanvasNode[]): XYPosition 
   };
 }
 
+function getNodeSizeFromData(node: CanvasNode, fallback: { width: number; height: number }) {
+  return {
+    width: typeof node.data.width === "number" ? node.data.width : fallback.width,
+    height: typeof node.data.height === "number" ? node.data.height : fallback.height,
+  };
+}
+
 function appendSelectedNode(nodes: CanvasNode[], node: CanvasNode): CanvasNode[] {
   return nodes
     .map((n) => (n.selected ? { ...n, selected: false } : n))
@@ -216,7 +223,7 @@ function appendSelectedNode(nodes: CanvasNode[], node: CanvasNode): CanvasNode[]
 }
 
 function nodeNeedsInitialFieldFocus(type: NodeType): boolean {
-  return type === "imageInput" || type === "pantone";
+  return type === "imageInput" || type === "pantone" || type === "suppler";
 }
 
 function focusNewNodeField(nodeId: string) {
@@ -997,6 +1004,34 @@ function Editor({
     [getInternalNode, getNodes, setCanvasEdges, setCanvasNodes],
   );
 
+  const disconnectGroupNode = useCallback(
+    (id: string) => {
+      const childIds = new Set(getNodes().filter((node) => node.parentId === id).map((node) => node.id));
+      if (childIds.size === 0) {
+        toast.info("This group has no child nodes to disconnect.");
+        return;
+      }
+
+      let removed = 0;
+      setCanvasEdges((current) =>
+        current.filter((edge) => {
+          const isLegacyGroupEdge = edge.source === id || edge.target === id;
+          const isOutgoingChildEdge = childIds.has(edge.source) && !childIds.has(edge.target);
+          const shouldRemove = isLegacyGroupEdge || isOutgoingChildEdge;
+          if (shouldRemove) removed += 1;
+          return !shouldRemove;
+        }),
+      );
+
+      if (removed > 0) {
+        toast.success(`${removed} connection${removed === 1 ? "" : "s"} disconnected`);
+      } else {
+        toast.info("No external group connections to disconnect.");
+      }
+    },
+    [getNodes, setCanvasEdges],
+  );
+
   const deleteEdge = useCallback(
     (id: string) => {
       setCanvasEdges((eds) => eds.filter((e) => e.id !== id));
@@ -1037,12 +1072,49 @@ function Editor({
   const addNodeAtPosition = useCallback(
     (type: NodeType, position: XYPosition) => {
       const node = createNode(type, findNewNodePosition(position, nodesRef.current));
+      if (type !== "group") {
+        const parentGroup = getNodes().find((candidate) => {
+          if (candidate.type !== "group") return false;
+          const measuredRect = rectOf(getInternalNode(candidate.id));
+          const rect =
+            measuredRect ??
+            (() => {
+              const size = getNodeSizeFromData(candidate, { width: 320, height: 192 });
+              return {
+                x: candidate.position.x - size.width / 2,
+                y: candidate.position.y - size.height / 2,
+                w: size.width,
+                h: size.height,
+              };
+            })();
+          return (
+            position.x >= rect.x &&
+            position.x <= rect.x + rect.w &&
+            position.y >= rect.y &&
+            position.y <= rect.y + rect.h
+          );
+        });
+        if (parentGroup) {
+          const measuredRect = rectOf(getInternalNode(parentGroup.id));
+          const rect =
+            measuredRect ??
+            (() => {
+              const size = getNodeSizeFromData(parentGroup, { width: 320, height: 192 });
+              return {
+                x: parentGroup.position.x - size.width / 2,
+                y: parentGroup.position.y - size.height / 2,
+              };
+            })();
+          node.parentId = parentGroup.id;
+          node.position = { x: position.x - rect.x, y: position.y - rect.y };
+        }
+      }
       setCanvasNodes((nds) => appendSelectedNode(nds, node));
       if (nodeNeedsInitialFieldFocus(type)) {
         focusNewNodeField(node.id);
       }
     },
-    [setCanvasNodes],
+    [getInternalNode, getNodes, setCanvasNodes],
   );
 
   const addNodeAtCenter = useCallback(
@@ -1176,6 +1248,7 @@ function Editor({
       writeGeneratedImageToOutput,
       deleteNode,
       ungroupNode,
+      disconnectGroupNode,
       deleteEdge,
       resizeNode,
     }),
@@ -1188,6 +1261,7 @@ function Editor({
       writeGeneratedImageToOutput,
       deleteNode,
       ungroupNode,
+      disconnectGroupNode,
       deleteEdge,
       resizeNode,
     ],
@@ -1320,7 +1394,7 @@ function Editor({
 
       <div className="flex min-h-0 flex-1">
         <CanvasActionsContext.Provider value={actions}>
-          <NodePalette onAdd={addNodeAtCenter} />
+          <NodePalette nodes={nodes} onAdd={addNodeAtCenter} />
           <ReferenceHoverContext.Provider value={referenceHover}>
             <ConnectionHighlightContext.Provider value={connectionHighlight}>
               <div
