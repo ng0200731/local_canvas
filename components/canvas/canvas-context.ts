@@ -62,6 +62,7 @@ export interface CanvasActions {
       resolution: ImageGenerationResolution;
       outputFormat: ImageGenerationOutputFormat;
       storagePath: string | null;
+      durationMs?: number;
     },
   ) => boolean;
   /** Remove a node and any wires connected to it. */

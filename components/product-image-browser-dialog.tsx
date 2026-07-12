@@ -53,6 +53,8 @@ interface DragState {
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.2;
+const INITIAL_VISIBLE_IMAGE_COUNT = 18;
+const SHOW_MORE_IMAGE_COUNT = 18;
 
 function highlightMatch(text: string, query: string) {
   const normalizedQuery = query.trim();
@@ -263,6 +265,7 @@ export function ProductImageBrowserDialog({
   );
   const [activeItemId, setActiveItemId] = useState<string | null>(selectedItemId);
   const [previewItemId, setPreviewItemId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_IMAGE_COUNT);
   const preferredActiveItemId = activeItemId ?? selectedItemId;
   const activeItem =
     filteredItems.find((item) => item.id === preferredActiveItemId) ??
@@ -278,6 +281,8 @@ export function ProductImageBrowserDialog({
     : -1;
   const hasPrevious = previewIndex > 0;
   const hasNext = previewIndex >= 0 && previewIndex < filteredItems.length - 1;
+  const visibleItems = filteredItems.slice(0, visibleCount);
+  const hasHiddenItems = visibleCount < filteredItems.length;
 
   function handleSelect(item: ProductImageGalleryItem) {
     onSelect?.(item);
@@ -290,7 +295,10 @@ export function ProductImageBrowserDialog({
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (!nextOpen) setPreviewItemId(null);
+        if (!nextOpen) {
+          setPreviewItemId(null);
+          setVisibleCount(INITIAL_VISIBLE_IMAGE_COUNT);
+        }
       }}
     >
       <DialogTrigger render={trigger} />
@@ -353,31 +361,60 @@ export function ProductImageBrowserDialog({
                 />
               </div>
               {activeItem ? (
-                <div className="grid min-h-0 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                  {filteredItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={cn(
-                        "bg-muted group relative overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        selectedItemId === item.id && "ring-primary ring-2",
-                      )}
-                      onClick={() => {
-                        setActiveItemId(item.id);
-                        setPreviewItemId(item.id);
-                      }}
-                    >
-                      <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={item.variant.image.url}
-                          alt={`${item.product.subject} variant ${item.variantIndex + 1}`}
-                          className="max-h-full max-w-full object-contain p-1 transition-transform group-hover:scale-[1.03]"
-                        />
-                      </span>
-                      <ProductHoverDetails item={item} query={query} />
-                    </button>
-                  ))}
+                <div className="grid min-h-0 gap-3">
+                  <div className="grid max-h-[calc(100dvh-17rem)] min-h-0 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                    {visibleItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={cn(
+                          "bg-muted group relative overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          selectedItemId === item.id && "ring-primary ring-2",
+                        )}
+                        onClick={() => {
+                          setActiveItemId(item.id);
+                          setPreviewItemId(item.id);
+                        }}
+                      >
+                        <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={item.variant.image.url}
+                            alt={`${item.product.subject} variant ${item.variantIndex + 1}`}
+                            className="max-h-full max-w-full object-contain p-1 transition-transform group-hover:scale-[1.03]"
+                          />
+                        </span>
+                        <ProductHoverDetails item={item} query={query} />
+                      </button>
+                    ))}
+                  </div>
+                  {hasHiddenItems ? (
+                    <div className="flex flex-wrap items-center justify-center gap-2 border-t pt-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          setVisibleCount((current) =>
+                            Math.min(filteredItems.length, current + SHOW_MORE_IMAGE_COUNT),
+                          )
+                        }
+                      >
+                        Show more
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          const confirmed = window.confirm(
+                            `Show all ${filteredItems.length} images? This may take time.`,
+                          );
+                          if (confirmed) setVisibleCount(filteredItems.length);
+                        }}
+                      >
+                        Show all {filteredItems.length} images
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <div className="text-muted-foreground flex h-80 flex-col items-center justify-center gap-3 text-center text-sm">

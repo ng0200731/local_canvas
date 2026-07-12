@@ -85,6 +85,19 @@ function modelSummary(image: ImageRecord): string {
     .join(" / ");
 }
 
+function durationBadge(image: ImageRecord): string | null {
+  const durationMs = image.modelDetails?.durationMs;
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 0) {
+    return null;
+  }
+  if (durationMs < 1000) return `${durationMs}ms`;
+  const totalSeconds = durationMs / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
 function creationDateTime(createdAt: string): string {
   const date = new Date(createdAt);
   if (Number.isNaN(date.getTime())) return createdAt;
@@ -227,6 +240,9 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
                       <Badge variant="secondary">{resolutionBadge(image)}</Badge>
                       <Badge variant="secondary">{sizeBadge(image, dimensions[image.id])}</Badge>
                       <Badge variant="secondary">{formatBadge(image)}</Badge>
+                      {durationBadge(image) ? (
+                        <Badge variant="outline">{durationBadge(image)}</Badge>
+                      ) : null}
                     </div>
                     <p className="text-foreground line-clamp-3 text-xs leading-5">
                       {image.prompt ?? "No prompt saved"}

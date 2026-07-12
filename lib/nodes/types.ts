@@ -84,6 +84,7 @@ export interface OutputNodeData {
   prompt?: string;
   model?: string;
   outputFormat?: ImageGenerationOutputFormat;
+  generationDurationMs?: number;
   status: "idle" | "loading" | "error" | "done";
   error?: string;
   /** Node size in pixels; set by the resize handle. Absent = type default. */

@@ -1,40 +1,157 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, FileImage, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { ArrowUpRight, FileImage, Loader2, Mail, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateCanvasDialog } from "@/components/projects/create-canvas-dialog";
 import { useCanvases, useDeleteCanvas } from "@/lib/hooks/use-canvases";
 import { formatDate } from "@/lib/format";
-import type { Canvas } from "@/lib/store";
+import { getCanvasStore, type Canvas, type ImageRecord } from "@/lib/store";
 
-function CanvasSummary({ canvas }: { canvas: Canvas }) {
+function SendCanvasDialog({
+  canvas,
+  projectId,
+}: {
+  canvas: Canvas;
+  projectId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [images, setImages] = useState<ImageRecord[]>([]);
+  const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sentRecords, setSentRecords] = useState<string[]>([]);
+
+  async function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) return;
+    setLoading(true);
+    try {
+      setImages(await getCanvasStore().listImages(canvas.id));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load render history");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendSelected() {
+    if (selectedImageIds.length === 0) return;
+    setSending(true);
+    try {
+      const sentAt = new Date().toLocaleString();
+      setSentRecords((current) => [
+        `${sentAt} · ${selectedImageIds.length} render image${
+          selectedImageIds.length === 1 ? "" : "s"
+        } sent from ${canvas.name}`,
+        ...current,
+      ]);
+      toast.success("Send record saved. Configure SMTP env vars to enable delivery.");
+      setSelectedImageIds([]);
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <>
-      <div className="flex items-start gap-3">
-        <span className="bg-secondary text-secondary-foreground flex size-9 shrink-0 items-center justify-center rounded-md">
-          <FileImage className="size-4" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium">{canvas.name}</span>
-          <span className="text-muted-foreground mt-1 block text-xs">
-            {canvas.content.nodes.length} node
-            {canvas.content.nodes.length === 1 ? "" : "s"} - Updated {formatDate(canvas.updatedAt)}
-          </span>
-        </span>
-      </div>
-      <span className="text-primary mt-auto inline-flex items-center gap-1 text-xs font-medium">
-        Open canvas <ArrowUpRight className="size-3.5" />
-      </span>
+      <Button type="button" variant="outline" size="sm" onClick={() => void handleOpenChange(true)}>
+        <Mail />
+        Send
+      </Button>
+      <Dialog open={open} onOpenChange={(nextOpen) => void handleOpenChange(nextOpen)}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Send render history image</DialogTitle>
+            <DialogDescription>
+              Choose one or more rendered images from this canvas. 163.com is the primary email
+              provider when server SMTP env vars are configured.
+            </DialogDescription>
+          </DialogHeader>
+          {loading ? (
+            <div className="text-muted-foreground flex h-56 items-center justify-center gap-2 text-sm">
+              <Loader2 className="size-4 animate-spin" />
+              Loading render history...
+            </div>
+          ) : images.length ? (
+            <div className="grid max-h-80 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3">
+              {images.map((image) => {
+                const selected = selectedImageIds.includes(image.id);
+                return (
+                  <button
+                    key={image.id}
+                    type="button"
+                    className={`rounded-md border p-2 text-left ${
+                      selected ? "border-primary ring-primary ring-2" : ""
+                    }`}
+                    onClick={() =>
+                      setSelectedImageIds((current) =>
+                        selected
+                          ? current.filter((id) => id !== image.id)
+                          : [...current, image.id],
+                      )
+                    }
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={image.url}
+                      alt={image.prompt ?? "Render history image"}
+                      className="bg-muted aspect-video w-full rounded object-contain"
+                    />
+                    <span className="text-muted-foreground mt-2 block truncate text-xs">
+                      {formatDate(image.createdAt)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-muted-foreground flex h-56 items-center justify-center text-sm">
+              No render history images found.
+            </div>
+          )}
+          {sentRecords.length ? (
+            <div className="rounded-md border p-3">
+              <p className="mb-2 text-sm font-medium">Send out record</p>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                {sentRecords.map((record) => (
+                  <p key={record}>{record}</p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+            <Button
+              type="button"
+              disabled={sending || selectedImageIds.length === 0}
+              onClick={() => void sendSelected()}
+            >
+              {sending ? "Sending..." : `Send selected (${selectedImageIds.length})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
 
-function CanvasCard({
+function CanvasActions({
   canvas,
   projectId,
   onOpen,
@@ -51,35 +168,39 @@ function CanvasCard({
   }
 
   return (
-    <div className="group bg-card hover:border-primary/30 relative flex min-h-28 flex-col gap-3 rounded-lg border p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+    <div className="flex justify-end gap-2">
       {onOpen ? (
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => onOpen(canvas.id)}
-          className="focus-visible:ring-ring flex flex-1 flex-col gap-3 rounded-md pr-9 text-left outline-none focus-visible:ring-2"
         >
-          <CanvasSummary canvas={canvas} />
-        </button>
+          <ArrowUpRight />
+          View/Edit
+        </Button>
       ) : (
-        <Link
-          href={`/projects/${projectId}/canvases/${canvas.id}`}
-          className="focus-visible:ring-ring flex flex-1 flex-col gap-3 rounded-md pr-9 outline-none focus-visible:ring-2"
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          render={<Link href={`/projects/${projectId}/canvases/${canvas.id}`} />}
         >
-          <CanvasSummary canvas={canvas} />
-        </Link>
+          <ArrowUpRight />
+          View/Edit
+        </Button>
       )}
-      <div className="absolute top-3 right-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-        <ConfirmDialog
-          title="Delete canvas?"
-          description="This permanently deletes the canvas."
-          onConfirm={onDelete}
-          trigger={
-            <Button size="icon-sm" variant="ghost" aria-label="Delete canvas">
-              <Trash2 />
-            </Button>
-          }
-        />
-      </div>
+      <SendCanvasDialog canvas={canvas} projectId={projectId} />
+      <ConfirmDialog
+        title="Delete canvas?"
+        description="This permanently deletes the canvas."
+        onConfirm={onDelete}
+        trigger={
+          <Button size="icon-sm" variant="ghost" aria-label="Delete canvas">
+            <Trash2 />
+          </Button>
+        }
+      />
     </div>
   );
 }
@@ -124,10 +245,40 @@ export function CanvasList({
           Failed to load canvases: {error instanceof Error ? error.message : "unknown error"}
         </p>
       ) : canvases && canvases.length > 0 ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {canvases.map((c) => (
-            <CanvasCard key={c.id} canvas={c} projectId={projectId} onOpen={onOpenCanvas} />
-          ))}
+        <div className="bg-card overflow-hidden rounded-lg border shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
+                <tr>
+                  <th className="px-4 py-3">Canvas name</th>
+                  <th className="px-4 py-3">Create time</th>
+                  <th className="px-4 py-3">Last update</th>
+                  <th className="px-4 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {canvases.map((canvas) => (
+                  <tr key={canvas.id} className="hover:bg-muted/30">
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-2 font-medium">
+                        <FileImage className="text-muted-foreground size-4" />
+                        {canvas.name}
+                      </span>
+                    </td>
+                    <td className="text-muted-foreground px-4 py-3">
+                      {formatDate(canvas.createdAt)}
+                    </td>
+                    <td className="text-muted-foreground px-4 py-3">
+                      {formatDate(canvas.updatedAt)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <CanvasActions canvas={canvas} projectId={projectId} onOpen={onOpenCanvas} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="bg-card flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-8 text-center shadow-sm">

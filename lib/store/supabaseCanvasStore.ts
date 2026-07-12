@@ -59,6 +59,8 @@ interface ImageRow {
     resolution?: string | null;
     outputFormat?: string | null;
     output_format?: string | null;
+    durationMs?: number | null;
+    duration_ms?: number | null;
   } | null;
   created_at: string;
 }
@@ -95,6 +97,8 @@ const imageRowSchema = z.object({
       resolution: z.string().nullable().optional(),
       outputFormat: z.string().nullable().optional(),
       output_format: z.string().nullable().optional(),
+      durationMs: z.number().nullable().optional(),
+      duration_ms: z.number().nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -162,6 +166,7 @@ const mapImage = (value: unknown): ImageRecord => {
           size: r.model_details.size ?? null,
           resolution: r.model_details.resolution ?? null,
           outputFormat: r.model_details.outputFormat ?? r.model_details.output_format ?? null,
+          durationMs: r.model_details.durationMs ?? r.model_details.duration_ms ?? null,
         }
       : null,
     createdAt: r.created_at,
@@ -430,6 +435,7 @@ export function createSupabaseCanvasStore(): CanvasStore {
               size: input.modelDetails.size,
               resolution: input.modelDetails.resolution,
               output_format: input.modelDetails.outputFormat,
+              duration_ms: input.modelDetails.durationMs ?? null,
             }
           : null,
       };

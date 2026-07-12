@@ -12,6 +12,14 @@ import {
   type ProductRecord,
   type SupplierRecord,
 } from "@/lib/workspace-records";
+import {
+  defaultWorkspaceOptions,
+  genericNodeDefinitionInputSchema,
+  genericNodeDefinitionSchema,
+  workspaceOptionListSchema,
+  type GenericNodeDefinition,
+  type WorkspaceOption,
+} from "@/lib/workspace-settings";
 
 import { localWorkspaceRecordStore } from "./localWorkspaceRecordStore";
 import type { WorkspaceRecordStore } from "./workspaceRecordStore";
@@ -75,6 +83,25 @@ const productRowSchema = z.object({
   product_variants: z.array(productVariantRowSchema).optional().default([]),
 });
 
+const workspaceOptionRowSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["currency", "destination-country"]),
+  code: z.string(),
+  name: z.string(),
+  symbol: z.string().nullable(),
+  sort_index: z.number().int(),
+});
+
+const genericNodeRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  image_url: z.string(),
+  storage_path: z.string().nullable(),
+  sort_index: z.number().int(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
 function assertNoError<T extends { error: { message: string } | null }>(
   result: T,
   context: string,
@@ -98,6 +125,15 @@ function isProductSchemaCacheMismatch(message: string): boolean {
     message.includes("supplier_id") ||
     message.includes("product_variants")
   );
+}
+
+function isSettingsSchemaCacheMismatch(message: string): boolean {
+  return [
+    "workspace_options",
+    "generic_node_definitions",
+    "replace_workspace_options",
+    "reorder_generic_node_definitions",
+  ].some((name) => message.includes(name));
 }
 
 function newestProductsFirst(records: ProductRecord[]): ProductRecord[] {
@@ -204,6 +240,31 @@ function mapProduct(rowValue: unknown): ProductRecord {
   });
 }
 
+function mapWorkspaceOption(rowValue: unknown): WorkspaceOption {
+  const row = workspaceOptionRowSchema.parse(rowValue);
+  return {
+    id: row.id,
+    kind: row.kind,
+    code: row.code,
+    name: row.name,
+    symbol: row.symbol,
+    sortIndex: row.sort_index,
+  };
+}
+
+function mapGenericNodeDefinition(rowValue: unknown): GenericNodeDefinition {
+  const row = genericNodeRowSchema.parse(rowValue);
+  return genericNodeDefinitionSchema.parse({
+    id: row.id,
+    name: row.name,
+    imageUrl: row.image_url,
+    storagePath: row.storage_path,
+    sortIndex: row.sort_index,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
 export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
   const supabase = getSupabaseBrowserClient();
 
@@ -271,6 +332,12 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       });
       assertNoError({ error }, "upsertSupplier");
       return mapSupplier(data, (data as { employees?: unknown } | null)?.employees);
+    },
+
+    async deleteSuppliers(ids) {
+      if (ids.length === 0) return;
+      const { error } = await supabase.from("suppliers").delete().in("id", ids);
+      assertNoError({ error }, "deleteSuppliers");
     },
 
     async listProducts() {
@@ -418,6 +485,114 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       }
       assertNoError({ error: query.error }, "getProduct");
       return query.data ? mapProduct(query.data) : null;
+    },
+
+    async listWorkspaceOptions(kind) {
+      const query = await supabase
+        .from("workspace_options")
+        .select("id, kind, code, name, symbol, sort_index")
+        .eq("kind", kind)
+        .order("sort_index", { ascending: true });
+      if (query.error) {
+        if (isSettingsSchemaCacheMismatch(query.error.message)) {
+          return localWorkspaceRecordStore.listWorkspaceOptions(kind);
+        }
+        assertNoError({ error: query.error }, "listWorkspaceOptions");
+      }
+      const rows = toUnknownArray(query.data).map(mapWorkspaceOption);
+      return rows.length > 0 ? rows : defaultWorkspaceOptions(kind);
+    },
+
+    async replaceWorkspaceOptions(kind, options) {
+      const parsed = workspaceOptionListSchema.parse(options).map((option, sortIndex) => ({
+        ...option,
+        sortIndex,
+      }));
+      if (parsed.some((option) => option.kind !== kind)) {
+        throw new Error("Workspace option kind does not match the requested setting.");
+      }
+      const userId = await getCurrentUserId();
+      const { data, error } = await supabase.rpc("replace_workspace_options", {
+        p_kind: kind,
+        p_options: parsed,
+        p_user_id: userId,
+      });
+      if (error) {
+        if (isSettingsSchemaCacheMismatch(error.message)) {
+          return localWorkspaceRecordStore.replaceWorkspaceOptions(kind, parsed);
+        }
+        assertNoError({ error }, "replaceWorkspaceOptions");
+      }
+      return workspaceOptionListSchema.parse(
+        toUnknownArray(data).map((row) => mapWorkspaceOption(row)),
+      );
+    },
+
+    async listGenericNodeDefinitions() {
+      const query = await supabase
+        .from("generic_node_definitions")
+        .select("id, name, image_url, storage_path, sort_index, created_at, updated_at")
+        .order("sort_index", { ascending: true });
+      if (query.error) {
+        if (isSettingsSchemaCacheMismatch(query.error.message)) {
+          return localWorkspaceRecordStore.listGenericNodeDefinitions();
+        }
+        assertNoError({ error: query.error }, "listGenericNodeDefinitions");
+      }
+      return toUnknownArray(query.data).map(mapGenericNodeDefinition);
+    },
+
+    async upsertGenericNodeDefinition(id, input) {
+      const parsed = genericNodeDefinitionInputSchema.parse(input);
+      const userId = await getCurrentUserId();
+      const existing = await this.listGenericNodeDefinitions();
+      const current = id ? existing.find((record) => record.id === id) : null;
+      const values = {
+        id: current?.id ?? id ?? crypto.randomUUID(),
+        user_id: userId,
+        name: parsed.name,
+        image_url: parsed.imageUrl,
+        storage_path: parsed.storagePath,
+        sort_index: current?.sortIndex ?? existing.length,
+      };
+      const query = await supabase
+        .from("generic_node_definitions")
+        .upsert(values)
+        .select("id, name, image_url, storage_path, sort_index, created_at, updated_at")
+        .single();
+      if (query.error) {
+        if (isSettingsSchemaCacheMismatch(query.error.message)) {
+          return localWorkspaceRecordStore.upsertGenericNodeDefinition(id, parsed);
+        }
+        assertNoError({ error: query.error }, "upsertGenericNodeDefinition");
+      }
+      return mapGenericNodeDefinition(query.data);
+    },
+
+    async deleteGenericNodeDefinition(id) {
+      const query = await supabase.from("generic_node_definitions").delete().eq("id", id);
+      if (query.error) {
+        if (isSettingsSchemaCacheMismatch(query.error.message)) {
+          await localWorkspaceRecordStore.deleteGenericNodeDefinition(id);
+          return;
+        }
+        assertNoError({ error: query.error }, "deleteGenericNodeDefinition");
+      }
+    },
+
+    async reorderGenericNodeDefinitions(orderedIds) {
+      const userId = await getCurrentUserId();
+      const { data, error } = await supabase.rpc("reorder_generic_node_definitions", {
+        p_ids: orderedIds,
+        p_user_id: userId,
+      });
+      if (error) {
+        if (isSettingsSchemaCacheMismatch(error.message)) {
+          return localWorkspaceRecordStore.reorderGenericNodeDefinitions(orderedIds);
+        }
+        assertNoError({ error }, "reorderGenericNodeDefinitions");
+      }
+      return toUnknownArray(data).map(mapGenericNodeDefinition);
     },
   };
 }

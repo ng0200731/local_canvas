@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   FolderKanban,
   Layers3,
+  Mail,
   Menu,
   PackageSearch,
   PanelLeftClose,
@@ -21,8 +22,8 @@ import { ProjectList } from "@/components/projects/project-list";
 import { EntityWorkspacePanel } from "@/components/welcome/entity-workspace-panel";
 import { cn } from "@/lib/utils";
 
-type SectionId = "customer" | "product" | "supplier" | "project";
-type TabId = "customer" | "product" | "supplier" | "project";
+type SectionId = "customer" | "product" | "supplier" | "project" | "email";
+type TabId = "customer" | "product" | "supplier" | "project" | "email";
 type WorkspaceMode = "new" | "records";
 
 interface MenuItem {
@@ -85,6 +86,13 @@ const sections: MenuSection[] = [
       { label: "View / edit", tab: "project", mode: "records" },
     ],
   },
+  {
+    id: "email",
+    label: "Email Setting",
+    icon: Mail,
+    tab: "email",
+    items: [{ label: "SMTP setting", tab: "email", mode: "records" }],
+  },
 ];
 
 const tabLabels: Record<TabId, string> = {
@@ -92,7 +100,79 @@ const tabLabels: Record<TabId, string> = {
   product: "Product +",
   supplier: "Supplier +",
   project: "Project",
+  email: "Email Setting",
 };
+
+function EmailSettingPanel() {
+  return (
+    <section className="mx-auto grid w-full max-w-4xl gap-5">
+      <div>
+        <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+          Email Setting
+        </p>
+        <h2 className="mt-1 text-2xl font-semibold tracking-tight">SMTP delivery</h2>
+        <p className="text-muted-foreground mt-2 max-w-2xl text-sm leading-6">
+          Keep SMTP passwords in server-side environment variables only. 163.com is configured as
+          the primary provider for this project, with Gmail as backup.
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="bg-card rounded-lg border p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Mail className="text-primary size-4" />
+            <h3 className="font-semibold">Primary: 163.com</h3>
+          </div>
+          <dl className="grid gap-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Server</dt>
+              <dd className="font-medium">smtp.163.com</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Port</dt>
+              <dd className="font-medium">465 SSL</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Env username</dt>
+              <dd className="font-mono text-xs">SMTP_163_USERNAME</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Env password</dt>
+              <dd className="font-mono text-xs">SMTP_163_PASSWORD</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="bg-card rounded-lg border p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Mail className="text-muted-foreground size-4" />
+            <h3 className="font-semibold">Backup: Gmail</h3>
+          </div>
+          <dl className="grid gap-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Server</dt>
+              <dd className="font-medium">smtp.gmail.com</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Port</dt>
+              <dd className="font-medium">587 TLS</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Env username</dt>
+              <dd className="font-mono text-xs">SMTP_GMAIL_USERNAME</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Env password</dt>
+              <dd className="font-mono text-xs">SMTP_GMAIL_PASSWORD</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+      <div className="bg-muted/40 rounded-lg border p-5 text-sm leading-6">
+        Add these variables in Vercel Project Settings → Environment Variables. Do not use
+        NEXT_PUBLIC_ for email credentials.
+      </div>
+    </section>
+  );
+}
 
 function ProjectWorkspacePanel({
   selectedProjectId,
@@ -190,6 +270,7 @@ function renderTabContent({
       />
     );
   }
+  if (tabId === "email") return <EmailSettingPanel />;
   if (tabId === "customer")
     return (
       <EntityWorkspacePanel
@@ -270,7 +351,7 @@ export function WorkspaceShell({
 
     setExpanded((current) => (current === section.id ? null : section.id));
     setActiveSection(section.id);
-    if (section.id === "project") openTab(section.tab);
+    if (section.id === "project" || section.id === "email") openTab(section.tab);
   }
 
   function closeTab(tabId: TabId) {

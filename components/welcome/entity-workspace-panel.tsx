@@ -68,6 +68,7 @@ import {
   useCustomers,
   useProducts,
   useSuppliers,
+  useDeleteSuppliers,
   useUpsertCustomer,
   useUpsertProduct,
   useUpsertSupplier,
@@ -1692,6 +1693,7 @@ function PartyWorkspacePanel({
   const [activeFormVersion, setActiveFormVersion] = useState(formVersion);
   const [showSupplierNextStep, setShowSupplierNextStep] = useState(false);
   const [savedSupplierId, setSavedSupplierId] = useState<string | null>(null);
+  const [selectedSupplierIds, setSelectedSupplierIds] = useState<string[]>([]);
   const [supplierFilters, setSupplierFilters] = useState<SupplierTableFilters>(
     emptySupplierTableFilters(),
   );
@@ -1700,6 +1702,7 @@ function PartyWorkspacePanel({
   const products = useProducts();
   const upsertCustomer = useUpsertCustomer();
   const upsertSupplier = useUpsertSupplier();
+  const deleteSuppliers = useDeleteSuppliers();
 
   const domainSuffix =
     kind === "customer" ? customerCompany.emailDomainSuffix : supplierCompany.emailDomainSuffix;
@@ -1721,6 +1724,7 @@ function PartyWorkspacePanel({
     setEditingId(null);
     setActiveSubTab("company");
     setSavedSupplierId(null);
+    setSelectedSupplierIds([]);
     setSupplierFilters(emptySupplierTableFilters());
   }
 
@@ -1762,6 +1766,26 @@ function PartyWorkspacePanel({
     setEmployees(record.employees);
     setEditingId(record.id);
     setActiveSubTab(tab);
+  }
+
+  async function deleteSupplierRecords(ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids));
+    if (uniqueIds.length === 0) return;
+    const confirmed = window.confirm(
+      uniqueIds.length === 1
+        ? "Delete this supplier record? Products from this supplier will become unlinked."
+        : `Delete ${uniqueIds.length} supplier records? Products from these suppliers will become unlinked.`,
+    );
+    if (!confirmed) return;
+    try {
+      await deleteSuppliers.mutateAsync(uniqueIds);
+      setSelectedSupplierIds((current) => current.filter((id) => !uniqueIds.includes(id)));
+      setExpandedRecordIds((current) => current.filter((id) => !uniqueIds.includes(id)));
+      if (editingId && uniqueIds.includes(editingId)) setEditingId(null);
+      toast.success(uniqueIds.length === 1 ? "Supplier deleted" : "Suppliers deleted");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete supplier");
+    }
   }
 
   function getSearchCollapseKey(recordId: string) {
@@ -1827,6 +1851,13 @@ function PartyWorkspacePanel({
       : supplierCompanySchema.safeParse(supplierCompany).success;
 
   if (mode === "records" && editingId === null) {
+    const selectedFilteredSupplierIds = filteredSupplierRecords
+      .map((record) => record.id)
+      .filter((id) => selectedSupplierIds.includes(id));
+    const allFilteredSuppliersSelected =
+      filteredSupplierRecords.length > 0 &&
+      selectedFilteredSupplierIds.length === filteredSupplierRecords.length;
+
     return (
       <section className="mx-auto grid w-full max-w-6xl gap-5">
         <div>
@@ -1839,15 +1870,29 @@ function PartyWorkspacePanel({
         </div>
         <div className="bg-card overflow-hidden rounded-lg border shadow-sm">
           <div className="border-b p-4">
-            <div className="relative max-w-md">
-              <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="pl-9"
-                placeholder="Search company or employee"
-                aria-label="Search records"
-              />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="relative max-w-md flex-1">
+                <Search className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="pl-9"
+                  placeholder="Search company or employee"
+                  aria-label="Search records"
+                />
+              </div>
+              {kind === "supplier" && selectedSupplierIds.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={deleteSuppliers.isPending}
+                  onClick={() => void deleteSupplierRecords(selectedSupplierIds)}
+                >
+                  <Trash2 />
+                  Delete selected ({selectedSupplierIds.length})
+                </Button>
+              ) : null}
             </div>
           </div>
           {isLoadingRecords ? (
@@ -1863,6 +1908,22 @@ function PartyWorkspacePanel({
                 <table className="w-full text-left text-sm">
                   <thead className="bg-muted/60 text-muted-foreground text-xs uppercase">
                     <tr>
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all visible suppliers"
+                          checked={allFilteredSuppliersSelected}
+                          onChange={(event) => {
+                            const visibleIds = filteredSupplierRecords.map((record) => record.id);
+                            setSelectedSupplierIds((current) =>
+                              event.target.checked
+                                ? Array.from(new Set([...current, ...visibleIds]))
+                                : current.filter((id) => !visibleIds.includes(id)),
+                            );
+                          }}
+                          className="accent-primary size-4"
+                        />
+                      </th>
                       <th className="px-4 py-3">Company</th>
                       <th className="px-4 py-3">Domain</th>
                       <th className="px-4 py-3">Product types</th>
@@ -1871,6 +1932,7 @@ function PartyWorkspacePanel({
                       <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
                     <tr className="bg-background/90 normal-case">
+                      <th className="px-4 py-2" />
                       <th className="px-4 py-2">
                         <Input
                           value={supplierFilters.company}
@@ -1943,7 +2005,7 @@ function PartyWorkspacePanel({
                     {filteredSupplierRecords.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={7}
                           className="text-muted-foreground px-4 py-10 text-center text-sm"
                         >
                           No suppliers match the active filters.
@@ -1965,6 +2027,21 @@ function PartyWorkspacePanel({
 
                       return (
                         <tr key={record.id} className="hover:bg-muted/30">
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${record.company.companyName}`}
+                              checked={selectedSupplierIds.includes(record.id)}
+                              onChange={(event) =>
+                                setSelectedSupplierIds((current) =>
+                                  event.target.checked
+                                    ? Array.from(new Set([...current, record.id]))
+                                    : current.filter((id) => id !== record.id),
+                                )
+                              }
+                              className="accent-primary size-4"
+                            />
+                          </td>
                           <td className="px-4 py-3 font-medium">{record.company.companyName}</td>
                           <td className="text-muted-foreground px-4 py-3">
                             @{record.company.emailDomainSuffix}
@@ -2005,6 +2082,16 @@ function PartyWorkspacePanel({
                               >
                                 <Pencil />
                                 Edit
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={deleteSuppliers.isPending}
+                                onClick={() => void deleteSupplierRecords([record.id])}
+                              >
+                                <Trash2 />
+                                Delete
                               </Button>
                             </div>
                           </td>
@@ -2693,7 +2780,11 @@ function ProductWorkspacePanel({
             <Wand2 />
             Dummy input
           </Button>
-          <Button type="button" onClick={saveProduct} disabled={upsertProduct.isPending}>
+          <Button
+            type="button"
+            onClick={saveProduct}
+            disabled={upsertProduct.isPending || isUploadingImage}
+          >
             <Save />
             {editingId ? "Update product" : "Save product"}
           </Button>
@@ -2888,12 +2979,14 @@ function ProductWorkspacePanel({
                 >
                   {variant.image ? (
                     <>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={variant.image.url}
-                        alt={`Uploaded variant ${index + 1}`}
-                        className="aspect-square w-full object-cover"
-                      />
+                      <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={variant.image.url}
+                          alt={`Uploaded variant ${index + 1}`}
+                          className="max-h-full max-w-full object-contain p-1"
+                        />
+                      </span>
                       <span className="block truncate px-2 py-1 text-[0.68rem]">
                         {variant.image.name}
                       </span>
@@ -3024,7 +3117,7 @@ function ProductWorkspacePanel({
           </div>
         </div>
       </div>
-      {upsertProduct.isPending ? (
+      {isUploadingImage || upsertProduct.isPending ? (
         <div
           className="bg-background/75 fixed inset-0 z-50 grid place-items-center backdrop-blur-sm"
           role="status"
@@ -3032,7 +3125,9 @@ function ProductWorkspacePanel({
         >
           <div className="bg-card flex items-center gap-3 rounded-lg border px-5 py-4 shadow-lg">
             <span className="border-primary size-5 animate-spin rounded-full border-2 border-t-transparent" />
-            <span className="text-sm font-semibold">Saving...</span>
+            <span className="text-sm font-semibold">
+              {isUploadingImage ? "uploading.." : "Saving..."}
+            </span>
           </div>
         </div>
       ) : null}

@@ -20,6 +20,16 @@ import { ResizeHandle } from "./resize-handle";
 const DEFAULT_WIDTH = 264;
 const DEFAULT_HEIGHT = 220;
 
+function formatDuration(ms?: number): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${ms}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(totalSeconds < 10 ? 1 : 0)}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
 export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCanvasNode>) {
   const { updateNodeData } = useCanvasActions();
   const [downloading, setDownloading] = useState(false);
@@ -28,6 +38,7 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
   const resultUrl = data.resultUrl;
+  const durationLabel = formatDuration(data.generationDurationMs);
 
   useEffect(() => {
     if (data.status !== "error" || !isStaleGenerationConfigurationError(data.error)) return;
@@ -72,6 +83,11 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
       <div className="flex items-center gap-2 text-sm font-medium">
         <Download className="size-4" />
         Output
+        {durationLabel ? (
+          <span className="text-muted-foreground ml-auto text-[0.68rem] tabular-nums">
+            {durationLabel}
+          </span>
+        ) : null}
       </div>
 
       <div className="bg-muted/40 relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border">

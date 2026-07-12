@@ -45,6 +45,19 @@ export function useUpsertSupplier() {
   });
 }
 
+export function useDeleteSuppliers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => getWorkspaceRecordStore().deleteSuppliers(ids),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: SUPPLIERS_KEY }),
+        queryClient.invalidateQueries({ queryKey: PRODUCTS_KEY }),
+      ]);
+    },
+  });
+}
+
 export function useProducts() {
   return useQuery({
     queryKey: PRODUCTS_KEY,

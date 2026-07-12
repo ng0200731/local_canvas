@@ -1218,6 +1218,7 @@ function Editor({
         resolution: ImageGenerationResolution;
         outputFormat: ImageGenerationOutputFormat;
         storagePath: string | null;
+        durationMs?: number;
       },
     ) => {
       const updated = updateConnectedOutputData(generateNodeId, {
@@ -1225,6 +1226,7 @@ function Editor({
         prompt: meta.prompt,
         model: meta.model,
         outputFormat: meta.outputFormat,
+        generationDurationMs: meta.durationMs,
         status: "done",
         error: undefined,
       });
@@ -1244,6 +1246,7 @@ function Editor({
             size: meta.size,
             resolution: meta.resolution,
             outputFormat: meta.outputFormat,
+            durationMs: meta.durationMs ?? null,
           },
         })
         .catch((error: unknown) => {

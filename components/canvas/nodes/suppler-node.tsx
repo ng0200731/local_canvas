@@ -3,6 +3,7 @@
 import { type NodeProps } from "@xyflow/react";
 import { BookOpen, ImageIcon, Package, Search, X } from "lucide-react";
 
+import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { ProductImageBrowserDialog } from "@/components/product-image-browser-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -292,11 +293,24 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
         </div>
         {data.variantImageUrl ? (
           <div className="bg-muted overflow-hidden rounded-md border">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <ImagePreviewDialog
               src={data.variantImageUrl}
               alt={data.variantImageName ?? data.productSubject ?? "Selected supplier product"}
-              className="aspect-video w-full object-cover"
+              title={data.productSubject ?? data.variantImageName ?? "Selected supplier image"}
+              trigger={
+                <button
+                  type="button"
+                  className="nodrag nopan focus-visible:ring-ring block w-full cursor-zoom-in overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                  aria-label="Open selected supplier image preview"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={data.variantImageUrl}
+                    alt={data.variantImageName ?? data.productSubject ?? "Selected supplier product"}
+                    className="aspect-video w-full object-contain"
+                  />
+                </button>
+              }
             />
             <div className="flex items-center justify-between gap-2 p-2">
               <span className="min-w-0 truncate text-xs font-medium">

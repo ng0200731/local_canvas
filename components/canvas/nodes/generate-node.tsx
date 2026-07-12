@@ -65,6 +65,10 @@ import { ResizeHandle } from "./resize-handle";
 const DEFAULT_WIDTH = 288;
 const DEFAULT_HEIGHT = 500;
 
+function nowMs(): number {
+  return Date.now();
+}
+
 interface MentionState {
   start: number;
   end: number;
@@ -619,6 +623,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       outputFormat,
       resolution,
     });
+    const generationStartedAt = nowMs();
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -639,6 +644,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         throw new Error(error.success ? error.data.error : "Generation failed");
       }
       const persisted = await persistGeneratedImage(parsed.data.url, outputFormat);
+      const generationDurationMs = Math.max(
+        0,
+        nowMs() - generationStartedAt,
+      );
       updateNodeData(id, {
         status: "done",
         resultUrl: persisted.url,
@@ -646,6 +655,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         size,
         outputFormat,
         resolution,
+        generationDurationMs,
         error: undefined,
       });
       const outputWritten = writeGeneratedImageToOutput(id, persisted.url, {
@@ -655,6 +665,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         resolution,
         outputFormat,
         storagePath: persisted.storagePath,
+        durationMs: generationDurationMs,
       });
       if (!outputWritten) {
         throw new Error("Output node was disconnected before generation finished");

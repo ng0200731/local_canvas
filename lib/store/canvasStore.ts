@@ -34,6 +34,7 @@ export interface ImageModelDetails {
   size: string | null;
   resolution: string | null;
   outputFormat: string | null;
+  durationMs?: number | null;
 }
 
 export interface CreateProjectInput {
