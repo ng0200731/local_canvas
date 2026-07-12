@@ -237,6 +237,18 @@ function getGroupRectFromNode(node: CanvasNode): { x: number; y: number; w: numb
   };
 }
 
+function rectsOverlap(
+  left: { x: number; y: number; w: number; h: number },
+  right: { x: number; y: number; w: number; h: number },
+): boolean {
+  return (
+    left.x < right.x + right.w &&
+    left.x + left.w > right.x &&
+    left.y < right.y + right.h &&
+    left.y + left.h > right.y
+  );
+}
+
 function appendSelectedNode(nodes: CanvasNode[], node: CanvasNode): CanvasNode[] {
   return nodes
     .map((n) => (n.selected ? { ...n, selected: false } : n))
@@ -374,6 +386,32 @@ function findConnectedInputReferences(
       continue;
     }
 
+    if (node.type === "suppler") {
+      const imageUrl =
+        typeof node.data.variantImageUrl === "string" ? node.data.variantImageUrl : null;
+      if (!imageUrl) continue;
+
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : "supplier";
+      const label =
+        typeof node.data.productSubject === "string" && node.data.productSubject.trim()
+          ? node.data.productSubject.trim()
+          : alias;
+
+      seen.add(otherNodeId);
+      references.push({
+        edgeId: edge.id,
+        nodeId: otherNodeId,
+        kind: "image",
+        alias,
+        label,
+        imageUrl,
+      });
+      continue;
+    }
+
     if (node.type === "pantone") {
       const swatchHex =
         typeof node.data.hex === "string" && node.data.hex.startsWith("#") ? node.data.hex : null;
@@ -470,6 +508,7 @@ function Editor({
   const [connectionTargetDot, setConnectionTargetDot] = useState<"left" | "right" | null>(null);
   const [hoverTarget, setHoverTarget] = useState<HoverTarget>(null);
   const [hoveredReferenceNodeId, setHoveredReferenceNodeId] = useState<string | null>(null);
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
 
   // ComfyUI style: the in-progress wire and both highlight rings share the
   // source node's type color.
@@ -954,7 +993,11 @@ function Editor({
         if (!r) continue;
         let target: string | null = null;
         for (const [gid, g] of groups) {
-          if (r.cx >= g.x && r.cx <= g.x + g.w && r.cy >= g.y && r.cy <= g.y + g.h) {
+          const isCurrentGroup = n.parentId === gid;
+          const isInsideForNewGroup =
+            r.cx >= g.x && r.cx <= g.x + g.w && r.cy >= g.y && r.cy <= g.y + g.h;
+          const isStillOverCurrentGroup = isCurrentGroup && rectsOverlap(r, g);
+          if (isInsideForNewGroup || isStillOverCurrentGroup) {
             target = gid;
             break;
           }
@@ -1244,34 +1287,29 @@ function Editor({
     [setCanvasNodes],
   );
 
+  const findGroupAtPosition = useCallback(
+    (position: XYPosition): string | null => {
+      const group = getNodes().find((candidate) => {
+        if (candidate.type !== "group") return false;
+        const measuredRect = rectOf(getInternalNode(candidate.id));
+        const rect = measuredRect ?? getGroupRectFromNode(candidate);
+        return (
+          position.x >= rect.x &&
+          position.x <= rect.x + rect.w &&
+          position.y >= rect.y &&
+          position.y <= rect.y + rect.h
+        );
+      });
+      return group?.id ?? null;
+    },
+    [getInternalNode, getNodes],
+  );
+
   const addNodeAtPosition = useCallback(
     (type: NodeType, position: XYPosition) => {
       let targetGroupId: string | null = null;
       if (type !== "group") {
-        const parentGroup = getNodes().find((candidate) => {
-          if (candidate.type !== "group") return false;
-          const measuredRect = rectOf(getInternalNode(candidate.id));
-          const rect =
-            measuredRect ??
-            (() => {
-              const size = getNodeSizeFromData(candidate, { width: 320, height: 192 });
-              return {
-                x: candidate.position.x - size.width / 2,
-                y: candidate.position.y - size.height / 2,
-                w: size.width,
-                h: size.height,
-              };
-            })();
-          return (
-            position.x >= rect.x &&
-            position.x <= rect.x + rect.w &&
-            position.y >= rect.y &&
-            position.y <= rect.y + rect.h
-          );
-        });
-        if (parentGroup) {
-          targetGroupId = parentGroup.id;
-        }
+        targetGroupId = findGroupAtPosition(position);
       }
       const node = createNode(
         type,
@@ -1290,7 +1328,7 @@ function Editor({
         focusNewNodeField(node.id);
       }
     },
-    [getInternalNode, getNodes, setCanvasNodes],
+    [findGroupAtPosition, setCanvasNodes],
   );
 
   const addNodeAtCenter = useCallback(
@@ -1307,6 +1345,7 @@ function Editor({
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
+      setDragOverGroupId(null);
       const type = event.dataTransfer.getData("application/ica-node") as NodeType;
       if (!type) return;
       const position = screenToFlowPosition({
@@ -1317,6 +1356,26 @@ function Editor({
     },
     [addNodeAtPosition, screenToFlowPosition],
   );
+
+  const onDragOverCanvas = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const type = event.dataTransfer.types.includes("application/ica-node");
+      if (!type) {
+        setDragOverGroupId(null);
+        return;
+      }
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      setDragOverGroupId(findGroupAtPosition(position));
+    },
+    [findGroupAtPosition, screenToFlowPosition],
+  );
+
+  const clearDragOverGroup = useCallback(() => setDragOverGroupId(null), []);
 
   const nodeTypes = useMemo<NodeTypes>(
     () => ({
@@ -1367,9 +1426,13 @@ function Editor({
     () =>
       nodes.map((node) => ({
         ...node,
-        className: cn(node.className, hoveredGraph.nodeIds.has(node.id) && "canvas-node-highlight"),
+        className: cn(
+          node.className,
+          hoveredGraph.nodeIds.has(node.id) && "canvas-node-highlight",
+          dragOverGroupId === node.id && "canvas-group-drop-target",
+        ),
       })),
-    [hoveredGraph.nodeIds, nodes],
+    [dragOverGroupId, hoveredGraph.nodeIds, nodes],
   );
 
   const renderedEdges = useMemo<CanvasEdge[]>(
@@ -1606,7 +1669,9 @@ function Editor({
               <div
                 className="relative flex-1"
                 onDrop={onDrop}
-                onDragOver={(e) => e.preventDefault()}
+                onDragEnter={onDragOverCanvas}
+                onDragOver={onDragOverCanvas}
+                onDragLeave={clearDragOverGroup}
               >
                 {connectedNotice && (
                   <div className="bg-card text-foreground pointer-events-none absolute top-3 right-3 z-30 rounded-md border px-3 py-1.5 text-xs font-semibold shadow-md">

@@ -9,7 +9,7 @@ import {
   type ReactElement,
   type WheelEvent,
 } from "react";
-import { Check, ImageIcon, Mouse, Move, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, ImageIcon, Mouse, Move, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,22 @@ interface DragState {
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.2;
+
+function highlightMatch(text: string, query: string) {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return text;
+  const index = text.toLocaleLowerCase().indexOf(normalizedQuery.toLocaleLowerCase());
+  if (index < 0) return text;
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded bg-yellow-300 px-0.5 text-black">
+        {text.slice(index, index + normalizedQuery.length)}
+      </mark>
+      {text.slice(index + normalizedQuery.length)}
+    </>
+  );
+}
 
 function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
@@ -209,18 +225,22 @@ function ProductDetails({
   );
 }
 
-function ProductHoverDetails({ item }: { item: ProductImageGalleryItem }) {
+function ProductHoverDetails({ item, query }: { item: ProductImageGalleryItem; query: string }) {
   return (
     <div className="pointer-events-none absolute right-2 bottom-2 left-2 z-20 translate-y-1 rounded-md bg-black/82 p-2 text-[0.68rem] leading-4 text-white opacity-0 shadow-xl ring-1 ring-white/15 transition group-hover:translate-y-0 group-hover:opacity-100">
-      <p className="truncate font-semibold">{item.product.subject}</p>
-      <p className="line-clamp-2 text-white/80">{item.product.detail}</p>
+      <p className="truncate font-semibold">{highlightMatch(item.product.subject, query)}</p>
+      <p className="line-clamp-2 text-white/80">{highlightMatch(item.product.detail, query)}</p>
       <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-white/75">
-        <span className="truncate">Material: {item.variant.material || "-"}</span>
-        <span className="truncate">Color: {item.variant.colorNotes || "-"}</span>
+        <span className="truncate">
+          Material: {highlightMatch(item.variant.material || "-", query)}
+        </span>
+        <span className="truncate">
+          Color: {highlightMatch(item.variant.colorNotes || "-", query)}
+        </span>
         <span className="truncate">
           Price: {item.variant.unitPrice} {item.variant.priceUnit}
         </span>
-        <span className="truncate">Image: {item.variant.image.name}</span>
+        <span className="truncate">Image: {highlightMatch(item.variant.image.name, query)}</span>
       </div>
     </div>
   );
@@ -253,6 +273,11 @@ export function ProductImageBrowserDialog({
     filteredItems.find((item) => item.id === previewItemId) ??
     allItems.find((item) => item.id === previewItemId) ??
     null;
+  const previewIndex = previewItem
+    ? filteredItems.findIndex((item) => item.id === previewItem.id)
+    : -1;
+  const hasPrevious = previewIndex > 0;
+  const hasNext = previewIndex >= 0 && previewIndex < filteredItems.length - 1;
 
   function handleSelect(item: ProductImageGalleryItem) {
     onSelect?.(item);
@@ -280,7 +305,35 @@ export function ProductImageBrowserDialog({
         <div className="grid min-h-0 gap-4 p-5">
           {previewItem ? (
             <div className="grid min-h-0 gap-4 lg:grid-cols-[7fr_3fr]">
-              <ZoomableProductImage key={previewItem.id} item={previewItem} />
+              <div className="relative min-h-0">
+                <ZoomableProductImage key={previewItem.id} item={previewItem} />
+                {hasPrevious ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="secondary"
+                    className="absolute top-1/2 left-3 z-20 size-11 -translate-y-1/2 rounded-full shadow-xl"
+                    aria-label="Previous product image"
+                    title="Previous product image"
+                    onClick={() => setPreviewItemId(filteredItems[previewIndex - 1]?.id ?? null)}
+                  >
+                    <ChevronLeft className="size-5" />
+                  </Button>
+                ) : null}
+                {hasNext ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="secondary"
+                    className="absolute top-1/2 right-3 z-20 size-11 -translate-y-1/2 rounded-full shadow-xl"
+                    aria-label="Next product image"
+                    title="Next product image"
+                    onClick={() => setPreviewItemId(filteredItems[previewIndex + 1]?.id ?? null)}
+                  >
+                    <ChevronRight className="size-5" />
+                  </Button>
+                ) : null}
+              </div>
               <ProductDetails
                 item={previewItem}
                 selected={selectedItemId === previewItem.id}
@@ -314,13 +367,15 @@ export function ProductImageBrowserDialog({
                         setPreviewItemId(item.id);
                       }}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={item.variant.image.url}
-                        alt={`${item.product.subject} variant ${item.variantIndex + 1}`}
-                        className="aspect-square w-full object-cover transition-transform group-hover:scale-[1.03]"
-                      />
-                      <ProductHoverDetails item={item} />
+                      <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={item.variant.image.url}
+                          alt={`${item.product.subject} variant ${item.variantIndex + 1}`}
+                          className="max-h-full max-w-full object-contain p-1 transition-transform group-hover:scale-[1.03]"
+                        />
+                      </span>
+                      <ProductHoverDetails item={item} query={query} />
                     </button>
                   ))}
                 </div>
