@@ -165,33 +165,34 @@ function addFooters(doc: PDFKit.PDFDocument, report: CanvasReportPayload) {
   for (let index = range.start; index < range.start + range.count; index += 1) {
     doc.switchToPage(index);
     addHeader(doc, report);
+    const footerY = doc.page.height - PAGE_MARGIN - 18;
     doc.font("Helvetica").fontSize(8).fillColor("#666666");
     doc.text(
       `Generated: ${formatDateTime(report.generatedAt)} | ${report.project.currency} | ${report.project.destination}`,
       PAGE_MARGIN,
-      doc.page.height - PAGE_MARGIN + 12,
-      { width: width * 0.7, lineBreak: false },
+      footerY,
+      { width: width * 0.7, height: 10, lineBreak: false },
     );
-    doc.text(
-      `Page ${index + 1} of ${range.count}`,
-      PAGE_MARGIN,
-      doc.page.height - PAGE_MARGIN + 12,
-      {
-        width,
-        align: "right",
-        lineBreak: false,
-      },
-    );
+    doc.text(`Page ${index + 1} of ${range.count}`, PAGE_MARGIN, footerY, {
+      width,
+      height: 10,
+      align: "right",
+      lineBreak: false,
+    });
     doc.fillColor("#111111");
   }
 }
 
 function ensureSpace(doc: PDFKit.PDFDocument, height: number, report: CanvasReportPayload) {
+  const top = PAGE_MARGIN + HEADER_HEIGHT;
   const bottom = doc.page.height - PAGE_MARGIN - FOOTER_HEIGHT;
-  if (doc.y + height <= bottom) return;
+  const availableHeight = bottom - top;
+  const requestedHeight = Math.min(height, availableHeight);
+  if (doc.y + requestedHeight <= bottom) return;
+  if (doc.y <= top + 1) return;
   doc.addPage();
   addHeader(doc, report);
-  doc.y = PAGE_MARGIN + HEADER_HEIGHT;
+  doc.y = top;
 }
 
 function drawDetails(
@@ -200,17 +201,46 @@ function drawDetails(
   x: number,
   y: number,
   width: number,
+  maxY?: number,
 ): number {
   let cursorY = y;
-  for (const detail of details) {
+  for (let index = 0; index < details.length; index += 1) {
+    const detail = details[index];
+    if (!detail) continue;
     const labelWidth = 110;
     const valueWidth = width - labelWidth - 10;
     const valueHeight = doc.heightOfString(detail.value, { width: valueWidth });
     const rowHeight = Math.max(16, valueHeight + 4);
+    if (maxY !== undefined && cursorY + rowHeight > maxY) {
+      const remaining = details.length - index;
+      if (maxY - cursorY >= 14) {
+        doc.font("Helvetica").fontSize(8).fillColor("#777777");
+        doc.text(
+          `${remaining} more detail${remaining === 1 ? "" : "s"} omitted for PDF layout.`,
+          x,
+          cursorY + 2,
+          {
+            width,
+            height: maxY - cursorY,
+            ellipsis: true,
+          },
+        );
+      }
+      doc.fillColor("#111111");
+      return maxY;
+    }
     doc.font("Helvetica-Bold").fontSize(8).fillColor("#666666");
-    doc.text(detail.label, x, cursorY + 2, { width: labelWidth });
+    doc.text(detail.label, x, cursorY + 2, {
+      width: labelWidth,
+      height: rowHeight,
+      ellipsis: true,
+    });
     doc.font("Helvetica").fontSize(8).fillColor("#111111");
-    doc.text(detail.value, x + labelWidth + 10, cursorY + 2, { width: valueWidth });
+    doc.text(detail.value, x + labelWidth + 10, cursorY + 2, {
+      width: valueWidth,
+      height: rowHeight,
+      ellipsis: true,
+    });
     cursorY += rowHeight;
   }
   return cursorY;
@@ -373,7 +403,7 @@ function drawBlock(
     );
     const supplierBlockHeight = Math.max(
       270,
-      Math.min(680, supplierDetailTop + supplierDetailsHeight + 18),
+      Math.min(620, supplierDetailTop + supplierDetailsHeight + 18),
     );
 
     ensureSpace(doc, supplierBlockHeight + BLOCK_GAP, report);
@@ -397,7 +427,14 @@ function drawBlock(
       supplierImageHeight,
       block.image?.url ? "Image URL included in email HTML." : "No image",
     );
-    drawDetails(doc, block.details, PAGE_MARGIN + 12, top + supplierDetailTop, contentWidth - 24);
+    drawDetails(
+      doc,
+      block.details,
+      PAGE_MARGIN + 12,
+      top + supplierDetailTop,
+      contentWidth - 24,
+      top + supplierBlockHeight - 12,
+    );
     doc.y = top + supplierBlockHeight + BLOCK_GAP;
     return;
   }
@@ -425,7 +462,14 @@ function drawBlock(
         detailsWidth,
       )
     : detailTop;
-  drawDetails(doc, block.details, PAGE_MARGIN + 12, afterTable, detailsWidth);
+  drawDetails(
+    doc,
+    block.details,
+    PAGE_MARGIN + 12,
+    afterTable,
+    detailsWidth,
+    top + blockHeight - 12,
+  );
   drawImage(
     doc,
     images.get(block.id),

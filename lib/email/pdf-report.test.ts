@@ -100,4 +100,45 @@ describe("renderCanvasReportPdf", () => {
     expect(pdf.length).toBeGreaterThan(1_000);
     expect(pdf.toString("latin1")).toContain("/Subtype /Image");
   });
+
+  it("does not create excessive blank pages for tall supplier detail blocks", async () => {
+    const tallReport: CanvasReportPayload = {
+      ...report,
+      sections: [
+        {
+          id: "supplier-details",
+          title: "Supplier details",
+          blocks: Array.from({ length: 4 }, (_, index) => ({
+            id: `supplier-${index + 1}`,
+            title: `Supplier ${index + 1}`,
+            subtitle: `@supplier${index + 1}`,
+            details: Array.from({ length: 22 }, (_item, detailIndex) => ({
+              label: `Detail ${detailIndex + 1}`,
+              value: "Long supplier detail value for layout testing.",
+            })),
+            image: {
+              url: tinyPng,
+              alt: `Supplier ${index + 1}`,
+            },
+          })),
+        },
+      ],
+      steps: [],
+    };
+
+    const pdf = await renderCanvasReportPdf({
+      title: tallReport.title,
+      customerName: tallReport.project.customerName,
+      text: "Fallback text",
+      report: tallReport,
+    });
+    const pageCounts = Array.from(pdf.toString("latin1").matchAll(/\/Count\s+(\d+)/g)).map(
+      (match) => Number(match[1]),
+    );
+    const pageCount = pageCounts.length ? Math.max(...pageCounts) : 0;
+
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pageCount).toBeGreaterThan(0);
+    expect(pageCount).toBeLessThanOrEqual(6);
+  });
 });

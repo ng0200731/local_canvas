@@ -8,7 +8,10 @@ import { ProductImageBrowserDialog } from "@/components/product-image-browser-di
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
-import type { ProductImageGalleryItem } from "@/lib/product-image-gallery";
+import {
+  getProductImageGalleryItems,
+  type ProductImageGalleryItem,
+} from "@/lib/product-image-gallery";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { SupplerCanvasNode } from "@/lib/nodes/types";
 import {
@@ -65,6 +68,10 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
   );
   const selectedGalleryItemId =
     data.productId && data.variantId ? `${data.productId}:${data.variantId}` : null;
+  const selectedGalleryItems = getProductImageGalleryItems(selectedSupplierProducts);
+  const selectedGalleryIndex = selectedGalleryItemId
+    ? selectedGalleryItems.findIndex((item) => item.id === selectedGalleryItemId)
+    : 0;
   const productTypes = supplierProductTypes.filter((productType) =>
     fuzzyIncludes(supplierProductTypeLabels[productType], productTypeQuery),
   );
@@ -299,6 +306,23 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
               src={data.variantImageUrl}
               alt={data.variantImageName ?? data.productSubject ?? "Selected supplier product"}
               title={data.productSubject ?? data.variantImageName ?? "Selected supplier image"}
+              gallery={
+                selectedGalleryItems.length
+                  ? selectedGalleryItems.map((item) => ({
+                      id: item.id,
+                      src: item.variant.image.url,
+                      alt: item.variant.image.name,
+                    }))
+                  : undefined
+              }
+              initialIndex={selectedGalleryIndex >= 0 ? selectedGalleryIndex : 0}
+              selectedItemId={selectedGalleryItemId}
+              selectLabel="Select image"
+              selectedLabel="Selected"
+              onSelect={(_item, index) => {
+                const galleryItem = selectedGalleryItems[index];
+                if (galleryItem) selectProductImage(galleryItem);
+              }}
               trigger={
                 <button
                   type="button"

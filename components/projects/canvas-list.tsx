@@ -80,10 +80,8 @@ function SendCanvasDialog({
     }
   }
 
-  function toggleImageSelection(imageId: string) {
-    setSelectedImageIds((current) =>
-      current.includes(imageId) ? current.filter((id) => id !== imageId) : [...current, imageId],
-    );
+  function selectImage(imageId: string) {
+    setSelectedImageIds([imageId]);
   }
 
   function showPreviousPreview() {
@@ -107,7 +105,7 @@ function SendCanvasDialog({
       return;
     }
     if (selectedImageIds.length === 0) {
-      toast.error("Please select at least one render image before sending the canvas report.");
+      toast.error("Please select one render image before sending the canvas report.");
       return;
     }
 
@@ -318,7 +316,10 @@ function SendCanvasDialog({
               <Button
                 type="button"
                 variant={selectedImageIds.includes(previewImage.id) ? "secondary" : "default"}
-                onClick={() => toggleImageSelection(previewImage.id)}
+                onClick={() => {
+                  selectImage(previewImage.id);
+                  setPreviewIndex(null);
+                }}
               >
                 {selectedImageIds.includes(previewImage.id) ? <Check /> : <FileImage />}
                 {selectedImageIds.includes(previewImage.id) ? "Selected" : "Select"}

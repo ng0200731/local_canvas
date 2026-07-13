@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildCanvasReport } from "@/lib/canvas-report";
+import { canvasReportPayloadSchema } from "@/lib/email/schemas";
 import type { Canvas, ImageRecord, Project } from "@/lib/store";
 import type { ProductRecord, SupplierRecord } from "@/lib/workspace-records";
 
@@ -390,5 +391,89 @@ describe("buildCanvasReport", () => {
       url: tinyPng,
       alt: "Selected final render",
     });
+  });
+
+  it("keeps selected render image alt text within the email schema limit", () => {
+    const canvasWithoutOutputImage: Canvas = {
+      ...canvas,
+      content: {
+        ...canvas.content,
+        nodes: canvas.content.nodes.map((node) =>
+          node.id === "output-node" || node.id === "generate-node"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  resultUrl: null,
+                },
+              }
+            : node,
+        ),
+      },
+    };
+    const report = buildCanvasReport({
+      canvas: canvasWithoutOutputImage,
+      project,
+      customers: [],
+      suppliers,
+      products,
+      images: [
+        {
+          id: "selected-render",
+          canvasId: "canvas-1",
+          source: "generated",
+          url: tinyPng,
+          storagePath: null,
+          prompt: "Long prompt ".repeat(80),
+          model: "gpt-image-2",
+          modelDetails: {
+            model: "gpt-image-2",
+            size: null,
+            resolution: null,
+            outputFormat: "png",
+          },
+          createdAt: now,
+        },
+      ],
+    });
+
+    expect(report.supplierBreakdowns[0]?.image?.alt.length).toBeLessThanOrEqual(300);
+    expect(
+      canvasReportPayloadSchema.safeParse({
+        title: report.title,
+        generatedAt: report.generatedAt,
+        project: report.project,
+        sections: report.sections,
+        steps: report.steps,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("includes product node image data when no matching workspace product exists", () => {
+    const report = buildCanvasReport({
+      canvas,
+      project,
+      customers: [],
+      suppliers,
+      products: [],
+      images,
+    });
+
+    expect(report.customerProducts).toHaveLength(1);
+    expect(report.customerProducts[0]).toMatchObject({
+      id: "product-product-node",
+      title: "SH-001",
+      image: {
+        url: tinyPng,
+        alt: "shirt.png",
+      },
+    });
+    expect(report.customerProducts[0]?.details).toContainEqual({
+      label: "Customer",
+      value: "Harborline Retail Ltd.",
+    });
+    expect(report.html.indexOf("Product list")).toBeLessThan(
+      report.html.indexOf("Supplier details"),
+    );
   });
 });

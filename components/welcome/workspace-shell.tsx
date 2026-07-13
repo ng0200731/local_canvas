@@ -131,6 +131,7 @@ function ProjectWorkspacePanel({
   selectedCanvasId,
   onOpenProject,
   onOpenCanvas,
+  onOpenCanvasFromProject,
   onBackToProjects,
   onBackToProjectDetail,
 }: {
@@ -138,6 +139,7 @@ function ProjectWorkspacePanel({
   selectedCanvasId: string | null;
   onOpenProject: (projectId: string) => void;
   onOpenCanvas: (canvasId: string) => void;
+  onOpenCanvasFromProject: (projectId: string, canvasId: string) => void;
   onBackToProjects: () => void;
   onBackToProjectDetail: () => void;
 }) {
@@ -146,6 +148,7 @@ function ProjectWorkspacePanel({
       <ProjectList
         redirectOnCreate={false}
         onOpenProject={onOpenProject}
+        onOpenCanvas={onOpenCanvasFromProject}
         onProjectCreated={onOpenProject}
       />
     );
@@ -193,6 +196,7 @@ function renderTabContent({
   selectedCanvasId,
   onOpenProject,
   onOpenCanvas,
+  onOpenCanvasFromProject,
   onBackToProjects,
   onBackToProjectDetail,
   entityMode,
@@ -204,6 +208,7 @@ function renderTabContent({
   selectedCanvasId: string | null;
   onOpenProject: (projectId: string) => void;
   onOpenCanvas: (canvasId: string) => void;
+  onOpenCanvasFromProject: (projectId: string, canvasId: string) => void;
   onBackToProjects: () => void;
   onBackToProjectDetail: () => void;
   entityMode: WorkspaceMode;
@@ -217,6 +222,7 @@ function renderTabContent({
         selectedCanvasId={selectedCanvasId}
         onOpenProject={onOpenProject}
         onOpenCanvas={onOpenCanvas}
+        onOpenCanvasFromProject={onOpenCanvasFromProject}
         onBackToProjects={onBackToProjects}
         onBackToProjectDetail={onBackToProjectDetail}
       />
@@ -300,6 +306,12 @@ export function WorkspaceShell({
   }
 
   function openCanvasDetail(canvasId: string) {
+    setSelectedCanvasId(canvasId);
+    openTab("project");
+  }
+
+  function openCanvasFromProject(projectId: string, canvasId: string) {
+    setSelectedProjectId(projectId);
     setSelectedCanvasId(canvasId);
     openTab("project");
   }
@@ -504,6 +516,7 @@ export function WorkspaceShell({
               selectedCanvasId,
               onOpenProject: openProjectDetail,
               onOpenCanvas: openCanvasDetail,
+              onOpenCanvasFromProject: openCanvasFromProject,
               onBackToProjects: backToProjects,
               onBackToProjectDetail: () => setSelectedCanvasId(null),
               entityMode,

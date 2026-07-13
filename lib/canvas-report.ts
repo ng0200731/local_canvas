@@ -94,6 +94,16 @@ function nullableString(value: unknown): string | null {
   return normalized ? normalized : null;
 }
 
+function boundedString(value: string, fallback: string, maxLength: number): string {
+  const normalized = value.trim() || fallback;
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function imageAlt(value: string, fallback: string): string {
+  return boundedString(value, fallback, 300);
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -235,7 +245,7 @@ function primaryVariant(product: ProductRecord | null): ProductVariantRecord | n
 
 function variantImage(variant: ProductVariantRecord | null): CanvasReportImage | null {
   if (!variant?.image?.url) return null;
-  return { url: variant.image.url, alt: variant.image.name };
+  return { url: variant.image.url, alt: imageAlt(variant.image.name, "Product image") };
 }
 
 function parameterDetails(variant: ProductVariantRecord | null) {
@@ -331,7 +341,10 @@ function outputBlockForNode(node: CanvasNode): CanvasReportBlock {
     image: nullableString(data.resultUrl)
       ? {
           url: nullableString(data.resultUrl),
-          alt: node.type === "generate" ? "Generated image" : "Output image",
+          alt: imageAlt(
+            node.type === "generate" ? "Generated image" : "Output image",
+            "Output image",
+          ),
         }
       : null,
   };
@@ -346,7 +359,7 @@ function selectedRenderImage(images: readonly ImageRecord[]): CanvasReportImage 
   if (!image) return null;
   return {
     url: image.url,
-    alt: image.prompt || "Selected render image",
+    alt: imageAlt(image.prompt || "Selected render image", "Selected render image"),
   };
 }
 
@@ -604,11 +617,57 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     ? (input.customers.find((candidate) => candidate.id === input.project?.customerId) ?? null)
     : null;
 
-  const customerProducts = input.products
+  const productNodes = nodes.filter((node) => node.type === "product");
+  const productNodeProductIds = new Set(
+    productNodes
+      .map((node) => nullableString(asRecord(node.data).productId))
+      .filter((id): id is string => id !== null),
+  );
+  const productNodeProducts = productNodes.map((node) => {
+    const data = asRecord(node.data);
+    const product = nullableString(data.productId)
+      ? (productsById.get(nullableString(data.productId) ?? "") ?? null)
+      : null;
+    const variant =
+      product?.variants.find((item) => item.id === stringValue(data.variantId)) ??
+      primaryVariant(product ?? null);
+    const customerName =
+      stringValue(data.customerName) ||
+      customer?.company.companyName ||
+      input.project?.customerName ||
+      "Customer";
+    return {
+      id: `product-${node.id}`,
+      title:
+        product?.subject ||
+        stringValue(data.productSubject) ||
+        stringValue(data.alias) ||
+        "Product node",
+      subtitle: product ? getWorkspaceProductTypeLabel(product.productType) : nodeTitle(node),
+      details: product
+        ? productDetails(product, customerName)
+        : [
+            { label: "Alias", value: stringValue(data.alias) },
+            { label: "Customer", value: customerName },
+            { label: "Product", value: stringValue(data.productSubject) },
+          ].filter((item) => item.value),
+      image:
+        variantImage(variant) ??
+        (nullableString(data.variantImageUrl)
+          ? {
+              url: nullableString(data.variantImageUrl),
+              alt: imageAlt(stringValue(data.variantImageName), "Product image"),
+            }
+          : null),
+    };
+  });
+
+  const workspaceCustomerProducts = input.products
     .filter(
       (product) =>
         product.ownerKind === "customer" && product.customerId === input.project?.customerId,
     )
+    .filter((product) => !productNodeProductIds.has(product.id))
     .map((product) => ({
       id: `customer-product-${product.id}`,
       title: product.subject,
@@ -619,6 +678,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
       ),
       image: variantImage(primaryVariant(product)),
     }));
+  const customerProducts = [...productNodeProducts, ...workspaceCustomerProducts];
 
   const supplierNodes = nodes.filter((node) => node.type === "suppler");
   const supplierBlocks = supplierNodes.map((node) => {
@@ -649,7 +709,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
         (nullableString(data.variantImageUrl)
           ? {
               url: nullableString(data.variantImageUrl),
-              alt: stringValue(data.variantImageName) || "Supplier image",
+              alt: imageAlt(stringValue(data.variantImageName), "Supplier image"),
             }
           : null),
     };
@@ -678,7 +738,9 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
           { label: "Catalog", value: catalogLabel },
           { label: "Hex", value: hex ?? stringValue(data.hex) },
         ].filter((item) => item.value),
-        image: hex ? { url: solidColorPngDataUrl(hex), alt: `${title} ${hex}` } : null,
+        image: hex
+          ? { url: solidColorPngDataUrl(hex), alt: imageAlt(`${title} ${hex}`, title) }
+          : null,
       };
     });
 
@@ -700,7 +762,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
         image: nullableString(data.imageUrl)
           ? {
               url: nullableString(data.imageUrl),
-              alt: stringValue(data.alias) || "Generic node image",
+              alt: imageAlt(stringValue(data.alias), "Generic node image"),
             }
           : null,
       };

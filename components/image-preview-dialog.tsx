@@ -28,11 +28,17 @@ interface ImagePreviewDialogProps {
   trigger: ReactElement;
   gallery?: readonly ImagePreviewItem[];
   initialIndex?: number;
+  selectedItemId?: string | null;
+  selectLabel?: string;
+  selectedLabel?: string;
+  onSelect?: (item: ImagePreviewItem, index: number) => void;
 }
 
 export interface ImagePreviewItem {
+  id?: string;
   src: string;
   alt: string;
+  storagePath?: string | null;
 }
 
 const MIN_ZOOM = 1;
@@ -61,7 +67,12 @@ export function ImagePreviewDialog({
   trigger,
   gallery,
   initialIndex = 0,
+  selectedItemId = null,
+  selectLabel = "Select",
+  selectedLabel = "Selected",
+  onSelect,
 }: ImagePreviewDialogProps) {
+  const [open, setOpen] = useState(false);
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -69,9 +80,11 @@ export function ImagePreviewDialog({
   const dragRef = useRef<DragState | null>(null);
   const previewItems = gallery?.length ? gallery : [{ src, alt }];
   const safeIndex = Math.min(Math.max(currentIndex, 0), previewItems.length - 1);
-  const currentItem = previewItems[safeIndex];
+  const currentItem = previewItems[safeIndex] ?? { src, alt };
   const hasPrevious = safeIndex > 0;
   const hasNext = safeIndex < previewItems.length - 1;
+  const currentItemSelected =
+    selectedItemId !== null && currentItem.id !== undefined && currentItem.id === selectedItemId;
 
   const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -149,10 +162,13 @@ export function ImagePreviewDialog({
 
   return (
     <Dialog
+      open={open}
       onOpenChange={(open) => {
-        if (!open) return;
-        setCurrentIndex(initialIndex);
-        resetPreview();
+        setOpen(open);
+        if (open) {
+          setCurrentIndex(initialIndex);
+          resetPreview();
+        }
       }}
     >
       <DialogTrigger render={trigger} />
@@ -226,6 +242,19 @@ export function ImagePreviewDialog({
               {safeIndex + 1} of {previewItems.length}
             </span>
           )}
+          {onSelect ? (
+            <Button
+              type="button"
+              variant={currentItemSelected ? "secondary" : "default"}
+              className="absolute right-0 bottom-0 z-20 shadow-lg"
+              onClick={() => {
+                onSelect(currentItem, safeIndex);
+                setOpen(false);
+              }}
+            >
+              {currentItemSelected ? selectedLabel : selectLabel}
+            </Button>
+          ) : null}
           <DialogClose
             render={
               <Button

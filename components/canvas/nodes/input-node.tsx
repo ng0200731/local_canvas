@@ -207,10 +207,26 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
               title={`@${alias} input image`}
               gallery={
                 selectedGenericImageId
-                  ? genericImages.map((image) => ({ src: image.url, alt: image.name }))
+                  ? genericImages.map((image) => ({
+                      id: image.id,
+                      src: image.url,
+                      alt: image.name,
+                      storagePath: image.storagePath,
+                    }))
                   : undefined
               }
               initialIndex={selectedGenericImageIndex}
+              selectedItemId={selectedGenericImageId}
+              selectLabel="Select image"
+              selectedLabel="Selected"
+              onSelect={(item) => {
+                if (!item.id) return;
+                updateNodeData(id, {
+                  imageUrl: item.src,
+                  storagePath: item.storagePath ?? null,
+                  selectedGenericImageId: item.id,
+                });
+              }}
               trigger={
                 <button
                   type="button"
@@ -258,7 +274,9 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
         ) : (
           <div className="text-muted-foreground flex flex-col items-center gap-1 text-xs">
             <ImageIcon className="size-6" />
-            <span>{genericImages.length ? "Select from the image book" : "Paste or drop image"}</span>
+            <span>
+              {genericImages.length ? "Select from the image book" : "Paste or drop image"}
+            </span>
           </div>
         )}
         <input

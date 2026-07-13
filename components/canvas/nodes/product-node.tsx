@@ -10,7 +10,10 @@ import { Input } from "@/components/ui/input";
 import { useCustomers, useProducts } from "@/lib/hooks/use-workspace-records";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { ProductCanvasNode } from "@/lib/nodes/types";
-import type { ProductImageGalleryItem } from "@/lib/product-image-gallery";
+import {
+  getProductImageGalleryItems,
+  type ProductImageGalleryItem,
+} from "@/lib/product-image-gallery";
 import { cn } from "@/lib/utils";
 import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
@@ -56,6 +59,10 @@ export function ProductNode({ id, data, parentId, selected }: NodeProps<ProductC
   );
   const selectedGalleryItemId =
     data.productId && data.variantId ? `${data.productId}:${data.variantId}` : null;
+  const selectedGalleryItems = getProductImageGalleryItems(selectedCustomerProducts);
+  const selectedGalleryIndex = selectedGalleryItemId
+    ? selectedGalleryItems.findIndex((item) => item.id === selectedGalleryItemId)
+    : 0;
   const matchingCustomers = (customers.data ?? [])
     .filter((customer) =>
       fuzzyIncludes(
@@ -234,6 +241,23 @@ export function ProductNode({ id, data, parentId, selected }: NodeProps<ProductC
               src={data.variantImageUrl}
               alt={data.variantImageName ?? data.productSubject ?? "Selected customer product"}
               title={data.productSubject ?? data.variantImageName ?? "Selected product image"}
+              gallery={
+                selectedGalleryItems.length
+                  ? selectedGalleryItems.map((item) => ({
+                      id: item.id,
+                      src: item.variant.image.url,
+                      alt: item.variant.image.name,
+                    }))
+                  : undefined
+              }
+              initialIndex={selectedGalleryIndex >= 0 ? selectedGalleryIndex : 0}
+              selectedItemId={selectedGalleryItemId}
+              selectLabel="Select image"
+              selectedLabel="Selected"
+              onSelect={(_item, index) => {
+                const galleryItem = selectedGalleryItems[index];
+                if (galleryItem) selectProductImage(galleryItem);
+              }}
               trigger={
                 <button
                   type="button"
@@ -243,7 +267,9 @@ export function ProductNode({ id, data, parentId, selected }: NodeProps<ProductC
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={data.variantImageUrl}
-                    alt={data.variantImageName ?? data.productSubject ?? "Selected customer product"}
+                    alt={
+                      data.variantImageName ?? data.productSubject ?? "Selected customer product"
+                    }
                     className="aspect-video w-full object-contain"
                   />
                 </button>

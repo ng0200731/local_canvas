@@ -186,4 +186,54 @@ describe("ImagePreviewDialog", () => {
       root.unmount();
     });
   });
+
+  it("selects the current gallery item and closes the preview", async () => {
+    const root = createRoot(container);
+    const selected: string[] = [];
+
+    await act(async () => {
+      root.render(
+        <ImagePreviewDialog
+          src="first.png"
+          alt="First image"
+          title="Selectable gallery"
+          trigger={<button type="button">Open selectable gallery</button>}
+          gallery={[
+            { id: "first", src: "first.png", alt: "First image" },
+            { id: "second", src: "second.png", alt: "Second image" },
+          ]}
+          selectedItemId="first"
+          onSelect={(item) => {
+            if (item.id) selected.push(item.id);
+          }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("button")?.click();
+    });
+
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Next rendered image"]')
+        ?.click();
+    });
+
+    const selectButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "Select",
+    );
+    expect(selectButton).not.toBeNull();
+
+    await act(async () => {
+      selectButton?.click();
+    });
+
+    expect(selected).toEqual(["second"]);
+    expect(document.querySelector<HTMLImageElement>('img[alt="Second image"]')).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });
