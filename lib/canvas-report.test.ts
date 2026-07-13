@@ -477,6 +477,45 @@ describe("buildCanvasReport", () => {
     );
   });
 
+  it("shows only product node products instead of extra workspace customer products", () => {
+    const extraProducts: ProductRecord[] = [
+      ...products,
+      {
+        ...products[0],
+        id: "customer-product-extra",
+        subject: "Extra DB product",
+        variants: [
+          {
+            ...products[0].variants[0],
+            id: "customer-variant-extra",
+            image: {
+              name: "extra.png",
+              url: "data:image/png;base64,ZXh0cmE=",
+              storagePath: null,
+            },
+          },
+        ],
+      },
+    ];
+
+    const report = buildCanvasReport({
+      canvas,
+      project,
+      customers: [],
+      suppliers,
+      products: extraProducts,
+      images,
+    });
+
+    expect(report.customerProducts).toHaveLength(1);
+    expect(report.customerProducts[0]?.id).toBe("product-product-node");
+    expect(report.customerProducts[0]?.image).toEqual({
+      url: tinyPng,
+      alt: "shirt.png",
+    });
+    expect(report.html).not.toContain("Extra DB product");
+  });
+
   it("omits product list without product nodes and keeps drag-drop input images", () => {
     const canvasWithInputOnly: Canvas = {
       ...canvas,

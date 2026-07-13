@@ -618,11 +618,6 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     : null;
 
   const productNodes = nodes.filter((node) => node.type === "product");
-  const productNodeProductIds = new Set(
-    productNodes
-      .map((node) => nullableString(asRecord(node.data).productId))
-      .filter((id): id is string => id !== null),
-  );
   const productNodeProducts = productNodes.map((node) => {
     const data = asRecord(node.data);
     const product = nullableString(data.productId)
@@ -652,34 +647,15 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
             { label: "Product", value: stringValue(data.productSubject) },
           ].filter((item) => item.value),
       image:
-        variantImage(variant) ??
         (nullableString(data.variantImageUrl)
           ? {
               url: nullableString(data.variantImageUrl),
               alt: imageAlt(stringValue(data.variantImageName), "Product image"),
             }
-          : null),
+          : null) ?? variantImage(variant),
     };
   });
-
-  const workspaceCustomerProducts = input.products
-    .filter(
-      (product) =>
-        product.ownerKind === "customer" && product.customerId === input.project?.customerId,
-    )
-    .filter((product) => !productNodeProductIds.has(product.id))
-    .map((product) => ({
-      id: `customer-product-${product.id}`,
-      title: product.subject,
-      subtitle: getWorkspaceProductTypeLabel(product.productType),
-      details: productDetails(
-        product,
-        customer?.company.companyName ?? input.project?.customerName ?? "Customer",
-      ),
-      image: variantImage(primaryVariant(product)),
-    }));
-  const customerProducts =
-    productNodes.length > 0 ? [...productNodeProducts, ...workspaceCustomerProducts] : [];
+  const customerProducts = productNodeProducts;
 
   const supplierNodes = nodes.filter((node) => node.type === "suppler");
   const supplierBlocks = supplierNodes.map((node) => {
