@@ -9,19 +9,24 @@ import {
   FileImage,
   FolderOpen,
   Search,
+  ShoppingCart,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueries } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
+import { sendPurchaseSamplingEmail } from "@/lib/email/client";
 import { useDeleteProject, useProjects } from "@/lib/hooks/use-projects";
+import { useSuppliers } from "@/lib/hooks/use-workspace-records";
 import { formatDate } from "@/lib/format";
-import { getCanvasStore, type Canvas, type Project } from "@/lib/store";
+import { getCanvasStore, type Canvas, type CanvasSendRecord, type Project } from "@/lib/store";
+import type { SupplierRecord } from "@/lib/workspace-records";
 
 function displayValue(value: string | null | undefined): string {
   const trimmed = value?.trim();
@@ -33,6 +38,21 @@ function formatCurrency(project: Project): string {
   return project.currencySymbol
     ? `${project.currencyCode} (${project.currencySymbol})`
     : project.currencyCode;
+}
+
+function canvasStatusLabel(status: Canvas["status"]): string {
+  if (status === "awaiting_approval") return "Await approval";
+  if (status === "approved") return "Approved";
+  if (status === "rejected") return "Rejected";
+  return "Draft";
+}
+
+function projectStatus(canvases: readonly Canvas[] | undefined): Canvas["status"] {
+  if (!canvases || canvases.length === 0) return "draft";
+  if (canvases.some((canvas) => canvas.status === "awaiting_approval")) return "awaiting_approval";
+  if (canvases.some((canvas) => canvas.status === "rejected")) return "rejected";
+  if (canvases.every((canvas) => canvas.status === "approved")) return "approved";
+  return "draft";
 }
 
 function fuzzyMatch(value: string, query: string): boolean {
@@ -66,6 +86,78 @@ function getProjectSearchText(project: Project): string {
     .join(" ");
 }
 
+interface ProjectColumnFilters {
+  sequence: string;
+  customer: string;
+  employee: string;
+  project: string;
+  created: string;
+  currency: string;
+  destination: string;
+  canvasCount: string;
+  status: string;
+}
+
+const emptyProjectColumnFilters: ProjectColumnFilters = {
+  sequence: "",
+  customer: "",
+  employee: "",
+  project: "",
+  created: "",
+  currency: "",
+  destination: "",
+  canvasCount: "",
+  status: "",
+};
+
+function latestCanvasSendSequence(records: readonly CanvasSendRecord[]): string {
+  return (
+    [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.sequence ?? "Not sent"
+  );
+}
+
+function supplierEmail(supplier: SupplierRecord): string | null {
+  const employee = supplier.employees[0];
+  if (!employee) return null;
+  return `${employee.emailPrefix}@${supplier.company.emailDomainSuffix}`;
+}
+
+function columnInputClassName(): string {
+  return "bg-background h-8 min-w-28 text-xs normal-case";
+}
+
+function projectMatchesColumnFilters(input: {
+  project: Project;
+  filters: ProjectColumnFilters;
+  canvases: readonly Canvas[] | undefined;
+  status: Canvas["status"];
+  sequence: string;
+  canvasLoading: boolean;
+}): boolean {
+  const project = input.project;
+  const employeeText = [
+    project.employeeName,
+    project.employeeTitle,
+    project.employeeEmail,
+    project.employeeTel,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const created = formatDate(project.createdAt);
+  const canvasCount = input.canvases?.length.toString() ?? "";
+  return (
+    (input.canvasLoading || fuzzyMatch(input.sequence, input.filters.sequence)) &&
+    fuzzyMatch(displayValue(project.customerName), input.filters.customer) &&
+    fuzzyMatch(employeeText || "Not set", input.filters.employee) &&
+    fuzzyMatch(project.name, input.filters.project) &&
+    fuzzyMatch(created, input.filters.created) &&
+    fuzzyMatch(formatCurrency(project), input.filters.currency) &&
+    fuzzyMatch(displayValue(project.destinationCountryName), input.filters.destination) &&
+    (input.canvasLoading || fuzzyMatch(canvasCount, input.filters.canvasCount)) &&
+    (input.canvasLoading || fuzzyMatch(canvasStatusLabel(input.status), input.filters.status))
+  );
+}
+
 function ProjectCanvasDetailRow({
   project,
   canvases,
@@ -79,7 +171,7 @@ function ProjectCanvasDetailRow({
 }) {
   return (
     <tr className="bg-muted/20">
-      <td colSpan={7} className="px-4 py-3">
+      <td colSpan={10} className="px-4 py-3">
         {loading ? (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, index) => (
@@ -100,7 +192,7 @@ function ProjectCanvasDetailRow({
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{canvas.name}</span>
                     <span className="text-muted-foreground mt-0.5 block text-xs">
-                      Updated {formatDate(canvas.updatedAt)}
+                      Created {formatDate(canvas.createdAt)} / {canvasStatusLabel(canvas.status)}
                     </span>
                   </span>
                 </button>
@@ -114,7 +206,7 @@ function ProjectCanvasDetailRow({
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{canvas.name}</span>
                     <span className="text-muted-foreground mt-0.5 block text-xs">
-                      Updated {formatDate(canvas.updatedAt)}
+                      Created {formatDate(canvas.createdAt)} / {canvasStatusLabel(canvas.status)}
                     </span>
                   </span>
                 </Link>
@@ -141,24 +233,127 @@ function ProjectTable({
   onOpenCanvas?: (projectId: string, canvasId: string) => void;
 }) {
   const del = useDeleteProject();
+  const suppliers = useSuppliers();
   const [query, setQuery] = useState("");
+  const [columnFilters, setColumnFilters] =
+    useState<ProjectColumnFilters>(emptyProjectColumnFilters);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
-  const visibleProjects = projects.filter((project) =>
+  const globalProjects = projects.filter((project) =>
     fuzzyMatch(getProjectSearchText(project), query),
   );
   const canvasQueries = useQueries({
-    queries: visibleProjects.map((project) => ({
+    queries: globalProjects.map((project) => ({
       queryKey: ["canvases", project.id] as const,
       queryFn: () => getCanvasStore().listCanvases(project.id),
     })),
   });
   const canvasResultByProjectId = new Map(
-    visibleProjects.map((project, index) => [project.id, canvasQueries[index]] as const),
+    globalProjects.map((project, index) => [project.id, canvasQueries[index]] as const),
   );
+  const canvasIds = globalProjects.flatMap(
+    (project) => canvasResultByProjectId.get(project.id)?.data?.map((canvas) => canvas.id) ?? [],
+  );
+  const sendQueries = useQueries({
+    queries: canvasIds.map((canvasId) => ({
+      queryKey: ["canvas-sends", canvasId] as const,
+      queryFn: () => getCanvasStore().listCanvasSends(canvasId),
+    })),
+  });
+  const sendsByCanvasId = new Map(
+    canvasIds.map((canvasId, index) => [canvasId, sendQueries[index]?.data ?? []] as const),
+  );
+  const sendsLoading = sendQueries.some((queryResult) => queryResult.isLoading);
+  const visibleProjects = globalProjects.filter((project) => {
+    const canvasResult = canvasResultByProjectId.get(project.id);
+    const canvases = canvasResult?.data;
+    const projectSends = (canvases ?? []).flatMap((canvas) => sendsByCanvasId.get(canvas.id) ?? []);
+    return projectMatchesColumnFilters({
+      project,
+      filters: columnFilters,
+      canvases,
+      status: projectStatus(canvases),
+      sequence: latestCanvasSendSequence(projectSends),
+      canvasLoading: Boolean(canvasResult?.isLoading || sendsLoading),
+    });
+  });
+
+  function updateColumnFilter(key: keyof ProjectColumnFilters, value: string) {
+    setColumnFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function filterInput(
+    key: keyof ProjectColumnFilters,
+    label: string,
+    className = columnInputClassName(),
+  ) {
+    return (
+      <Input
+        value={columnFilters[key]}
+        onChange={(event) => updateColumnFilter(key, event.target.value)}
+        placeholder="Search"
+        aria-label={`Search ${label}`}
+        className={className}
+      />
+    );
+  }
 
   async function onDelete(projectId: string) {
     await del.mutateAsync(projectId);
     toast.success("Project deleted");
+  }
+
+  async function sendPurchase(project: Project, canvases: readonly Canvas[] | undefined) {
+    const sequence = latestCanvasSendSequence(
+      (canvases ?? []).flatMap((canvas) => sendsByCanvasId.get(canvas.id) ?? []),
+    );
+    if (sequence === "Not sent") {
+      toast.error("Send the canvas for approval first so a CA number exists.");
+      return;
+    }
+    if (!canvases?.length) {
+      toast.error("No canvases found for this project.");
+      return;
+    }
+    const suppliersById = new Map(
+      (suppliers.data ?? []).map((supplier) => [supplier.id, supplier]),
+    );
+    const targets = new Map<string, { email: string; supplierName: string; canvasName: string }>();
+
+    for (const canvas of canvases) {
+      const fullCanvas = await getCanvasStore().getCanvas(canvas.id);
+      const nodes = fullCanvas?.content.nodes ?? canvas.content.nodes;
+      for (const node of nodes) {
+        if (node.type !== "suppler") continue;
+        const supplierId = typeof node.data.supplierId === "string" ? node.data.supplierId : null;
+        const supplier = supplierId ? suppliersById.get(supplierId) : undefined;
+        if (!supplier) continue;
+        const email = supplierEmail(supplier);
+        if (!email) continue;
+        targets.set(email, {
+          email,
+          supplierName: supplier.company.companyName,
+          canvasName: canvas.name,
+        });
+      }
+    }
+
+    if (targets.size === 0) {
+      toast.error("No supplier emails found under this project's canvases.");
+      return;
+    }
+
+    await Promise.all(
+      [...targets.values()].map((target) =>
+        sendPurchaseSamplingEmail({
+          to: target.email,
+          sequence,
+          supplierName: target.supplierName,
+          projectName: project.name,
+          canvasName: target.canvasName,
+        }),
+      ),
+    );
+    toast.success(`${sequence} start sampling sent to ${targets.size} supplier email(s).`);
   }
 
   return (
@@ -167,7 +362,7 @@ function ProjectTable({
         <table className="w-full min-w-[940px] text-left text-sm">
           <thead className="bg-muted/60 text-muted-foreground border-b text-xs font-medium tracking-wide uppercase">
             <tr>
-              <th scope="col" colSpan={7} className="px-4 py-3">
+              <th scope="col" colSpan={10} className="px-4 py-3">
                 <div className="relative max-w-md">
                   <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
                   <Input
@@ -182,6 +377,9 @@ function ProjectTable({
             </tr>
             <tr>
               <th scope="col" className="px-4 py-3">
+                CA #
+              </th>
+              <th scope="col" className="px-4 py-3">
                 Customer name
               </th>
               <th scope="col" className="px-4 py-3">
@@ -189,6 +387,9 @@ function ProjectTable({
               </th>
               <th scope="col" className="px-4 py-3">
                 Project name
+              </th>
+              <th scope="col" className="px-4 py-3">
+                Created date
               </th>
               <th scope="col" className="px-4 py-3">
                 Currency
@@ -199,9 +400,46 @@ function ProjectTable({
               <th scope="col" className="px-4 py-3 text-center">
                 Canvas #
               </th>
+              <th scope="col" className="px-4 py-3">
+                Status
+              </th>
               <th scope="col" className="w-28 px-4 py-3 text-right">
                 Actions
               </th>
+            </tr>
+            <tr className="bg-background/70 border-t">
+              <th scope="col" className="px-4 py-2">
+                {filterInput("sequence", "CA number")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("customer", "customer name")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("employee", "employee")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("project", "project name")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("created", "created date")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("currency", "currency")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("destination", "destination")}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput(
+                  "canvasCount",
+                  "canvas count",
+                  "bg-background h-8 min-w-20 text-xs normal-case",
+                )}
+              </th>
+              <th scope="col" className="px-4 py-2">
+                {filterInput("status", "status")}
+              </th>
+              <th scope="col" className="px-4 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -211,9 +449,16 @@ function ProjectTable({
                 const canvases = canvasResult?.data;
                 const expanded = expandedProjectId === project.id;
                 const count = canvases?.length ?? 0;
+                const status = projectStatus(canvases);
+                const sequence = latestCanvasSendSequence(
+                  (canvases ?? []).flatMap((canvas) => sendsByCanvasId.get(canvas.id) ?? []),
+                );
                 return (
                   <Fragment key={project.id}>
                     <tr className="hover:bg-muted/35 transition-colors">
+                      <td className="px-4 py-3 align-top font-semibold tabular-nums">
+                        {sendsLoading || canvasResult?.isLoading ? "..." : sequence}
+                      </td>
                       <td className="max-w-56 px-4 py-3 align-top font-medium break-words">
                         {displayValue(project.customerName)}
                       </td>
@@ -248,6 +493,9 @@ function ProjectTable({
                           Updated {formatDate(project.updatedAt)}
                         </span>
                       </td>
+                      <td className="text-muted-foreground px-4 py-3 align-top">
+                        {formatDate(project.createdAt)}
+                      </td>
                       <td className="px-4 py-3 align-top">{formatCurrency(project)}</td>
                       <td className="max-w-48 px-4 py-3 align-top break-words">
                         {displayValue(project.destinationCountryName)}
@@ -269,6 +517,11 @@ function ProjectTable({
                           {expanded ? <ChevronDown /> : <ChevronRight />}
                           {canvasResult?.isLoading ? "..." : count}
                         </Button>
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <Badge variant={status === "approved" ? "default" : "secondary"}>
+                          {canvasResult?.isLoading ? "Loading" : canvasStatusLabel(status)}
+                        </Badge>
                       </td>
                       <td className="px-4 py-3 align-top">
                         <div className="flex justify-end gap-1">
@@ -306,6 +559,22 @@ function ProjectTable({
                               </Button>
                             }
                           />
+                          <Button
+                            type="button"
+                            size="icon-sm"
+                            variant="ghost"
+                            aria-label={`Send ${sequence} start sampling purchase email`}
+                            title="Purchase: start sampling"
+                            disabled={
+                              sequence === "Not sent" ||
+                              suppliers.isLoading ||
+                              canvasResult?.isLoading ||
+                              sendsLoading
+                            }
+                            onClick={() => void sendPurchase(project, canvases)}
+                          >
+                            <ShoppingCart />
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -322,7 +591,7 @@ function ProjectTable({
               })
             ) : (
               <tr>
-                <td colSpan={7} className="text-muted-foreground px-4 py-10 text-center">
+                <td colSpan={10} className="text-muted-foreground px-4 py-10 text-center">
                   No matching projects.
                 </td>
               </tr>

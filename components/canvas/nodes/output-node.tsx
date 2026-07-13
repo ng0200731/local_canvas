@@ -30,6 +30,12 @@ function formatDuration(ms?: number): string | null {
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
 }
 
+function formatCreatedAt(value?: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+}
+
 export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCanvasNode>) {
   const { cancelGenerationRun, updateNodeData } = useCanvasActions();
   const [downloading, setDownloading] = useState(false);
@@ -39,6 +45,7 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
   const height = data.height ?? DEFAULT_HEIGHT;
   const resultUrl = data.resultUrl;
   const durationLabel = formatDuration(data.generationDurationMs);
+  const createdAtLabel = formatCreatedAt(data.createdAt);
 
   useEffect(() => {
     if (data.status !== "error" || !isStaleGenerationConfigurationError(data.error)) return;
@@ -103,6 +110,11 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
           </span>
         ) : null}
       </div>
+      {createdAtLabel ? (
+        <div className="text-muted-foreground truncate text-[0.68rem]">
+          Created {createdAtLabel}
+        </div>
+      ) : null}
 
       <div className="bg-muted/40 relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border">
         {data.status === "loading" ? (

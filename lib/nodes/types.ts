@@ -92,6 +92,7 @@ export interface OutputNodeData {
   model?: string;
   outputFormat?: ImageGenerationOutputFormat;
   generationDurationMs?: number;
+  createdAt?: string;
   status: "idle" | "loading" | "error" | "done";
   error?: string;
   /** Node size in pixels; set by the resize handle. Absent = type default. */

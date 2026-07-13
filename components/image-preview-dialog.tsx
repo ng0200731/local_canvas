@@ -174,7 +174,7 @@ export function ImagePreviewDialog({
       <DialogTrigger render={trigger} />
       <DialogContent
         showCloseButton={false}
-        className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-lg bg-black/90 p-3 ring-white/15 sm:max-w-[calc(100vw-2rem)]"
+        className="grid h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[1fr_auto] gap-3 overflow-hidden rounded-lg bg-black/90 p-3 ring-white/15 sm:max-w-[calc(100vw-2rem)]"
         onKeyDown={handleKeyDown}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
@@ -270,6 +270,34 @@ export function ImagePreviewDialog({
             <X />
           </DialogClose>
         </div>
+        {previewItems.length > 1 ? (
+          <div className="flex min-h-16 gap-2 overflow-x-auto border-t border-white/15 pt-3">
+            {previewItems.map((item, index) => {
+              const selected =
+                selectedItemId !== null && item.id !== undefined && item.id === selectedItemId;
+              return (
+                <button
+                  key={item.id ?? `${item.src}-${index}`}
+                  type="button"
+                  className={`relative h-16 w-20 shrink-0 overflow-hidden rounded-md border bg-white/5 transition ${
+                    index === safeIndex
+                      ? "border-white ring-2 ring-white/60"
+                      : "border-white/20 hover:border-white/60"
+                  }`}
+                  aria-label={`Show image ${index + 1}`}
+                  aria-current={index === safeIndex ? "true" : undefined}
+                  onClick={() => showImage(index)}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.src} alt="" className="size-full object-cover" />
+                  {selected ? (
+                    <span className="bg-primary absolute right-1 bottom-1 size-4 rounded-full ring-2 ring-white" />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

@@ -2,19 +2,14 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import {
-  ArrowUpRight,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  FileImage,
-  Loader2,
-  Mail,
-  Trash2,
-} from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toDataURL } from "qrcode";
+import { ArrowUpRight, Check, FileImage, Loader2, Mail, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { buildCanvasReport } from "@/lib/canvas-report";
+import { ImagePreviewDialog } from "@/components/image-preview-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -35,7 +30,54 @@ import { useCanvases, useDeleteCanvas } from "@/lib/hooks/use-canvases";
 import { useProject } from "@/lib/hooks/use-projects";
 import { useCustomers, useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
 import { formatDate } from "@/lib/format";
-import { getCanvasStore, type Canvas, type ImageRecord, type Project } from "@/lib/store";
+import {
+  getCanvasStore,
+  type Canvas,
+  type CanvasSendRecord,
+  type ImageRecord,
+  type Project,
+} from "@/lib/store";
+
+function canvasStatusLabel(status: Canvas["status"]): string {
+  if (status === "awaiting_approval") return "Await approval";
+  if (status === "approved") return "Approved";
+  if (status === "rejected") return "Rejected";
+  return "Draft";
+}
+
+function makeApprovalToken(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `approval-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function fuzzyMatch(value: string, query: string): boolean {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return true;
+  const haystack = value.toLocaleLowerCase();
+  if (haystack.includes(needle)) return true;
+  let index = 0;
+  for (const character of haystack) {
+    if (character === needle[index]) index += 1;
+    if (index === needle.length) return true;
+  }
+  return false;
+}
+
+interface CanvasColumnFilters {
+  name: string;
+  created: string;
+  updated: string;
+  status: string;
+  email: string;
+}
+
+const emptyCanvasColumnFilters: CanvasColumnFilters = {
+  name: "",
+  created: "",
+  updated: "",
+  status: "",
+  email: "",
+};
 
 function SendCanvasDialog({
   canvas,
@@ -46,6 +88,7 @@ function SendCanvasDialog({
   project: Project | null;
   defaultRecipient: string;
 }) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const customers = useCustomers();
   const suppliers = useSuppliers();
@@ -56,9 +99,13 @@ function SendCanvasDialog({
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sentRecords, setSentRecords] = useState<string[]>([]);
+  const [sendHistory, setSendHistory] = useState<CanvasSendRecord[]>([]);
   const [recipient, setRecipient] = useState(defaultRecipient);
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const previewImage = previewIndex === null ? null : (images[previewIndex] ?? null);
+  const previewItems = images.map((image) => ({
+    id: image.id,
+    src: image.url,
+    alt: image.prompt ?? "Render history image",
+  }));
 
   async function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
@@ -69,10 +116,10 @@ function SendCanvasDialog({
       const [fullCanvas, renderImages] = await Promise.all([
         getCanvasStore().getCanvas(canvas.id),
         getCanvasStore().listImages(canvas.id),
+        getCanvasStore().listCanvasSends(canvas.id).then(setSendHistory),
       ]);
       setLoadedCanvas(fullCanvas ?? canvas);
       setImages(renderImages);
-      setPreviewIndex(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load render history");
     } finally {
@@ -82,20 +129,6 @@ function SendCanvasDialog({
 
   function selectImage(imageId: string) {
     setSelectedImageIds([imageId]);
-  }
-
-  function showPreviousPreview() {
-    setPreviewIndex((current) => {
-      if (current === null || images.length === 0) return current;
-      return (current - 1 + images.length) % images.length;
-    });
-  }
-
-  function showNextPreview() {
-    setPreviewIndex((current) => {
-      if (current === null || images.length === 0) return current;
-      return (current + 1) % images.length;
-    });
   }
 
   async function sendSelected() {
@@ -112,6 +145,27 @@ function SendCanvasDialog({
     setSending(true);
     try {
       const selectedImages = images.filter((image) => selectedImageIds.includes(image.id));
+      const origin = window.location.origin;
+      const approvalToken = makeApprovalToken();
+      const provisionalSend = await getCanvasStore().createCanvasSend({
+        canvasId: canvas.id,
+        recipientEmail: parsedRecipient.data,
+        reportUrl: `${origin}/canvas-sends/pending`,
+        approvalToken,
+        approvalUrl: `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=approved`,
+        rejectionUrl: `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=rejected`,
+        qrCodeDataUrl: null,
+        selectedImageIds,
+        reportSnapshot: { pending: true },
+      });
+      const reportUrl = `${origin}/canvas-sends/${provisionalSend.sequence}?token=${approvalToken}`;
+      const approvalUrl = `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=approved`;
+      const rejectionUrl = `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=rejected`;
+      const qrCodeDataUrl = await toDataURL(reportUrl, {
+        width: 180,
+        margin: 1,
+        errorCorrectionLevel: "M",
+      });
       const report = buildCanvasReport({
         canvas: loadedCanvas ?? canvas,
         project,
@@ -119,6 +173,27 @@ function SendCanvasDialog({
         suppliers: suppliers.data ?? [],
         products: products.data ?? [],
         images: selectedImages,
+        send: {
+          sequence: provisionalSend.sequence,
+          reportUrl,
+          approvalUrl,
+          rejectionUrl,
+          qrCodeDataUrl,
+        },
+      });
+      const finalizedSend = await getCanvasStore().updateCanvasSend(provisionalSend.id, {
+        reportUrl,
+        approvalUrl,
+        rejectionUrl,
+        qrCodeDataUrl,
+        reportSnapshot: {
+          title: report.title,
+          generatedAt: report.generatedAt,
+          project: report.project,
+          sections: report.sections,
+          steps: report.steps,
+          send: report.send,
+        },
       });
       const filename = canvas.name.replace(/[^a-z0-9-]+/gi, "-").replace(/^-|-$/g, "") || "canvas";
       const result = await sendCanvasReportEmail({
@@ -134,8 +209,10 @@ function SendCanvasDialog({
           project: report.project,
           sections: report.sections,
           steps: report.steps,
+          send: report.send,
         },
       });
+      await getCanvasStore().updateCanvasStatus(canvas.id, "awaiting_approval");
       const sentAt = new Date().toLocaleString();
       setSentRecords((current) => [
         `${sentAt} · ${selectedImageIds.length} render image${
@@ -146,7 +223,7 @@ function SendCanvasDialog({
         ...current,
       ]);
       setSentRecords((current) => [
-        `${sentAt} - canvas report delivered to ${parsedRecipient.data} with ${
+        `${sentAt} - ${finalizedSend.sequence} delivered to ${parsedRecipient.data} with ${
           result.provider === "local"
             ? "Local SMTP"
             : result.provider === "163"
@@ -155,6 +232,8 @@ function SendCanvasDialog({
         }`,
         ...current.filter((record) => !record.startsWith(sentAt)),
       ]);
+      setSendHistory((current) => [finalizedSend, ...current]);
+      void queryClient.invalidateQueries({ queryKey: ["canvases", canvas.projectId] });
       toast.success(`Email sent to ${parsedRecipient.data}.`);
       setSelectedImageIds([]);
     } catch (error) {
@@ -202,24 +281,57 @@ function SendCanvasDialog({
               {images.map((image, index) => {
                 const selected = selectedImageIds.includes(image.id);
                 return (
-                  <button
+                  <div
                     key={image.id}
-                    type="button"
-                    className={`rounded-md border p-2 text-left ${
+                    className={`relative rounded-md border p-2 text-left ${
                       selected ? "border-primary ring-primary ring-2" : ""
                     }`}
-                    onClick={() => setPreviewIndex(index)}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    <button
+                      type="button"
+                      aria-label={`${selected ? "Unselect" : "Select"} render from ${formatDate(
+                        image.createdAt,
+                      )}`}
+                      className={`absolute top-3 right-3 z-10 flex size-6 items-center justify-center rounded-full border shadow-sm ${
+                        selected
+                          ? "bg-primary border-primary text-primary-foreground"
+                          : "bg-background/90 text-muted-foreground"
+                      }`}
+                      onClick={() => selectImage(image.id)}
+                    >
+                      {selected ? <Check className="size-3.5" /> : null}
+                    </button>
+                    <ImagePreviewDialog
                       src={image.url}
                       alt={image.prompt ?? "Render history image"}
-                      className="bg-muted aspect-video w-full rounded object-contain"
+                      title="Render preview"
+                      gallery={previewItems}
+                      initialIndex={index}
+                      selectedItemId={selectedImageIds[0] ?? null}
+                      selectedLabel="Selected"
+                      selectLabel="Select"
+                      onSelect={(item) => {
+                        if (item.id) selectImage(item.id);
+                      }}
+                      trigger={
+                        <button
+                          type="button"
+                          className="focus-visible:ring-ring block w-full cursor-zoom-in rounded outline-none focus-visible:ring-2"
+                          aria-label="Open render preview"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={image.url}
+                            alt={image.prompt ?? "Render history image"}
+                            className="bg-muted aspect-video w-full rounded object-contain"
+                          />
+                        </button>
+                      }
                     />
                     <span className="text-muted-foreground mt-2 block truncate text-xs">
                       {formatDate(image.createdAt)}
                     </span>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -234,6 +346,19 @@ function SendCanvasDialog({
               <div className="text-muted-foreground grid gap-1 text-xs">
                 {sentRecords.map((record) => (
                   <p key={record}>{record}</p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {sendHistory.length ? (
+            <div className="rounded-md border p-3">
+              <p className="mb-2 text-sm font-medium">Approval history</p>
+              <div className="text-muted-foreground grid gap-1 text-xs">
+                {sendHistory.map((record) => (
+                  <p key={record.id}>
+                    {record.sequence} - {canvasStatusLabel(record.status)} -{" "}
+                    {formatDate(record.createdAt)} - {record.recipientEmail}
+                  </p>
                 ))}
               </div>
             </div>
@@ -256,76 +381,6 @@ function SendCanvasDialog({
               {sending ? "Sending..." : "Send report"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={previewIndex !== null}
-        onOpenChange={(nextOpen) => !nextOpen && setPreviewIndex(null)}
-      >
-        <DialogContent
-          showCloseButton
-          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_1fr_auto] overflow-hidden bg-black/92 p-4 text-white sm:max-w-[calc(100vw-2rem)]"
-        >
-          <DialogHeader>
-            <DialogTitle>Render preview</DialogTitle>
-            <DialogDescription className="text-white/70">
-              Review the full image, then select it for the canvas report.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="relative min-h-0">
-            {previewImage ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={previewImage.url}
-                  alt={previewImage.prompt ?? "Render history image"}
-                  className="h-full w-full object-contain"
-                />
-                {images.length > 1 ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="secondary"
-                      className="absolute top-1/2 left-2 size-11 -translate-y-1/2 rounded-full shadow-xl"
-                      aria-label="Previous render image"
-                      onClick={showPreviousPreview}
-                    >
-                      <ChevronLeft className="size-5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="secondary"
-                      className="absolute top-1/2 right-2 size-11 -translate-y-1/2 rounded-full shadow-xl"
-                      aria-label="Next render image"
-                      onClick={showNextPreview}
-                    >
-                      <ChevronRight className="size-5" />
-                    </Button>
-                  </>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/15 pt-3">
-            <div className="min-w-0 text-sm text-white/70">
-              {previewImage ? formatDate(previewImage.createdAt) : ""}
-            </div>
-            {previewImage ? (
-              <Button
-                type="button"
-                variant={selectedImageIds.includes(previewImage.id) ? "secondary" : "default"}
-                onClick={() => {
-                  selectImage(previewImage.id);
-                  setPreviewIndex(null);
-                }}
-              >
-                {selectedImageIds.includes(previewImage.id) ? <Check /> : <FileImage />}
-                {selectedImageIds.includes(previewImage.id) ? "Selected" : "Select"}
-              </Button>
-            ) : null}
-          </div>
         </DialogContent>
       </Dialog>
     </>
@@ -398,6 +453,33 @@ export function CanvasList({
 }) {
   const { data: canvases, isLoading, isError, error } = useCanvases(projectId);
   const project = useProject(projectId);
+  const [columnFilters, setColumnFilters] = useState<CanvasColumnFilters>(emptyCanvasColumnFilters);
+  const employeeEmail = project.data?.employeeEmail ?? "";
+  const visibleCanvases =
+    canvases?.filter(
+      (canvas) =>
+        fuzzyMatch(canvas.name, columnFilters.name) &&
+        fuzzyMatch(formatDate(canvas.createdAt), columnFilters.created) &&
+        fuzzyMatch(formatDate(canvas.updatedAt), columnFilters.updated) &&
+        fuzzyMatch(canvasStatusLabel(canvas.status), columnFilters.status) &&
+        (project.isLoading || fuzzyMatch(employeeEmail || "Not set", columnFilters.email)),
+    ) ?? [];
+
+  function updateColumnFilter(key: keyof CanvasColumnFilters, value: string) {
+    setColumnFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function filterInput(key: keyof CanvasColumnFilters, label: string) {
+    return (
+      <Input
+        value={columnFilters[key]}
+        onChange={(event) => updateColumnFilter(key, event.target.value)}
+        placeholder="Search"
+        aria-label={`Search ${label}`}
+        className="bg-background h-8 min-w-28 text-xs normal-case"
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -434,50 +516,72 @@ export function CanvasList({
                   <th className="px-4 py-3">Canvas name</th>
                   <th className="px-4 py-3">Create time</th>
                   <th className="px-4 py-3">Last update</th>
+                  <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Employer email</th>
                   <th className="px-4 py-3 text-right">Action</th>
                 </tr>
+                <tr className="bg-background/70 border-t">
+                  <th className="px-4 py-2">{filterInput("name", "canvas name")}</th>
+                  <th className="px-4 py-2">{filterInput("created", "create time")}</th>
+                  <th className="px-4 py-2">{filterInput("updated", "last update")}</th>
+                  <th className="px-4 py-2">{filterInput("status", "status")}</th>
+                  <th className="px-4 py-2">{filterInput("email", "employer email")}</th>
+                  <th className="px-4 py-2" />
+                </tr>
               </thead>
               <tbody className="divide-y">
-                {canvases.map((canvas) => (
-                  <tr key={canvas.id} className="hover:bg-muted/30">
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-2 font-medium">
-                        <FileImage className="text-muted-foreground size-4" />
-                        {canvas.name}
-                      </span>
-                    </td>
-                    <td className="text-muted-foreground px-4 py-3">
-                      {formatDate(canvas.createdAt)}
-                    </td>
-                    <td className="text-muted-foreground px-4 py-3">
-                      {formatDate(canvas.updatedAt)}
-                    </td>
-                    <td className="text-muted-foreground px-4 py-3">
-                      {project.isLoading ? (
-                        <Skeleton className="h-4 w-36" />
-                      ) : project.data?.employeeEmail ? (
-                        <a
-                          href={`mailto:${project.data.employeeEmail}`}
-                          className="hover:text-foreground underline-offset-4 hover:underline"
-                        >
-                          {project.data.employeeEmail}
-                        </a>
-                      ) : (
-                        "Not set"
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <CanvasActions
-                        canvas={canvas}
-                        projectId={projectId}
-                        project={project.data ?? null}
-                        defaultRecipient={project.data?.employeeEmail ?? ""}
-                        onOpen={onOpenCanvas}
-                      />
+                {visibleCanvases.length ? (
+                  visibleCanvases.map((canvas) => (
+                    <tr key={canvas.id} className="hover:bg-muted/30">
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-2 font-medium">
+                          <FileImage className="text-muted-foreground size-4" />
+                          {canvas.name}
+                        </span>
+                      </td>
+                      <td className="text-muted-foreground px-4 py-3">
+                        {formatDate(canvas.createdAt)}
+                      </td>
+                      <td className="text-muted-foreground px-4 py-3">
+                        {formatDate(canvas.updatedAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={canvas.status === "approved" ? "default" : "secondary"}>
+                          {canvasStatusLabel(canvas.status)}
+                        </Badge>
+                      </td>
+                      <td className="text-muted-foreground px-4 py-3">
+                        {project.isLoading ? (
+                          <Skeleton className="h-4 w-36" />
+                        ) : project.data?.employeeEmail ? (
+                          <a
+                            href={`mailto:${project.data.employeeEmail}`}
+                            className="hover:text-foreground underline-offset-4 hover:underline"
+                          >
+                            {project.data.employeeEmail}
+                          </a>
+                        ) : (
+                          "Not set"
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <CanvasActions
+                          canvas={canvas}
+                          projectId={projectId}
+                          project={project.data ?? null}
+                          defaultRecipient={project.data?.employeeEmail ?? ""}
+                          onOpen={onOpenCanvas}
+                        />
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="text-muted-foreground px-4 py-10 text-center">
+                      No matching canvases.
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>

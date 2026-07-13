@@ -3,10 +3,12 @@ import {
   emailDeliveryResponseSchema,
   sendCanvasEmailRequestSchema,
   sendCanvasReportEmailRequestSchema,
+  sendPurchaseSamplingEmailRequestSchema,
   sendTestEmailRequestSchema,
   type EmailDeliveryResponse,
   type SendCanvasEmailRequest,
   type SendCanvasReportEmailRequest,
+  type SendPurchaseSamplingEmailRequest,
   type SendTestEmailRequest,
 } from "@/lib/email/schemas";
 
@@ -50,4 +52,13 @@ export function sendCanvasReportEmail(
 
 export function sendTestEmail(input: SendTestEmailRequest): Promise<EmailDeliveryResponse> {
   return postEmailRequest("/api/email/test", sendTestEmailRequestSchema.parse(input));
+}
+
+export function sendPurchaseSamplingEmail(
+  input: SendPurchaseSamplingEmailRequest,
+): Promise<EmailDeliveryResponse> {
+  return postEmailRequest(
+    "/api/email/purchase-sampling",
+    sendPurchaseSamplingEmailRequestSchema.parse(input),
+  );
 }

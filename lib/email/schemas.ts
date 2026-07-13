@@ -111,6 +111,19 @@ export const canvasReportPayloadSchema = z
   .object({
     title: z.string().trim().min(1).max(300),
     generatedAt: z.iso.datetime(),
+    send: z
+      .object({
+        sequence: z
+          .string()
+          .trim()
+          .regex(/^CA\d{6}$/),
+        reportUrl: z.url(),
+        approvalUrl: z.url(),
+        rejectionUrl: z.url(),
+        qrCodeDataUrl: z.string().trim().min(1).max(200_000).nullable(),
+      })
+      .strict()
+      .optional(),
     project: z
       .object({
         name: z.string().trim().min(1).max(300),
@@ -162,6 +175,23 @@ export const sendTestEmailRequestSchema = z
   .strict();
 
 export type SendTestEmailRequest = z.infer<typeof sendTestEmailRequestSchema>;
+
+export const sendPurchaseSamplingEmailRequestSchema = z
+  .object({
+    to: emailRecipientSchema,
+    sequence: z
+      .string()
+      .trim()
+      .regex(/^CA\d{6}$/),
+    supplierName: z.string().trim().min(1).max(300),
+    projectName: z.string().trim().min(1).max(300),
+    canvasName: z.string().trim().min(1).max(300),
+  })
+  .strict();
+
+export type SendPurchaseSamplingEmailRequest = z.infer<
+  typeof sendPurchaseSamplingEmailRequestSchema
+>;
 
 export const emailDeliveryResponseSchema = z
   .object({

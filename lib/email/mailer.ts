@@ -9,10 +9,12 @@ import {
   emailDeliveryResponseSchema,
   sendCanvasEmailRequestSchema,
   sendCanvasReportEmailRequestSchema,
+  sendPurchaseSamplingEmailRequestSchema,
   sendTestEmailRequestSchema,
   type EmailDeliveryResponse,
   type SendCanvasEmailRequest,
   type SendCanvasReportEmailRequest,
+  type SendPurchaseSamplingEmailRequest,
   type SendTestEmailRequest,
   type SmtpProviderId,
 } from "@/lib/email/schemas";
@@ -248,6 +250,27 @@ export function prepareTestMail(): PreparedMail {
   };
 }
 
+export function preparePurchaseSamplingMail(input: SendPurchaseSamplingEmailRequest): PreparedMail {
+  const subject = `${input.sequence} start sampling`;
+  const text = [
+    `Dear ${input.supplierName},`,
+    "",
+    `${input.sequence} start sampling.`,
+    `Project: ${input.projectName}`,
+    `Canvas: ${input.canvasName}`,
+    "",
+    "Please start sampling and reply with the sample schedule.",
+  ].join("\n");
+  const html = `<p>Dear ${escapeHtml(input.supplierName)},</p><p><strong>${escapeHtml(
+    input.sequence,
+  )} start sampling</strong></p><p>Project: ${escapeHtml(
+    input.projectName,
+  )}<br>Canvas: ${escapeHtml(
+    input.canvasName,
+  )}</p><p>Please start sampling and reply with the sample schedule.</p>`;
+  return { subject, text, html, attachments: [] };
+}
+
 export function prepareCanvasReportHtmlOnlyMail(input: SendCanvasReportEmailRequest): PreparedMail {
   return {
     subject: input.subject,
@@ -364,4 +387,9 @@ export async function deliverCanvasReportEmail(input: SendCanvasReportEmailReque
 export async function deliverTestEmail(input: SendTestEmailRequest) {
   const parsed = sendTestEmailRequestSchema.parse(input);
   return delivery()(parsed.to, prepareTestMail());
+}
+
+export async function deliverPurchaseSamplingEmail(input: SendPurchaseSamplingEmailRequest) {
+  const parsed = sendPurchaseSamplingEmailRequestSchema.parse(input);
+  return delivery()(parsed.to, preparePurchaseSamplingMail(parsed));
 }

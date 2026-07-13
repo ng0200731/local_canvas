@@ -17,13 +17,17 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 import type {
   Canvas,
+  CanvasSendRecord,
+  CanvasStatus,
   CanvasStore,
+  CreateCanvasSendInput,
   CreateCanvasInput,
   CreateProjectInput,
   ImageRecord,
   Project,
   ProjectUpdate,
   RecordImageInput,
+  UpdateCanvasSendInput,
 } from "./canvasStore";
 
 /**
@@ -58,8 +62,25 @@ interface CanvasRow {
   project_id: string;
   name: string;
   content: unknown;
+  status?: CanvasStatus | null;
   created_at: string;
   updated_at: string;
+}
+
+interface CanvasSendRow {
+  id: string;
+  canvas_id: string;
+  sequence: string;
+  status: Exclude<CanvasStatus, "draft">;
+  recipient_email: string;
+  report_url: string;
+  approval_url: string;
+  rejection_url: string;
+  qr_code_data_url: string | null;
+  selected_image_ids: string[];
+  report_snapshot: unknown;
+  created_at: string;
+  responded_at: string | null;
 }
 
 interface ImageRow {
@@ -107,8 +128,25 @@ const canvasRowSchema = z.object({
   project_id: z.string(),
   name: z.string(),
   content: z.unknown().nullable(),
+  status: z.enum(["draft", "awaiting_approval", "approved", "rejected"]).nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const canvasSendRowSchema = z.object({
+  id: z.string(),
+  canvas_id: z.string(),
+  sequence: z.string(),
+  status: z.enum(["awaiting_approval", "approved", "rejected"]),
+  recipient_email: z.string(),
+  report_url: z.string(),
+  approval_url: z.string(),
+  rejection_url: z.string(),
+  qr_code_data_url: z.string().nullable(),
+  selected_image_ids: z.array(z.string()),
+  report_snapshot: z.unknown(),
+  created_at: z.string(),
+  responded_at: z.string().nullable(),
 });
 
 const imageRowSchema = z.object({
@@ -225,10 +263,53 @@ const mapCanvas = (value: unknown, content?: CanvasContent): Canvas => {
     projectId: r.project_id,
     name: r.name,
     content: content ?? safeParseCanvasContent(r.content),
+    status: r.status ?? "draft",
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
 };
+
+const mapCanvasSend = (value: unknown): CanvasSendRecord => {
+  const r: CanvasSendRow = canvasSendRowSchema.parse(value);
+  return {
+    id: r.id,
+    canvasId: r.canvas_id,
+    sequence: r.sequence,
+    status: r.status,
+    recipientEmail: r.recipient_email,
+    reportUrl: r.report_url,
+    approvalUrl: r.approval_url,
+    rejectionUrl: r.rejection_url,
+    qrCodeDataUrl: r.qr_code_data_url,
+    selectedImageIds: r.selected_image_ids,
+    reportSnapshot: r.report_snapshot,
+    createdAt: r.created_at,
+    respondedAt: r.responded_at,
+  };
+};
+
+const CANVAS_COLUMNS = "id, project_id, name, content, status, created_at, updated_at";
+const LEGACY_CANVAS_COLUMNS = "id, project_id, name, content, created_at, updated_at";
+const CANVAS_SEND_COLUMNS =
+  "id, canvas_id, sequence, status, recipient_email, report_url, approval_url, rejection_url, qr_code_data_url, selected_image_ids, report_snapshot, created_at, responded_at";
+
+function isCanvasStatusSchemaMismatch(message: string): boolean {
+  return message.includes("status");
+}
+
+function isCanvasSendsSchemaMissing(message: string): boolean {
+  return (
+    message.includes("canvas_sends") ||
+    message.includes("Could not find the table") ||
+    message.includes("schema cache")
+  );
+}
+
+function canvasSendsMigrationError(context: string): Error {
+  return new Error(
+    `${context}: the canvas send approval table is missing. Apply Supabase migration 0010_canvas_send_approvals.sql, then restart or refresh the Supabase schema cache.`,
+  );
+}
 
 const mapImage = (value: unknown): ImageRecord => {
   const r: ImageRow = imageRowSchema.parse(value);
@@ -494,22 +575,40 @@ export function createSupabaseCanvasStore(): CanvasStore {
     async listCanvases(projectId) {
       const { data, error } = await supabase
         .from("canvases")
-        .select("id, project_id, name, content, created_at, updated_at")
+        .select(CANVAS_COLUMNS)
         .eq("project_id", projectId)
         .order("updated_at", { ascending: false });
-      assertNoError({ error }, "listCanvases");
-      return toUnknownArray(data).map((row) => mapCanvas(row));
+      if (!error) return toUnknownArray(data).map((row) => mapCanvas(row));
+      if (!isCanvasStatusSchemaMismatch(error.message)) assertNoError({ error }, "listCanvases");
+      const legacy = await supabase
+        .from("canvases")
+        .select(LEGACY_CANVAS_COLUMNS)
+        .eq("project_id", projectId)
+        .order("updated_at", { ascending: false });
+      assertNoError({ error: legacy.error }, "listCanvases");
+      return toUnknownArray(legacy.data).map((row) => mapCanvas(row));
     },
 
     async getCanvas(id) {
       const { data, error } = await supabase
         .from("canvases")
-        .select("id, project_id, name, content, created_at, updated_at")
+        .select(CANVAS_COLUMNS)
         .eq("id", id)
         .maybeSingle();
-      assertNoError({ error }, "getCanvas");
-      if (!data) return null;
-      const row = canvasRowSchema.parse(data);
+      let rowData: unknown = data;
+      if (error && isCanvasStatusSchemaMismatch(error.message)) {
+        const legacy = await supabase
+          .from("canvases")
+          .select(LEGACY_CANVAS_COLUMNS)
+          .eq("id", id)
+          .maybeSingle();
+        assertNoError({ error: legacy.error }, "getCanvas");
+        rowData = legacy.data;
+      } else {
+        assertNoError({ error }, "getCanvas");
+      }
+      if (!rowData) return null;
+      const row = canvasRowSchema.parse(rowData);
       const content = await loadCanvasContent(row.id, row.content);
       return mapCanvas(row, content);
     },
@@ -523,11 +622,24 @@ export function createSupabaseCanvasStore(): CanvasStore {
           user_id: userId,
           name: input.name.trim(),
           content: EMPTY_CANVAS_CONTENT,
+          status: "draft",
         })
-        .select("id, project_id, name, content, created_at, updated_at")
+        .select(CANVAS_COLUMNS)
         .single();
-      assertNoError({ error }, "createCanvas");
-      return mapCanvas(data);
+      if (!error) return mapCanvas(data);
+      if (!isCanvasStatusSchemaMismatch(error.message)) assertNoError({ error }, "createCanvas");
+      const legacy = await supabase
+        .from("canvases")
+        .insert({
+          project_id: input.projectId,
+          user_id: userId,
+          name: input.name.trim(),
+          content: EMPTY_CANVAS_CONTENT,
+        })
+        .select(LEGACY_CANVAS_COLUMNS)
+        .single();
+      assertNoError({ error: legacy.error }, "createCanvas");
+      return mapCanvas(legacy.data);
     },
 
     async renameCanvas(id, name) {
@@ -535,10 +647,18 @@ export function createSupabaseCanvasStore(): CanvasStore {
         .from("canvases")
         .update({ name: name.trim(), updated_at: new Date().toISOString() })
         .eq("id", id)
-        .select("id, project_id, name, content, created_at, updated_at")
+        .select(CANVAS_COLUMNS)
         .single();
-      assertNoError({ error }, "renameCanvas");
-      return mapCanvas(data);
+      if (!error) return mapCanvas(data);
+      if (!isCanvasStatusSchemaMismatch(error.message)) assertNoError({ error }, "renameCanvas");
+      const legacy = await supabase
+        .from("canvases")
+        .update({ name: name.trim(), updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .select(LEGACY_CANVAS_COLUMNS)
+        .single();
+      assertNoError({ error: legacy.error }, "renameCanvas");
+      return mapCanvas(legacy.data);
     },
 
     async saveCanvasContent(id, content) {
@@ -563,9 +683,77 @@ export function createSupabaseCanvasStore(): CanvasStore {
       assertNoError({ error }, "saveCanvasContent");
     },
 
+    async updateCanvasStatus(id, status: CanvasStatus) {
+      const { data, error } = await supabase
+        .from("canvases")
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .select(CANVAS_COLUMNS)
+        .single();
+      assertNoError({ error }, "updateCanvasStatus");
+      return mapCanvas(data);
+    },
+
     async deleteCanvas(id) {
       const { error } = await supabase.from("canvases").delete().eq("id", id);
       assertNoError({ error }, "deleteCanvas");
+    },
+
+    async listCanvasSends(canvasId) {
+      const { data, error } = await supabase
+        .from("canvas_sends")
+        .select(CANVAS_SEND_COLUMNS)
+        .eq("canvas_id", canvasId)
+        .order("created_at", { ascending: false });
+      if (error && isCanvasSendsSchemaMissing(error.message)) return [];
+      assertNoError({ error }, "listCanvasSends");
+      return z.array(canvasSendRowSchema).parse(data).map(mapCanvasSend);
+    },
+
+    async createCanvasSend(input: CreateCanvasSendInput) {
+      const userId = await getCurrentUserId();
+      const { data, error } = await supabase
+        .from("canvas_sends")
+        .insert({
+          user_id: userId,
+          canvas_id: input.canvasId,
+          status: "awaiting_approval",
+          recipient_email: input.recipientEmail,
+          report_url: input.reportUrl,
+          approval_token: input.approvalToken,
+          approval_url: input.approvalUrl,
+          rejection_url: input.rejectionUrl,
+          qr_code_data_url: input.qrCodeDataUrl ?? null,
+          selected_image_ids: input.selectedImageIds,
+          report_snapshot: input.reportSnapshot,
+        })
+        .select(CANVAS_SEND_COLUMNS)
+        .single();
+      if (error && isCanvasSendsSchemaMissing(error.message)) {
+        throw canvasSendsMigrationError("createCanvasSend");
+      }
+      assertNoError({ error }, "createCanvasSend");
+      return mapCanvasSend(data);
+    },
+
+    async updateCanvasSend(id: string, input: UpdateCanvasSendInput) {
+      const patch: Record<string, unknown> = {};
+      if (input.reportUrl !== undefined) patch.report_url = input.reportUrl;
+      if (input.approvalUrl !== undefined) patch.approval_url = input.approvalUrl;
+      if (input.rejectionUrl !== undefined) patch.rejection_url = input.rejectionUrl;
+      if (input.qrCodeDataUrl !== undefined) patch.qr_code_data_url = input.qrCodeDataUrl;
+      if (input.reportSnapshot !== undefined) patch.report_snapshot = input.reportSnapshot;
+      const { data, error } = await supabase
+        .from("canvas_sends")
+        .update(patch)
+        .eq("id", id)
+        .select(CANVAS_SEND_COLUMNS)
+        .single();
+      if (error && isCanvasSendsSchemaMissing(error.message)) {
+        throw canvasSendsMigrationError("updateCanvasSend");
+      }
+      assertNoError({ error }, "updateCanvasSend");
+      return mapCanvasSend(data);
     },
 
     // ── Image metadata ──────────────────────────────────────────────────

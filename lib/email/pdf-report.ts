@@ -491,6 +491,44 @@ function drawReport(
   addHeader(doc, report);
   doc.y = PAGE_MARGIN + HEADER_HEIGHT;
 
+  if (report.send) {
+    ensureSpace(doc, 108, report);
+    const contentWidth = doc.page.width - PAGE_MARGIN * 2;
+    const top = doc.y;
+    doc.roundedRect(PAGE_MARGIN, top, contentWidth, 96, 8).fillAndStroke("#fafafa", "#dddddd");
+    doc.font("Helvetica-Bold").fontSize(12).fillColor("#111111");
+    doc.text("Canvas approval", PAGE_MARGIN + 12, top + 12, { width: contentWidth - 150 });
+    doc.font("Helvetica").fontSize(8).fillColor("#333333");
+    doc.text(`Sequence: ${report.send.sequence}`, PAGE_MARGIN + 12, top + 32, {
+      width: contentWidth - 150,
+    });
+    doc.text(`Scan: ${report.send.reportUrl}`, PAGE_MARGIN + 12, top + 46, {
+      width: contentWidth - 150,
+      ellipsis: true,
+    });
+    doc.text(`Approve: ${report.send.approvalUrl}`, PAGE_MARGIN + 12, top + 60, {
+      width: contentWidth - 150,
+      ellipsis: true,
+    });
+    doc.text(`Reject: ${report.send.rejectionUrl}`, PAGE_MARGIN + 12, top + 74, {
+      width: contentWidth - 150,
+      ellipsis: true,
+    });
+    if (report.send.qrCodeDataUrl) {
+      drawImage(
+        doc,
+        report.send.qrCodeDataUrl,
+        PAGE_MARGIN + contentWidth - 104,
+        top + 8,
+        88,
+        80,
+        "QR code",
+      );
+    }
+    doc.y = top + 110;
+    doc.fillColor("#111111");
+  }
+
   for (const section of report.sections) {
     if (section.blocks.length === 0) continue;
     if (section.pageBreakBefore) {

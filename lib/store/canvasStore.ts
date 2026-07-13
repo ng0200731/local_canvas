@@ -14,8 +14,28 @@ export interface Canvas {
   projectId: string;
   name: string;
   content: CanvasContent;
+  status: CanvasStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export const CANVAS_STATUSES = ["draft", "awaiting_approval", "approved", "rejected"] as const;
+export type CanvasStatus = (typeof CANVAS_STATUSES)[number];
+
+export interface CanvasSendRecord {
+  id: string;
+  canvasId: string;
+  sequence: string;
+  status: Exclude<CanvasStatus, "draft">;
+  recipientEmail: string;
+  reportUrl: string;
+  approvalUrl: string;
+  rejectionUrl: string;
+  qrCodeDataUrl: string | null;
+  selectedImageIds: string[];
+  reportSnapshot: unknown;
+  createdAt: string;
+  respondedAt: string | null;
 }
 
 export interface ImageRecord {
@@ -46,6 +66,26 @@ export interface CreateProjectInput extends Partial<ProjectMetadata> {
 export interface CreateCanvasInput {
   projectId: string;
   name: string;
+}
+
+export interface CreateCanvasSendInput {
+  canvasId: string;
+  recipientEmail: string;
+  reportUrl: string;
+  approvalToken: string;
+  approvalUrl: string;
+  rejectionUrl: string;
+  qrCodeDataUrl?: string | null;
+  selectedImageIds: string[];
+  reportSnapshot: unknown;
+}
+
+export interface UpdateCanvasSendInput {
+  reportUrl?: string;
+  approvalUrl?: string;
+  rejectionUrl?: string;
+  qrCodeDataUrl?: string | null;
+  reportSnapshot?: unknown;
 }
 
 export interface RecordImageInput {
@@ -84,7 +124,13 @@ export interface CanvasStore {
   createCanvas(input: CreateCanvasInput): Promise<Canvas>;
   renameCanvas(id: string, name: string): Promise<Canvas>;
   saveCanvasContent(id: string, content: CanvasContent): Promise<void>;
+  updateCanvasStatus(id: string, status: CanvasStatus): Promise<Canvas>;
   deleteCanvas(id: string): Promise<void>;
+
+  // Canvas sends / approvals
+  listCanvasSends(canvasId: string): Promise<CanvasSendRecord[]>;
+  createCanvasSend(input: CreateCanvasSendInput): Promise<CanvasSendRecord>;
+  updateCanvasSend(id: string, input: UpdateCanvasSendInput): Promise<CanvasSendRecord>;
 
   // ── Image metadata ────────────────────────────────────────────────────
   listImages(canvasId: string): Promise<ImageRecord[]>;

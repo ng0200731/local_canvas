@@ -3,13 +3,17 @@ import { mergeProjectMetadata } from "@/lib/project-metadata";
 
 import type {
   Canvas,
+  CanvasSendRecord,
+  CanvasStatus,
   CanvasStore,
+  CreateCanvasSendInput,
   CreateCanvasInput,
   CreateProjectInput,
   ImageRecord,
   Project,
   ProjectUpdate,
   RecordImageInput,
+  UpdateCanvasSendInput,
 } from "./canvasStore";
 
 /**
@@ -21,6 +25,7 @@ const KEYS = {
   projects: "ica:projects",
   canvases: "ica:canvases",
   images: "ica:images",
+  canvasSends: "ica:canvas-sends",
 } as const;
 
 const DB_NAME = "ica:local-store";
@@ -205,6 +210,21 @@ function normalizeProject(project: Project): Project {
   };
 }
 
+function normalizeCanvas(canvas: Canvas): Canvas {
+  return {
+    ...canvas,
+    status: canvas.status ?? "draft",
+  };
+}
+
+function nextLocalSequence(records: readonly CanvasSendRecord[]): string {
+  const max = records.reduce((value, record) => {
+    const numeric = Number(record.sequence.replace(/^CA/, ""));
+    return Number.isFinite(numeric) ? Math.max(value, numeric) : value;
+  }, 0);
+  return `CA${String(max + 1).padStart(6, "0")}`;
+}
+
 export const localCanvasStore: CanvasStore = {
   // ── Projects ──────────────────────────────────────────────────────────
   async listProjects() {
@@ -259,7 +279,7 @@ export const localCanvasStore: CanvasStore = {
       projects.filter((p) => p.id !== id),
     );
     // Cascade: drop canvases + their images.
-    const canvases = read<Canvas[]>(KEYS.canvases, []);
+    const canvases = read<Canvas[]>(KEYS.canvases, []).map(normalizeCanvas);
     const remaining = canvases.filter((c) => c.projectId !== id);
     write(KEYS.canvases, remaining);
     const deletedIds = new Set(canvases.filter((c) => c.projectId === id).map((c) => c.id));
@@ -285,7 +305,7 @@ export const localCanvasStore: CanvasStore = {
   },
 
   async getCanvas(id) {
-    const canvases = read<Canvas[]>(KEYS.canvases, []);
+    const canvases = read<Canvas[]>(KEYS.canvases, []).map(normalizeCanvas);
     const canvas = canvases.find((c) => c.id === id) ?? null;
     return canvas ? hydrateCanvasContent(canvas) : delay(null);
   },
@@ -297,6 +317,7 @@ export const localCanvasStore: CanvasStore = {
       projectId: input.projectId,
       name: input.name.trim(),
       content: EMPTY_CANVAS_CONTENT,
+      status: "draft",
       createdAt: nowISO(),
       updatedAt: nowISO(),
     };
@@ -308,7 +329,7 @@ export const localCanvasStore: CanvasStore = {
     const canvases = read<Canvas[]>(KEYS.canvases, []);
     const idx = canvases.findIndex((c) => c.id === id);
     if (idx === -1) throw new Error("Canvas not found");
-    canvases[idx] = { ...canvases[idx], name: name.trim(), updatedAt: nowISO() };
+    canvases[idx] = { ...normalizeCanvas(canvases[idx]), name: name.trim(), updatedAt: nowISO() };
     write(KEYS.canvases, canvases);
     return delay(canvases[idx]);
   },
@@ -317,7 +338,7 @@ export const localCanvasStore: CanvasStore = {
     const canvases = read<Canvas[]>(KEYS.canvases, []);
     const idx = canvases.findIndex((c) => c.id === id);
     if (idx === -1) throw new Error("Canvas not found");
-    canvases[idx] = { ...canvases[idx], content, updatedAt: nowISO() };
+    canvases[idx] = { ...normalizeCanvas(canvases[idx]), content, updatedAt: nowISO() };
     try {
       write(KEYS.canvases, canvases);
       await deleteCanvasContentFromIndexedDb(id);
@@ -339,6 +360,15 @@ export const localCanvasStore: CanvasStore = {
     return delay(undefined);
   },
 
+  async updateCanvasStatus(id: string, status: CanvasStatus) {
+    const canvases = read<Canvas[]>(KEYS.canvases, []).map(normalizeCanvas);
+    const idx = canvases.findIndex((c) => c.id === id);
+    if (idx === -1) throw new Error("Canvas not found");
+    canvases[idx] = { ...canvases[idx], status, updatedAt: nowISO() };
+    write(KEYS.canvases, canvases);
+    return delay(canvases[idx]);
+  },
+
   async deleteCanvas(id) {
     const canvases = read<Canvas[]>(KEYS.canvases, []);
     write(
@@ -352,6 +382,51 @@ export const localCanvasStore: CanvasStore = {
       images.filter((i) => i.canvasId !== id),
     );
     return delay(undefined);
+  },
+
+  async listCanvasSends(canvasId) {
+    return delay(
+      read<CanvasSendRecord[]>(KEYS.canvasSends, [])
+        .filter((record) => record.canvasId === canvasId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    );
+  },
+
+  async createCanvasSend(input: CreateCanvasSendInput) {
+    const records = read<CanvasSendRecord[]>(KEYS.canvasSends, []);
+    const record: CanvasSendRecord = {
+      id: uid(),
+      canvasId: input.canvasId,
+      sequence: nextLocalSequence(records),
+      status: "awaiting_approval",
+      recipientEmail: input.recipientEmail,
+      reportUrl: input.reportUrl,
+      approvalUrl: input.approvalUrl,
+      rejectionUrl: input.rejectionUrl,
+      qrCodeDataUrl: input.qrCodeDataUrl ?? null,
+      selectedImageIds: input.selectedImageIds,
+      reportSnapshot: input.reportSnapshot,
+      createdAt: nowISO(),
+      respondedAt: null,
+    };
+    write(KEYS.canvasSends, [record, ...records]);
+    return delay(record);
+  },
+
+  async updateCanvasSend(id: string, input: UpdateCanvasSendInput) {
+    const records = read<CanvasSendRecord[]>(KEYS.canvasSends, []);
+    const idx = records.findIndex((record) => record.id === id);
+    if (idx === -1) throw new Error("Canvas send record not found");
+    records[idx] = {
+      ...records[idx],
+      ...(input.reportUrl !== undefined ? { reportUrl: input.reportUrl } : {}),
+      ...(input.approvalUrl !== undefined ? { approvalUrl: input.approvalUrl } : {}),
+      ...(input.rejectionUrl !== undefined ? { rejectionUrl: input.rejectionUrl } : {}),
+      ...(input.qrCodeDataUrl !== undefined ? { qrCodeDataUrl: input.qrCodeDataUrl } : {}),
+      ...(input.reportSnapshot !== undefined ? { reportSnapshot: input.reportSnapshot } : {}),
+    };
+    write(KEYS.canvasSends, records);
+    return delay(records[idx]);
   },
 
   // ── Image metadata ────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   useState,
   type DragEvent,
   type FormEvent,
+  type MouseEvent as ReactMouseEvent,
   type SetStateAction,
 } from "react";
 import Link from "next/link";
@@ -115,6 +116,8 @@ const POSITION_EPSILON = 1;
 const MAX_PLACEMENT_PROBES = 40;
 const FIELD_FOCUS_RETRIES = 12;
 const GROUP_FIT_PADDING = 18;
+const ACTIVE_GENERATION_LEAVE_MESSAGE =
+  "Image generation is still running. Leaving this canvas may lose the generated image. Leave anyway?";
 
 type HoverTarget = {
   kind: "node" | "edge";
@@ -641,6 +644,42 @@ function Editor({
   const [pendingGroupMembershipChange, setPendingGroupMembershipChange] =
     useState<PendingGroupMembershipChange | null>(null);
   const connectedNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasActiveGeneration = nodes.some(
+    (node) =>
+      (node.type === "generate" || node.type === "imageOutput") && node.data.status === "loading",
+  );
+
+  useEffect(() => {
+    if (!hasActiveGeneration) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = ACTIVE_GENERATION_LEAVE_MESSAGE;
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasActiveGeneration]);
+
+  const confirmLeavingActiveGeneration = useCallback(() => {
+    if (!hasActiveGeneration) return true;
+    return window.confirm(ACTIVE_GENERATION_LEAVE_MESSAGE);
+  }, [hasActiveGeneration]);
+
+  const handleCanvasNavigationClickCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!hasActiveGeneration || event.defaultPrevented) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const link = target?.closest<HTMLAnchorElement>("a[href]");
+      if (!link) return;
+      const href = link.getAttribute("href");
+      if (!href || href.startsWith("#") || href.startsWith("mailto:")) return;
+      if (confirmLeavingActiveGeneration()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [confirmLeavingActiveGeneration, hasActiveGeneration],
+  );
 
   // Live connection drag: which node the wire started from (source highlight)
   // and which node + dot the pointer is currently hovering over (target highlight).
@@ -1802,6 +1841,7 @@ function Editor({
 
   return (
     <div
+      onClickCapture={handleCanvasNavigationClickCapture}
       className={
         embedded
           ? "bg-background flex h-[calc(100dvh-6rem)] flex-col"
@@ -1810,7 +1850,14 @@ function Editor({
     >
       <div className="bg-background/90 supports-[backdrop-filter]:bg-background/70 flex h-14 shrink-0 items-center gap-2 border-b px-3 backdrop-blur">
         {onBack ? (
-          <Button size="icon-sm" variant="ghost" aria-label="Back to project" onClick={onBack}>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Back to project"
+            onClick={() => {
+              if (confirmLeavingActiveGeneration()) onBack();
+            }}
+          >
             <ChevronLeft />
           </Button>
         ) : (

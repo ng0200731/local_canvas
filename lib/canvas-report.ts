@@ -48,6 +48,7 @@ export interface CanvasReportSection {
 export interface CanvasReport {
   title: string;
   generatedAt: string;
+  send?: CanvasReportSendInfo;
   project: {
     name: string;
     customerName: string;
@@ -70,6 +71,14 @@ export interface CanvasReport {
   text: string;
 }
 
+export interface CanvasReportSendInfo {
+  sequence: string;
+  reportUrl: string;
+  approvalUrl: string;
+  rejectionUrl: string;
+  qrCodeDataUrl: string | null;
+}
+
 export interface BuildCanvasReportInput {
   canvas: Pick<Canvas, "id" | "name" | "content" | "createdAt" | "updatedAt">;
   project: Project | null;
@@ -77,6 +86,7 @@ export interface BuildCanvasReportInput {
   suppliers: readonly SupplierRecord[];
   products: readonly ProductRecord[];
   images: readonly ImageRecord[];
+  send?: CanvasReportSendInfo;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -336,6 +346,10 @@ function outputBlockForNode(node: CanvasNode): CanvasReportBlock {
       { label: "Input prompt", value: prompt },
       { label: "Model", value: stringValue(data.model) },
       { label: "Status", value: stringValue(data.status) },
+      {
+        label: "Created time",
+        value: nullableString(data.createdAt) ? formatDateTime(stringValue(data.createdAt)) : "",
+      },
       { label: "Output format", value: stringValue(data.outputFormat) },
     ].filter((item) => item.value),
     image: nullableString(data.resultUrl)
@@ -550,6 +564,8 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
     img{max-width:100%;max-height:260px;object-fit:contain}
     .page-break{break-before:page;border-top:1px solid #ddd;margin-top:32px;padding-top:8px}
     .steps{font-size:12px;margin:0;padding-left:20px}.steps li{margin-bottom:8px}
+    .approval{display:grid;grid-template-columns:minmax(0,1fr) 128px;gap:16px;align-items:center;border:1px solid #ddd;border-radius:8px;padding:12px;margin:0 0 18px;background:#fafafa}
+    .approval a{color:#0f5eb8}.approval img{width:128px;height:128px}
     @media print{body{background:#fff}.page{padding:18mm}.block{page-break-inside:avoid}.page-break{page-break-before:always}}
   `;
   const project = report.project;
@@ -560,6 +576,9 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
         `<section${section.pageBreakBefore ? ' class="page-break"' : ""}><h2>${escapeHtml(section.title)}</h2>${section.blocks.map(blockHtml).join("")}</section>`,
     )
     .join("");
+  const send = report.send
+    ? `<section class="approval"><div><h2>Canvas approval</h2><p><strong>Sequence:</strong> ${escapeHtml(report.send.sequence)}</p><p><strong>Scan:</strong> <a href="${escapeHtml(report.send.reportUrl)}">${escapeHtml(report.send.reportUrl)}</a></p><p><strong>Approve:</strong> <a href="${escapeHtml(report.send.approvalUrl)}">Confirm approval</a></p><p><strong>Reject:</strong> <a href="${escapeHtml(report.send.rejectionUrl)}">Reject canvas</a></p></div>${report.send.qrCodeDataUrl ? `<img src="${escapeHtml(report.send.qrCodeDataUrl)}" alt="QR code for ${escapeHtml(report.send.sequence)}">` : ""}</section>`
+    : "";
   return `<!doctype html><html><head><meta charset="utf-8"><style>${pageCss}</style></head><body><div class="page"><header><h1>${escapeHtml(report.title)}</h1><div class="meta">
     <span><strong>Customer:</strong> ${escapeHtml(project.customerName)}</span>
     <span><strong>Contact:</strong> ${escapeHtml([project.employeeName, project.employeeTitle].filter(Boolean).join(" / "))}</span>
@@ -569,6 +588,7 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
     <span><strong>Delivery destination:</strong> ${escapeHtml(project.destination)}</span>
     <span><strong>Generated:</strong> ${escapeHtml(formatDateTime(report.generatedAt))}</span>
   </div></header>
+  ${send}
   ${sections}
   <section><h2>Canvas log</h2><ol class="steps">${report.steps.map((step) => `<li><strong>${escapeHtml(step.title)}</strong><br>${lineBreaks(step.detail)}</li>`).join("")}</ol></section>
   </div></body></html>`;
@@ -577,6 +597,14 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
 function makeText(report: Omit<CanvasReport, "html" | "text">): string {
   const lines = [
     report.title,
+    ...(report.send
+      ? [
+          `Canvas sequence: ${report.send.sequence}`,
+          `Scan URL: ${report.send.reportUrl}`,
+          `Approve: ${report.send.approvalUrl}`,
+          `Reject: ${report.send.rejectionUrl}`,
+        ]
+      : []),
     `Customer: ${report.project.customerName}`,
     `Contact: ${[report.project.employeeName, report.project.employeeTitle].filter(Boolean).join(" / ")}`,
     `Email: ${report.project.employeeEmail}`,
@@ -795,7 +823,9 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
       detail:
         node.type === "generate"
           ? `Created Generate node with prompt: ${stringValue(asRecord(node.data).prompt) || "No prompt entered."}`
-          : `Created ${nodeTitle(node)}.`,
+          : node.type === "imageOutput" && nullableString(asRecord(node.data).createdAt)
+            ? `Created ${nodeTitle(node)} at ${formatDateTime(stringValue(asRecord(node.data).createdAt))}.`
+            : `Created ${nodeTitle(node)}.`,
     })),
     ...content.edges.map((edge, index) => ({
       id: `edge-${edge.id}`,
@@ -812,6 +842,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
   const baseReport: Omit<CanvasReport, "html" | "text"> = {
     title: `${input.canvas.name} canvas report`,
     generatedAt: new Date().toISOString(),
+    send: input.send,
     project: {
       name: input.project?.name ?? "Project",
       customerName: input.project?.customerName ?? customer?.company.companyName ?? "Not set",

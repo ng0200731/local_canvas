@@ -170,6 +170,7 @@ const canvas: Canvas = {
   id: "canvas-1",
   projectId: "project-1",
   name: "Sample canvas",
+  status: "draft",
   createdAt: now,
   updatedAt: now,
   content: {

@@ -97,6 +97,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     defaultData: () => ({
       resultUrl: null,
       status: "idle",
+      createdAt: new Date().toISOString(),
     }),
   },
   suppler: {

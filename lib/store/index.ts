@@ -23,11 +23,15 @@ export const usingLocalStore = !isSupabaseConfigured;
 
 export type {
   Canvas,
+  CanvasSendRecord,
+  CanvasStatus,
   CanvasStore,
   CreateCanvasInput,
+  CreateCanvasSendInput,
   CreateProjectInput,
   ImageRecord,
   Project,
   ProjectUpdate,
   RecordImageInput,
+  UpdateCanvasSendInput,
 } from "./canvasStore";
