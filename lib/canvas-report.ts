@@ -678,7 +678,8 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
       ),
       image: variantImage(primaryVariant(product)),
     }));
-  const customerProducts = [...productNodeProducts, ...workspaceCustomerProducts];
+  const customerProducts =
+    productNodes.length > 0 ? [...productNodeProducts, ...workspaceCustomerProducts] : [];
 
   const supplierNodes = nodes.filter((node) => node.type === "suppler");
   const supplierBlocks = supplierNodes.map((node) => {
@@ -747,22 +748,26 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
   const genericBlocks = nodes
     .filter(
       (node) =>
-        node.type === "imageInput" && stringValue(asRecord(node.data).genericDefinitionName),
+        node.type === "imageInput" &&
+        (stringValue(asRecord(node.data).genericDefinitionName) ||
+          nullableString(asRecord(node.data).imageUrl)),
     )
     .map((node) => {
       const data = asRecord(node.data);
+      const genericName = stringValue(data.genericDefinitionName);
+      const alias = stringValue(data.alias);
       return {
         id: `generic-${node.id}`,
-        title: stringValue(data.genericDefinitionName) || stringValue(data.alias) || "Generic node",
-        subtitle: stringValue(data.alias) ? `@${stringValue(data.alias)}` : undefined,
+        title: genericName || alias || "Input image",
+        subtitle: alias ? `@${alias}` : undefined,
         details: [
-          { label: "Alias", value: stringValue(data.alias) },
-          { label: "Node", value: stringValue(data.genericDefinitionName) },
+          { label: "Alias", value: alias },
+          { label: "Node", value: genericName || "Input image" },
         ].filter((item) => item.value),
         image: nullableString(data.imageUrl)
           ? {
               url: nullableString(data.imageUrl),
-              alt: imageAlt(stringValue(data.alias), "Generic node image"),
+              alt: imageAlt(alias, genericName ? "Generic node image" : "Input image"),
             }
           : null,
       };

@@ -476,4 +476,52 @@ describe("buildCanvasReport", () => {
       report.html.indexOf("Supplier details"),
     );
   });
+
+  it("omits product list without product nodes and keeps drag-drop input images", () => {
+    const canvasWithInputOnly: Canvas = {
+      ...canvas,
+      content: {
+        ...canvas.content,
+        nodes: [
+          {
+            id: "input-node",
+            type: "imageInput",
+            position: { x: 0, y: 0 },
+            data: {
+              alias: "droppedLogo",
+              imageUrl: tinyPng,
+              storagePath: "uploads/dropped-logo.png",
+            },
+          },
+          ...canvas.content.nodes.filter((node) => node.type !== "product"),
+        ],
+      },
+    };
+
+    const report = buildCanvasReport({
+      canvas: canvasWithInputOnly,
+      project,
+      customers: [],
+      suppliers,
+      products,
+      images,
+    });
+
+    expect(report.customerProducts).toHaveLength(0);
+    expect(report.sections.find((section) => section.title === "Product list")?.blocks).toEqual([]);
+    expect(report.genericBlocks).toEqual([
+      expect.objectContaining({
+        id: "generic-input-node",
+        title: "droppedLogo",
+        subtitle: "@droppedLogo",
+        image: {
+          url: tinyPng,
+          alt: "droppedLogo",
+        },
+      }),
+    ]);
+    expect(report.html).not.toContain("<h2>Product list</h2>");
+    expect(report.html).toContain("<h2>Generic node</h2>");
+    expect(report.html).toContain("droppedLogo");
+  });
 });
