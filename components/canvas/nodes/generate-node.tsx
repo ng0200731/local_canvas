@@ -362,6 +362,123 @@ function AliasMentionInput({
   );
 }
 
+function AliasMentionTextarea({
+  value,
+  disabled,
+  aliases,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  aliases: readonly { nodeId: string; alias: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [mention, setMention] = useState<MentionMatch | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const suggestions = mention
+    ? aliases.filter((option) => {
+        const query = mention.query.toLocaleLowerCase();
+        return (
+          option.alias.toLocaleLowerCase().includes(query) ||
+          option.label.toLocaleLowerCase().includes(query)
+        );
+      })
+    : [];
+
+  function updateMention(nextValue: string, caret: number | null) {
+    setMention(caret === null ? null : mentionAtCaret(nextValue, caret));
+    setActiveIndex(0);
+  }
+
+  function insertAlias(alias: string) {
+    if (!mention) return;
+    const nextValue = `${value.slice(0, mention.start)}@${alias} ${value.slice(mention.end)}`;
+    const nextCaret = mention.start + alias.length + 2;
+    onChange(nextValue);
+    setMention(null);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (!mention || suggestions.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => (current + 1) % suggestions.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => (current - 1 + suggestions.length) % suggestions.length);
+      return;
+    }
+    if (event.key === "Escape") {
+      setMention(null);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      const suggestion = suggestions[activeIndex] ?? suggestions[0];
+      if (suggestion) insertAlias(suggestion.alias);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <textarea
+        ref={textareaRef}
+        rows={5}
+        value={value}
+        disabled={disabled}
+        placeholder="Describe the image... use @ to mention connected aliases"
+        className="nodrag bg-background/60 border-input focus-visible:border-ring focus-visible:ring-ring/30 block min-h-28 w-full resize-y rounded-md border p-2 text-sm leading-5 outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
+        onChange={(event) => {
+          onChange(event.target.value);
+          updateMention(event.target.value, event.target.selectionStart);
+        }}
+        onClick={(event) =>
+          updateMention(event.currentTarget.value, event.currentTarget.selectionStart)
+        }
+        onKeyUp={(event) => {
+          if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) return;
+          updateMention(event.currentTarget.value, event.currentTarget.selectionStart);
+        }}
+        onKeyDown={handleKeyDown}
+        onBlur={() => window.setTimeout(() => setMention(null), 120)}
+      />
+      {mention ? (
+        <div className="nodrag nopan bg-popover text-popover-foreground absolute right-2 left-2 z-40 mt-1 max-h-36 overflow-y-auto rounded-md border p-1 shadow-md">
+          {suggestions.length ? (
+            suggestions.map((option, index) => (
+              <button
+                key={option.nodeId}
+                type="button"
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs",
+                  index === activeIndex ? "bg-accent" : "hover:bg-accent",
+                )}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  insertAlias(option.alias);
+                }}
+                onMouseEnter={() => setActiveIndex(index)}
+              >
+                <span className="truncate">@{option.alias}</span>
+                <span className="text-muted-foreground truncate">{option.label}</span>
+              </button>
+            ))
+          ) : (
+            <p className="text-muted-foreground px-2 py-1.5 text-xs">No matching alias</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function GenerateNode({ id, data, parentId, selected }: NodeProps<GenerateCanvasNode>) {
   const {
     updateNodeData,
@@ -563,8 +680,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   }
 
   function updatePromptRows(rows: GeneratePromptRow[]) {
-    const prompt = compileGeneratePromptRows(rows, promptReferences);
-    updateNodeData(id, { promptRows: rows, prompt });
+    updateNodeData(id, { promptRows: rows });
   }
 
   function patchPromptRow(rowId: string, patch: Partial<GeneratePromptRow>) {
@@ -577,9 +693,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   }
 
   async function onGenerate() {
-    const prompt = compileGeneratePromptRows(promptRows, promptReferences).trim();
+    const rowPrompt = compileGeneratePromptRows(promptRows, promptReferences).trim();
+    const prompt = [data.prompt.trim(), rowPrompt].filter(Boolean).join("\n");
     if (!prompt) {
-      toast.error("Complete at least one prompt row first");
+      toast.error("Enter prompt text or complete at least one prompt row first");
       return;
     }
     if (allGenerationReferences.length > MAX_IMAGE_GENERATION_REFERENCES) {
@@ -603,7 +720,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     updateNodeData(id, {
       status: "loading",
       error: undefined,
-      prompt,
       model,
       size,
       outputFormat,
@@ -1003,6 +1119,16 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
               </span>
             )}
           </div>
+        </div>
+
+        <div className="grid gap-1">
+          <span className="text-muted-foreground text-xs">Prompt</span>
+          <AliasMentionTextarea
+            value={data.prompt}
+            disabled={isGenerating}
+            aliases={aliasOptions}
+            onChange={(prompt) => updateNodeData(id, { prompt })}
+          />
         </div>
 
         <div className="bg-background/60 grid gap-2 rounded-md border p-2">
