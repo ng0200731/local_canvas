@@ -88,10 +88,11 @@ const productRowSchema = z.object({
 
 const workspaceOptionRowSchema = z.object({
   id: z.string(),
-  kind: z.enum(["currency", "destination-country"]),
+  kind: z.enum(["currency", "destination-country", "address-book"]),
   code: z.string(),
   name: z.string(),
   symbol: z.string().nullable(),
+  is_favorite: z.boolean().nullable().optional(),
   sort_index: z.number().int(),
 });
 
@@ -144,6 +145,7 @@ function isSettingsSchemaCacheMismatch(message: string): boolean {
     "generic_node_definitions",
     "replace_workspace_options",
     "reorder_generic_node_definitions",
+    "is_favorite",
   ].some((name) => message.includes(name));
 }
 
@@ -262,6 +264,7 @@ function mapWorkspaceOption(rowValue: unknown): WorkspaceOption {
     code: row.code,
     name: row.name,
     symbol: row.symbol,
+    isFavorite: row.is_favorite ?? false,
     sortIndex: row.sort_index,
   };
 }
@@ -548,7 +551,7 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
     async listWorkspaceOptions(kind) {
       const query = await supabase
         .from("workspace_options")
-        .select("id, kind, code, name, symbol, sort_index")
+        .select("id, kind, code, name, symbol, is_favorite, sort_index")
         .eq("kind", kind)
         .order("sort_index", { ascending: true });
       if (query.error) {

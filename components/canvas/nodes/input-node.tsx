@@ -60,7 +60,11 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
       setUploading(true);
       try {
         const { url, storagePath } = await uploadImage(file);
-        updateNodeData(id, { imageUrl: url, storagePath, selectedGenericImageId: null });
+        updateNodeData(id, {
+          imageUrl: url,
+          storagePath,
+          selectedGenericImageId: null,
+        });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Upload failed");
       } finally {
@@ -227,6 +231,8 @@ export function InputNode({ id, data, parentId, selected }: NodeProps<InputCanva
                   selectedGenericImageId: item.id,
                 });
               }}
+              masks={data.imageMasks ?? []}
+              onMasksChange={(imageMasks) => updateNodeData(id, { imageMasks })}
               trigger={
                 <button
                   type="button"

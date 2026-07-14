@@ -28,7 +28,7 @@ export function ImageThumbnailStack({
         <span
           key={image.id}
           className={cn(
-            "bg-muted relative grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border border-background shadow-sm -ml-2 first:ml-0",
+            "bg-muted border-background relative -ml-2 grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border shadow-sm first:ml-0",
             thumbnailClassName,
           )}
         >
@@ -39,7 +39,7 @@ export function ImageThumbnailStack({
       {remaining > 0 ? (
         <span
           className={cn(
-            "bg-secondary text-secondary-foreground relative -ml-2 grid size-7 shrink-0 place-items-center rounded-full border border-background text-[0.62rem] font-semibold shadow-sm",
+            "bg-secondary text-secondary-foreground border-background relative -ml-2 grid size-7 shrink-0 place-items-center rounded-full border text-[0.62rem] font-semibold shadow-sm",
             remainingClassName,
           )}
         >

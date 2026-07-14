@@ -5,6 +5,7 @@ import {
   Boxes,
   ChevronDown,
   ChevronLeft,
+  ClipboardList,
   FolderKanban,
   Layers3,
   Menu,
@@ -23,17 +24,20 @@ import { GenericNodeSettingsPanel } from "@/components/settings/generic-node-set
 import { OrderedOptionSettingsPanel } from "@/components/settings/ordered-option-settings-panel";
 import { SmtpSettingsPanel } from "@/components/settings/smtp-settings-panel";
 import { EntityWorkspacePanel } from "@/components/welcome/entity-workspace-panel";
+import { SampleStatusDashboard } from "@/components/sample-status/sample-status-dashboard";
 import { cn } from "@/lib/utils";
 
-type SectionId = "customer" | "product" | "supplier" | "project" | "settings";
+type SectionId = "customer" | "product" | "supplier" | "project" | "sample-status" | "settings";
 type TabId =
   | "customer"
   | "product"
   | "supplier"
   | "project"
+  | "sample-status"
   | "smtp-settings"
   | "currency-settings"
   | "destination-country-settings"
+  | "address-book-settings"
   | "generic-node-settings";
 type WorkspaceMode = "new" | "records";
 
@@ -95,6 +99,13 @@ const sections: MenuSection[] = [
     items: [{ label: "View / edit", tab: "project", mode: "records" }],
   },
   {
+    id: "sample-status",
+    label: "Sample Status",
+    icon: ClipboardList,
+    tab: "sample-status",
+    items: [],
+  },
+  {
     id: "settings",
     label: "Settings",
     icon: Settings2,
@@ -103,6 +114,7 @@ const sections: MenuSection[] = [
       { label: "SMTP setting", tab: "smtp-settings" },
       { label: "Currency", tab: "currency-settings" },
       { label: "Destination country", tab: "destination-country-settings" },
+      { label: "Address book", tab: "address-book-settings" },
       { label: "Generic node", tab: "generic-node-settings" },
     ],
   },
@@ -113,13 +125,16 @@ const tabLabels: Record<TabId, string> = {
   product: "Product +",
   supplier: "Supplier +",
   project: "Project",
+  "sample-status": "Sample Status",
   "smtp-settings": "SMTP Setting",
   "currency-settings": "Currency",
   "destination-country-settings": "Destination Country",
+  "address-book-settings": "Address Book",
   "generic-node-settings": "Generic Node",
 };
 
 function sectionForTab(tabId: TabId): SectionId {
+  if (tabId === "sample-status") return "sample-status";
   if (tabId === "customer" || tabId === "product" || tabId === "supplier" || tabId === "project") {
     return tabId;
   }
@@ -150,6 +165,9 @@ function ProjectWorkspacePanel({
         onOpenProject={onOpenProject}
         onOpenCanvas={onOpenCanvasFromProject}
         onProjectCreated={onOpenProject}
+        stickyTopClassName="top-0"
+        className="h-full"
+        tableViewportClassName="flex-1"
       />
     );
   }
@@ -177,7 +195,7 @@ function ProjectWorkspacePanel({
         <ChevronLeft />
         Projects
       </Button>
-      <ProjectHeader projectId={selectedProjectId} />
+      <ProjectHeader projectId={selectedProjectId} stickyTopClassName="top-0" />
       <div className="mt-8">
         <CanvasList
           projectId={selectedProjectId}
@@ -228,10 +246,12 @@ function renderTabContent({
       />
     );
   }
+  if (tabId === "sample-status") return <SampleStatusDashboard />;
   if (tabId === "smtp-settings") return <SmtpSettingsPanel />;
   if (tabId === "currency-settings") return <OrderedOptionSettingsPanel kind="currency" />;
   if (tabId === "destination-country-settings")
     return <OrderedOptionSettingsPanel kind="destination-country" />;
+  if (tabId === "address-book-settings") return <OrderedOptionSettingsPanel kind="address-book" />;
   if (tabId === "generic-node-settings") return <GenericNodeSettingsPanel />;
   if (tabId === "customer")
     return (
@@ -331,7 +351,8 @@ export function WorkspaceShell({
 
     setExpanded((current) => (current === section.id ? null : section.id));
     setActiveSection(section.id);
-    if (section.id === "project" || section.id === "settings") openTab(section.tab);
+    if (section.id === "project" || section.id === "sample-status" || section.id === "settings")
+      openTab(section.tab);
   }
 
   function closeTab(tabId: TabId) {
@@ -356,7 +377,7 @@ export function WorkspaceShell({
   }
 
   return (
-    <main className="bg-background flex min-h-dvh flex-1 flex-col md:flex-row">
+    <main className="bg-background flex h-dvh flex-1 flex-col overflow-hidden md:flex-row">
       <aside
         className={cn(
           "bg-sidebar text-sidebar-foreground flex shrink-0 flex-col border-b p-3 transition-[width] md:border-r md:border-b-0",
@@ -397,7 +418,7 @@ export function WorkspaceShell({
               <section key={section.id} className="flex flex-col gap-1">
                 <button
                   type="button"
-                  aria-expanded={isExpanded}
+                  aria-expanded={section.items.length ? isExpanded : undefined}
                   title={isMenuCollapsed ? section.label : undefined}
                   onClick={() => selectSection(section)}
                   className={cn(
@@ -417,17 +438,19 @@ export function WorkspaceShell({
                   {!isMenuCollapsed ? (
                     <>
                       <span className="min-w-0 flex-1 text-left">{section.label}</span>
-                      <ChevronDown
-                        className={cn(
-                          "size-4 shrink-0 transition-transform",
-                          isExpanded && "rotate-180",
-                        )}
-                      />
+                      {section.items.length ? (
+                        <ChevronDown
+                          className={cn(
+                            "size-4 shrink-0 transition-transform",
+                            isExpanded && "rotate-180",
+                          )}
+                        />
+                      ) : null}
                     </>
                   ) : null}
                 </button>
 
-                {isExpanded && !isMenuCollapsed ? (
+                {section.items.length > 0 && isExpanded && !isMenuCollapsed ? (
                   <div className="border-sidebar-border ml-4 flex flex-col gap-1 border-l pl-2">
                     {section.items.map((item) => (
                       <button
@@ -474,7 +497,7 @@ export function WorkspaceShell({
         ) : null}
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="bg-background/80 supports-[backdrop-filter]:bg-background/65 flex h-12 shrink-0 items-end gap-1 border-b px-4 backdrop-blur">
           {tabs.length > 0 ? (
             tabs.map((tab) => (
@@ -505,8 +528,12 @@ export function WorkspaceShell({
 
         <div
           className={cn(
-            "min-h-0 flex-1 overflow-auto",
-            activeTab === "project" && selectedCanvasId ? "p-0" : "p-6",
+            "min-h-0 flex-1",
+            activeTab === "project" && selectedCanvasId
+              ? "overflow-hidden p-0"
+              : activeTab === "project"
+                ? "overflow-hidden p-6"
+                : "overflow-auto p-6",
           )}
         >
           {activeTab ? (

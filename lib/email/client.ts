@@ -4,11 +4,13 @@ import {
   sendCanvasEmailRequestSchema,
   sendCanvasReportEmailRequestSchema,
   sendPurchaseSamplingEmailRequestSchema,
+  sendPhysicalSampleApprovalEmailRequestSchema,
   sendTestEmailRequestSchema,
   type EmailDeliveryResponse,
   type SendCanvasEmailRequest,
   type SendCanvasReportEmailRequest,
   type SendPurchaseSamplingEmailRequest,
+  type SendPhysicalSampleApprovalEmailRequest,
   type SendTestEmailRequest,
 } from "@/lib/email/schemas";
 
@@ -60,5 +62,14 @@ export function sendPurchaseSamplingEmail(
   return postEmailRequest(
     "/api/email/purchase-sampling",
     sendPurchaseSamplingEmailRequestSchema.parse(input),
+  );
+}
+
+export function sendPhysicalSampleApprovalEmail(
+  input: SendPhysicalSampleApprovalEmailRequest,
+): Promise<EmailDeliveryResponse> {
+  return postEmailRequest(
+    "/api/email/physical-sample-approval",
+    sendPhysicalSampleApprovalEmailRequestSchema.parse(input),
   );
 }

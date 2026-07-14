@@ -25,6 +25,7 @@ const KEYS = {
   products: "ica:workspace:products",
   currencyOptions: "ica:workspace:settings:currency",
   destinationCountryOptions: "ica:workspace:settings:destination-country",
+  addressBookOptions: "ica:workspace:settings:address-book",
   genericNodes: "ica:workspace:generic-nodes",
 } as const;
 
@@ -157,7 +158,9 @@ async function saveLocalGenericNodes(records: GenericNodeDefinition[]): Promise<
 }
 
 function optionKey(kind: WorkspaceOptionKind): string {
-  return kind === "currency" ? KEYS.currencyOptions : KEYS.destinationCountryOptions;
+  if (kind === "currency") return KEYS.currencyOptions;
+  if (kind === "destination-country") return KEYS.destinationCountryOptions;
+  return KEYS.addressBookOptions;
 }
 
 async function readProductsFromIndexedDb(): Promise<ProductRecord[]> {

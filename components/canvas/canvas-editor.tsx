@@ -44,6 +44,7 @@ import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
+import { SendCanvasDialog } from "@/components/projects/canvas-list";
 import {
   Dialog,
   DialogClose,
@@ -85,7 +86,13 @@ import {
   HIGHLIGHT_EDGE_COLOR,
   HIGHLIGHT_EDGE_WIDTH,
 } from "@/lib/nodes/ports";
-import type { CanvasContent, CanvasEdge, CanvasNode, NodeType } from "@/lib/nodes/types";
+import type {
+  CanvasContent,
+  CanvasEdge,
+  CanvasNode,
+  ImageMaskRegion,
+  NodeType,
+} from "@/lib/nodes/types";
 import { cn } from "@/lib/utils";
 import type { GenericNodeDefinition } from "@/lib/workspace-settings";
 import {
@@ -425,6 +432,23 @@ function outputStatus(value: unknown): ConnectedOutputState["status"] {
     : "idle";
 }
 
+function imageMasksFromData(value: unknown): ImageMaskRegion[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is ImageMaskRegion => {
+    if (typeof item !== "object" || item === null) return false;
+    const record = item as Record<string, unknown>;
+    return (
+      typeof record.id === "string" &&
+      typeof record.name === "string" &&
+      Array.isArray(record.strokes)
+    );
+  });
+}
+
+function imageMasksForImage(value: unknown, imageKey: string): ImageMaskRegion[] {
+  return imageMasksFromData(value).filter((mask) => !mask.imageKey || mask.imageKey === imageKey);
+}
+
 function findConnectedOutputState(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -479,6 +503,12 @@ function findConnectedInputReferences(
         alias,
         label: alias,
         imageUrl,
+        masks: imageMasksForImage(
+          node.data.imageMasks,
+          typeof node.data.selectedGenericImageId === "string"
+            ? node.data.selectedGenericImageId
+            : imageUrl,
+        ),
       });
       continue;
     }
@@ -505,6 +535,12 @@ function findConnectedInputReferences(
         alias,
         label,
         imageUrl,
+        masks: imageMasksForImage(
+          node.data.imageMasks,
+          typeof node.data.productId === "string" && typeof node.data.variantId === "string"
+            ? `${node.data.productId}:${node.data.variantId}`
+            : imageUrl,
+        ),
       });
       continue;
     }
@@ -531,6 +567,12 @@ function findConnectedInputReferences(
         alias,
         label,
         imageUrl,
+        masks: imageMasksForImage(
+          node.data.imageMasks,
+          typeof node.data.productId === "string" && typeof node.data.variantId === "string"
+            ? `${node.data.productId}:${node.data.variantId}`
+            : imageUrl,
+        ),
       });
       continue;
     }
@@ -1548,6 +1590,15 @@ function Editor({
     [setCanvasEdges],
   );
 
+  const getNodeConnectionCount = useCallback((id: string) => {
+    const connected = new Set<string>();
+    for (const edge of edgesRef.current) {
+      if (edge.source === id) connected.add(edge.target);
+      if (edge.target === id) connected.add(edge.source);
+    }
+    return connected.size;
+  }, []);
+
   const deleteAll = useCallback(() => {
     setCanvasNodes([]);
     setCanvasEdges([]);
@@ -1813,6 +1864,7 @@ function Editor({
       cancelGenerationRun,
       writeGeneratedImageToOutput,
       deleteNode,
+      getNodeConnectionCount,
       ungroupNode,
       disconnectGroupNode,
       leaveGroupNode: detachNodeFromGroup,
@@ -1831,6 +1883,7 @@ function Editor({
       cancelGenerationRun,
       writeGeneratedImageToOutput,
       deleteNode,
+      getNodeConnectionCount,
       ungroupNode,
       disconnectGroupNode,
       detachNodeFromGroup,
@@ -1881,6 +1934,7 @@ function Editor({
           </div>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {canvas ? <SendCanvasDialog canvas={canvas} project={project ?? null} /> : null}
           <RenderGalleryDialog canvasId={canvasId} />
           <ConfirmDialog
             title="Delete all nodes?"

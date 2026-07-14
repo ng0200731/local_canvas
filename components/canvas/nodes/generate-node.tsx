@@ -1,19 +1,14 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type UIEvent as ReactUIEvent,
-} from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { Loader2, Sparkles, Square, Trash2, X } from "lucide-react";
+import { Loader2, Plus, Sparkles, Square, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -47,16 +42,31 @@ import {
   resolutionForImageGenerationModel,
 } from "@/lib/image-generation-models";
 import { isStaleGenerationConfigurationError } from "@/lib/generation-errors";
+import {
+  compileGeneratePromptRows,
+  emptyGeneratePromptRow,
+  generatePromptRowState,
+  generatePromptRowText,
+  masksForPromptSource,
+  normalizeGeneratePromptRow,
+  type GeneratePromptSourceReference,
+} from "@/lib/generate-prompt";
 import { isAbortError } from "@/lib/generation-run";
 import { persistGeneratedImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
-import type { GenerateCanvasNode } from "@/lib/nodes/types";
+import {
+  GENERATE_CHANGE_TYPES,
+  type GenerateCanvasNode,
+  type GenerateChangeType,
+  type GeneratePromptRow,
+} from "@/lib/nodes/types";
 import {
   useCanvasActions,
   useConnectionHighlight,
   useGroupAccent,
   useReferenceHover,
+  type ConnectedImageReference,
   type ConnectedInputReference,
 } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
@@ -68,22 +78,6 @@ const DEFAULT_HEIGHT = 500;
 
 function nowMs(): number {
   return Date.now();
-}
-
-interface MentionState {
-  start: number;
-  end: number;
-  query: string;
-}
-
-interface PromptReference {
-  nodeId: string;
-  alias: string;
-}
-
-interface PromptPart {
-  value: string;
-  reference: PromptReference | null;
 }
 
 type ImageProvider = "gpt" | "gemini";
@@ -210,97 +204,7 @@ function geminiModelFor(
   return `gemini-3.1-flash-image-preview${suffix}` as ImageGenerationModelId;
 }
 
-function mentionAtCaret(value: string, caret: number): MentionState | null {
-  const beforeCaret = value.slice(0, caret);
-  const atIndex = beforeCaret.lastIndexOf("@");
-  if (atIndex < 0) return null;
-
-  const query = beforeCaret.slice(atIndex + 1);
-  if (/[\r\n@]/.test(query) || query.length > 80) return null;
-
-  return { start: atIndex, end: caret, query };
-}
-
-function aliasMatchesQuery(alias: string, query: string): boolean {
-  return alias.toLowerCase().includes(query.trim().toLowerCase());
-}
-
-function promptParts(value: string, references: readonly PromptReference[]): PromptPart[] {
-  const parts: PromptPart[] = [];
-  const sortedReferences = references
-    .map((reference) => ({ ...reference, alias: reference.alias.trim() }))
-    .filter((reference) => reference.alias.length > 0)
-    .sort((left, right) => right.alias.length - left.alias.length);
-  let index = 0;
-
-  while (index < value.length) {
-    const match = sortedReferences.find((reference) =>
-      value.slice(index).toLowerCase().startsWith(`@${reference.alias.toLowerCase()}`),
-    );
-
-    if (match) {
-      parts.push({
-        value: value.slice(index, index + match.alias.length + 1),
-        reference: match,
-      });
-      index += match.alias.length + 1;
-      continue;
-    }
-
-    const nextAt = value.indexOf("@", index + 1);
-    const end = nextAt < 0 ? value.length : nextAt;
-    parts.push({ value: value.slice(index, end), reference: null });
-    index = end;
-  }
-
-  return parts;
-}
-
-function PromptPreview({
-  value,
-  references,
-  hoveredReferenceNodeId,
-  onReferenceHover,
-  onReferencePointerDown,
-}: {
-  value: string;
-  references: readonly PromptReference[];
-  hoveredReferenceNodeId: string | null;
-  onReferenceHover: (nodeId: string | null) => void;
-  onReferencePointerDown: () => void;
-}) {
-  if (!value) {
-    return <span className="text-muted-foreground">Describe the image...</span>;
-  }
-
-  return promptParts(value, references).map((part, index) =>
-    part.reference ? (
-      <mark
-        key={`${part.value}-${index}`}
-        onPointerEnter={() => onReferenceHover(part.reference?.nodeId ?? null)}
-        onPointerLeave={() => onReferenceHover(null)}
-        onPointerCancel={() => onReferenceHover(null)}
-        onPointerDown={(event) => {
-          event.preventDefault();
-          onReferencePointerDown();
-        }}
-        className={cn(
-          "pointer-events-auto rounded-sm bg-yellow-200 box-decoration-clone px-0.5 font-semibold text-yellow-950 transition-colors dark:bg-yellow-300/30 dark:text-yellow-50",
-          hoveredReferenceNodeId === part.reference.nodeId &&
-            "bg-yellow-300 text-yellow-950 dark:bg-yellow-300/45",
-        )}
-      >
-        {part.value}
-      </mark>
-    ) : (
-      <span key={`${part.value}-${index}`}>{part.value}</span>
-    ),
-  );
-}
-
-function hasImageUrl(reference: ConnectedInputReference): reference is ConnectedInputReference & {
-  imageUrl: string;
-} {
+function hasImageUrl(reference: ConnectedInputReference): reference is ConnectedImageReference {
   return reference.kind === "image" && typeof reference.imageUrl === "string";
 }
 
@@ -323,8 +227,139 @@ function toGenerationReference(
   };
 }
 
-function isAutocompleteControlKey(key: string) {
-  return key === "ArrowDown" || key === "ArrowUp" || key === "Tab" || key === "Enter";
+function uid(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyPromptRow(): GeneratePromptRow {
+  return emptyGeneratePromptRow(uid());
+}
+
+interface MentionMatch {
+  start: number;
+  end: number;
+  query: string;
+}
+
+function mentionAtCaret(value: string, caret: number): MentionMatch | null {
+  const match = value.slice(0, caret).match(/@([^\s@]*)$/);
+  if (!match || match.index === undefined) return null;
+  return { start: match.index, end: caret, query: match[1] ?? "" };
+}
+
+function AliasMentionInput({
+  value,
+  disabled,
+  ariaLabel,
+  aliases,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  ariaLabel: string;
+  aliases: readonly { nodeId: string; alias: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [mention, setMention] = useState<MentionMatch | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const suggestions = mention
+    ? aliases.filter((option) =>
+        option.alias.toLocaleLowerCase().includes(mention.query.toLocaleLowerCase()),
+      )
+    : [];
+
+  function updateMention(nextValue: string, caret: number | null) {
+    setMention(caret === null ? null : mentionAtCaret(nextValue, caret));
+    setActiveIndex(0);
+  }
+
+  function insertAlias(alias: string) {
+    if (!mention) return;
+    const nextValue = `${value.slice(0, mention.start)}@${alias} ${value.slice(mention.end)}`;
+    const nextCaret = mention.start + alias.length + 2;
+    onChange(nextValue);
+    setMention(null);
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (!mention || suggestions.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => (current + 1) % suggestions.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => (current - 1 + suggestions.length) % suggestions.length);
+      return;
+    }
+    if (event.key === "Escape") {
+      setMention(null);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      const suggestion = suggestions[activeIndex] ?? suggestions[0];
+      if (suggestion) insertAlias(suggestion.alias);
+    }
+  }
+
+  return (
+    <div className="relative min-w-0">
+      <Input
+        ref={inputRef}
+        value={value}
+        disabled={disabled}
+        placeholder="@pantone red"
+        aria-label={ariaLabel}
+        className="nodrag nopan h-8 px-2 text-xs"
+        onChange={(event) => {
+          onChange(event.target.value);
+          updateMention(event.target.value, event.target.selectionStart);
+        }}
+        onClick={(event) =>
+          updateMention(event.currentTarget.value, event.currentTarget.selectionStart)
+        }
+        onKeyUp={(event) => {
+          if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) return;
+          updateMention(event.currentTarget.value, event.currentTarget.selectionStart);
+        }}
+        onKeyDown={handleKeyDown}
+        onBlur={() => window.setTimeout(() => setMention(null), 120)}
+      />
+      {mention ? (
+        <div className="nodrag nopan bg-popover text-popover-foreground absolute top-full right-0 left-0 z-40 mt-1 max-h-32 overflow-y-auto rounded-md border p-1 shadow-md">
+          {suggestions.length ? (
+            suggestions.map((option, index) => (
+              <button
+                key={option.nodeId}
+                type="button"
+                className={cn(
+                  "flex w-full items-center rounded-sm px-2 py-1.5 text-left text-xs",
+                  index === activeIndex ? "bg-accent" : "hover:bg-accent",
+                )}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  insertAlias(option.alias);
+                }}
+                onMouseEnter={() => setActiveIndex(index)}
+              >
+                <span className="truncate">@{option.alias}</span>
+              </button>
+            ))
+          ) : (
+            <p className="text-muted-foreground px-2 py-1.5 text-xs">No matching alias</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function GenerateNode({ id, data, parentId, selected }: NodeProps<GenerateCanvasNode>) {
@@ -344,19 +379,8 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
   const { hoveredReferenceNodeId, setHoveredReferenceNodeId } = useReferenceHover();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const [mention, setMention] = useState<MentionState | null>(null);
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
-  const [promptDraft, setPromptDraft] = useState(data.prompt);
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
-
-  useEffect(() => {
-    if (document.activeElement === textareaRef.current || promptDraft === data.prompt) return;
-    setPromptDraft(data.prompt);
-  }, [data.prompt, promptDraft]);
-
   useEffect(() => {
     if (data.status !== "error" || !isStaleGenerationConfigurationError(data.error)) return;
     updateNodeData(id, { status: "idle", error: undefined });
@@ -373,7 +397,19 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const connectedOutput = getConnectedOutputState(id);
   const connectedOutputHasImage = Boolean(connectedOutput?.resultUrl);
   const connectedReferences = getConnectedInputReferences(id);
-  const connectedImageReferences = connectedReferences.filter(hasImageUrl);
+  const connectedImageReferences: ConnectedImageReference[] =
+    connectedReferences.filter(hasImageUrl);
+  const promptReferences: GeneratePromptSourceReference[] = connectedImageReferences.map(
+    (reference) => ({
+      nodeId: reference.nodeId,
+      alias: reference.alias,
+      masks: reference.masks.map((mask) => ({ id: mask.id, name: mask.name })),
+    }),
+  );
+  const promptRows =
+    Array.isArray(data.promptRows) && data.promptRows.length
+      ? data.promptRows.map((row) => normalizeGeneratePromptRow(row, promptReferences, uid()))
+      : [emptyPromptRow()];
   const connectedReferenceUrls = new Set(
     connectedImageReferences.map((reference) => reference.imageUrl),
   );
@@ -404,19 +440,11 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const geminiVersion = geminiVersionForModel(model);
   const selectedModel = getModelCatalogEntry(model);
   const isGenerating = data.status === "loading";
-  const mentionSuggestions = mention
-    ? connectedReferences.filter((reference) => {
-        const query = mention.query.toLowerCase();
-        return (
-          reference.alias.toLowerCase().includes(query) ||
-          reference.label.toLowerCase().includes(query)
-        );
-      })
-    : [];
-
-  const firstMentionSuggestion = mentionSuggestions[0];
-  const activeMentionSuggestion =
-    mentionSuggestions[activeSuggestionIndex] ?? firstMentionSuggestion;
+  const aliasOptions = connectedReferences.map((reference) => ({
+    nodeId: reference.nodeId,
+    alias: reference.alias,
+    label: reference.label,
+  }));
   const selectedGptOption = GPT_MODEL_OPTIONS.find((option) => option.model === model);
   const currentModelUnavailable =
     provider === "gpt"
@@ -534,68 +562,24 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     updateNodeData(id, { references: [] });
   }
 
-  function updatePrompt(value: string, caret: number | null) {
-    setPromptDraft(value);
-    updateNodeData(id, { prompt: value });
-    const nextMention = caret === null ? null : mentionAtCaret(value, caret);
-    setMention(
-      nextMention &&
-        connectedReferences.some((reference) =>
-          aliasMatchesQuery(reference.alias, nextMention.query),
-        )
-        ? nextMention
-        : null,
-    );
-    setActiveSuggestionIndex(0);
+  function updatePromptRows(rows: GeneratePromptRow[]) {
+    const prompt = compileGeneratePromptRows(rows, promptReferences);
+    updateNodeData(id, { promptRows: rows, prompt });
   }
 
-  function insertAlias(alias: string) {
-    if (!mention) return;
-    const currentPrompt = textareaRef.current?.value ?? promptDraft;
-    const nextPrompt = `${currentPrompt.slice(0, mention.start)}@${alias} ${currentPrompt.slice(
-      mention.end,
-    )}`;
-    const nextCaret = mention.start + alias.length + 2;
-    setPromptDraft(nextPrompt);
-    updateNodeData(id, { prompt: nextPrompt });
-    setMention(null);
-    window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(nextCaret, nextCaret);
-    });
+  function patchPromptRow(rowId: string, patch: Partial<GeneratePromptRow>) {
+    updatePromptRows(promptRows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
   }
 
-  function handlePromptKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (!mention || mentionSuggestions.length === 0) return;
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveSuggestionIndex((index) => (index + 1) % mentionSuggestions.length);
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveSuggestionIndex(
-        (index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length,
-      );
-      return;
-    }
-
-    if (event.key !== "Tab" && event.key !== "Enter") return;
-    event.preventDefault();
-    insertAlias(activeMentionSuggestion.alias);
-  }
-
-  function handlePromptScroll(event: ReactUIEvent<HTMLTextAreaElement>) {
-    if (!previewRef.current) return;
-    previewRef.current.scrollTop = event.currentTarget.scrollTop;
+  function deletePromptRow(rowId: string) {
+    const nextRows = promptRows.filter((row) => row.id !== rowId);
+    updatePromptRows(nextRows.length ? nextRows : [emptyPromptRow()]);
   }
 
   async function onGenerate() {
-    const prompt = promptDraft.trim();
+    const prompt = compileGeneratePromptRows(promptRows, promptReferences).trim();
     if (!prompt) {
-      toast.error("Enter a prompt first");
+      toast.error("Complete at least one prompt row first");
       return;
     }
     if (allGenerationReferences.length > MAX_IMAGE_GENERATION_REFERENCES) {
@@ -619,6 +603,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     updateNodeData(id, {
       status: "loading",
       error: undefined,
+      prompt,
       model,
       size,
       outputFormat,
@@ -1020,89 +1005,169 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           </div>
         </div>
 
-        <div className="focus-within:border-ring focus-within:ring-ring/30 bg-background/60 relative rounded-md border focus-within:ring-2">
-          <div
-            ref={previewRef}
-            className="pointer-events-none absolute inset-0 z-20 min-h-36 overflow-y-auto rounded-md p-2 text-sm leading-5 font-semibold whitespace-pre-wrap"
-            aria-hidden="true"
-          >
-            <PromptPreview
-              value={promptDraft}
-              references={connectedReferences.map((reference) => ({
-                nodeId: reference.nodeId,
-                alias: reference.alias,
-              }))}
-              hoveredReferenceNodeId={hoveredReferenceNodeId}
-              onReferenceHover={setHoveredReferenceNodeId}
-              onReferencePointerDown={() => textareaRef.current?.focus()}
-            />
+        <div className="bg-background/60 grid gap-2 rounded-md border p-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground text-xs">Prompt program</span>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={isGenerating}
+              className="nodrag nopan"
+              onClick={() => updatePromptRows([...promptRows, emptyPromptRow()])}
+            >
+              <Plus />
+              Add row
+            </Button>
           </div>
-          <textarea
-            ref={textareaRef}
-            rows={7}
-            placeholder="Describe the image..."
-            value={promptDraft}
-            disabled={isGenerating}
-            onChange={(event) => updatePrompt(event.target.value, event.target.selectionStart)}
-            onClick={(event) =>
-              updatePrompt(event.currentTarget.value, event.currentTarget.selectionStart)
-            }
-            onKeyUp={(event) => {
-              if (mention && isAutocompleteControlKey(event.key)) return;
-              updatePrompt(event.currentTarget.value, event.currentTarget.selectionStart);
-            }}
-            onKeyDown={handlePromptKeyDown}
-            onScroll={handlePromptScroll}
-            onBlur={() => window.setTimeout(() => setMention(null), 120)}
-            className="nodrag caret-foreground relative z-10 block min-h-36 w-full resize-none overflow-y-auto rounded-md border border-transparent bg-transparent p-2 text-sm leading-5 font-semibold text-transparent outline-none placeholder:text-transparent"
-          />
-          {mention && connectedReferences.length > 0 && (
-            <div className="nodrag nopan bg-popover text-popover-foreground absolute right-0 left-0 z-30 mt-1 max-h-32 overflow-y-auto rounded-md border p-1 shadow-md">
-              {mentionSuggestions.length > 0 ? (
-                mentionSuggestions.map((reference, index) => (
-                  <button
-                    key={reference.nodeId}
-                    type="button"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      insertAlias(reference.alias);
-                    }}
-                    onMouseEnter={() => setActiveSuggestionIndex(index)}
-                    className={cn(
-                      "nodrag nopan focus-visible:ring-ring flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none focus-visible:ring-2",
-                      index === activeSuggestionIndex ? "bg-accent" : "hover:bg-accent",
-                    )}
-                  >
-                    {reference.kind === "pantone" ? (
-                      <span
-                        className="size-7 shrink-0 rounded border"
-                        style={{ backgroundColor: reference.swatchHex }}
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={reference.imageUrl}
-                        alt=""
-                        className="size-7 shrink-0 rounded object-cover"
-                      />
-                    )}
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium">@{reference.alias}</span>
-                      {reference.kind === "pantone" && (
-                        <span className="text-muted-foreground block truncate">
-                          {reference.label}
+          <div className="grid gap-2">
+            {promptRows.map((row, index) => {
+              const sourceMasks = masksForPromptSource(promptReferences, row.sourceNodeId);
+              const selectedSourceReference = promptReferences.find(
+                (reference) => reference.nodeId === row.sourceNodeId,
+              );
+              const selectedMaskReference = sourceMasks.find((mask) => mask.id === row.maskId);
+              const preview = generatePromptRowText(row, promptReferences);
+              const rowState = generatePromptRowState(row, promptReferences);
+              const complete = rowState === "complete";
+
+              return (
+                <div
+                  key={row.id}
+                  className={cn(
+                    "bg-background grid gap-1 rounded-md border p-2",
+                    rowState === "partial" && "border-amber-400/70",
+                  )}
+                >
+                  <div className="grid grid-cols-[1fr_1fr_0.9fr_1fr_auto] gap-1">
+                    <Select
+                      value={row.sourceNodeId || "__source__"}
+                      disabled={isGenerating}
+                      onValueChange={(value) =>
+                        patchPromptRow(row.id, {
+                          sourceNodeId: value === "__source__" ? "" : (value ?? ""),
+                          maskId: "",
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        className="nodrag nopan h-8 px-2 text-xs"
+                        aria-label={`Prompt row ${index + 1} source alias`}
+                      >
+                        <span
+                          data-slot="select-value"
+                          className={cn(
+                            "flex flex-1 items-center truncate text-left",
+                            !selectedSourceReference && "text-muted-foreground",
+                          )}
+                        >
+                          {selectedSourceReference ? `@${selectedSourceReference.alias}` : "@source"}
                         </span>
-                      )}
-                    </span>
-                  </button>
-                ))
-              ) : (
-                <div className="text-muted-foreground px-2 py-1.5 text-xs">No matching input</div>
-              )}
-            </div>
-          )}
+                      </SelectTrigger>
+                      <SelectContent align="start" className="nodrag nopan">
+                        <SelectItem value="__source__">@source</SelectItem>
+                        {promptReferences.map((reference) => (
+                          <SelectItem key={reference.nodeId} value={reference.nodeId}>
+                            @{reference.alias}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={row.maskId || "__mask__"}
+                      disabled={isGenerating || !row.sourceNodeId || sourceMasks.length === 0}
+                      onValueChange={(value) => {
+                        const nextValue = value ?? "__mask__";
+                        patchPromptRow(row.id, {
+                          maskId: nextValue === "__mask__" ? "" : nextValue,
+                        });
+                      }}
+                    >
+                      <SelectTrigger
+                        className="nodrag nopan h-8 px-2 text-xs"
+                        aria-label={`Prompt row ${index + 1} mask`}
+                      >
+                        <span
+                          data-slot="select-value"
+                          className={cn(
+                            "flex flex-1 items-center truncate text-left",
+                            !selectedMaskReference && "text-muted-foreground",
+                          )}
+                        >
+                          {selectedMaskReference?.name ??
+                            (row.sourceNodeId && sourceMasks.length === 0 ? "No saved masks" : "mask")}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent align="start" className="nodrag nopan">
+                        <SelectItem value="__mask__">
+                          {row.sourceNodeId && sourceMasks.length === 0 ? "No saved masks" : "mask"}
+                        </SelectItem>
+                        {sourceMasks.map((mask) => (
+                          <SelectItem key={mask.id} value={mask.id}>
+                            {mask.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={row.changeType}
+                      disabled={isGenerating}
+                      onValueChange={(value) =>
+                        patchPromptRow(row.id, {
+                          changeType: GENERATE_CHANGE_TYPES.includes(value as GenerateChangeType)
+                            ? (value as GenerateChangeType)
+                            : "color",
+                        })
+                      }
+                    >
+                      <SelectTrigger className="nodrag nopan h-8 px-2 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent align="start" className="nodrag nopan">
+                        {GENERATE_CHANGE_TYPES.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <AliasMentionInput
+                      value={row.targetText}
+                      disabled={isGenerating}
+                      aliases={aliasOptions}
+                      ariaLabel={`Prompt row ${index + 1} target`}
+                      onChange={(targetText) => patchPromptRow(row.id, { targetText })}
+                    />
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      disabled={isGenerating || (promptRows.length === 1 && rowState === "empty")}
+                      aria-label={`Delete prompt row ${index + 1}`}
+                      className="nodrag nopan size-8"
+                      onClick={() => deletePromptRow(row.id)}
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                  <p
+                    className={cn(
+                      "truncate font-mono text-[0.65rem]",
+                      complete ? "text-foreground" : "text-muted-foreground",
+                    )}
+                    title={preview}
+                  >
+                    {preview || "@product use collar region change color to @pantone red"}
+                  </p>
+                  {rowState === "partial" ? (
+                    <p className="text-[0.65rem] text-amber-600 dark:text-amber-300">
+                      Complete the source, mask, and target to include this row.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <ConfirmDialog

@@ -9,6 +9,47 @@ import type { SupplierProductType } from "@/lib/workspace-records";
 import type { GenericNodeImage } from "@/lib/workspace-settings";
 import type { PantoneCatalog } from "./pantone";
 
+export interface ImageMaskStrokePoint {
+  x: number;
+  y: number;
+}
+
+export interface ImageMaskStroke {
+  id: string;
+  thickness: number;
+  points: ImageMaskStrokePoint[];
+  closed?: boolean;
+}
+
+export type ImageMaskColorScope = "global" | "region";
+
+export interface ImageMaskColorSelection {
+  id: string;
+  seed: ImageMaskStrokePoint;
+  tolerance: number;
+  scope: ImageMaskColorScope;
+}
+
+export interface ImageMaskRegion {
+  id: string;
+  name: string;
+  imageKey?: string;
+  excludedMaskIds?: string[];
+  strokes: ImageMaskStroke[];
+  colorSelections?: ImageMaskColorSelection[];
+}
+
+export const GENERATE_CHANGE_TYPES = ["texture", "color", "density", "object"] as const;
+export type GenerateChangeType = (typeof GENERATE_CHANGE_TYPES)[number];
+
+export interface GeneratePromptRow {
+  id: string;
+  sourceNodeId: string;
+  maskId: string;
+  changeType: GenerateChangeType;
+  targetText: string;
+}
+
 /** Registered canvas node type identifiers (kept in sync with the registry). */
 export const NODE_TYPES = [
   "note",
@@ -49,6 +90,7 @@ export interface InputNodeData {
   alias: string;
   imageUrl: string | null;
   storagePath?: string | null;
+  imageMasks?: ImageMaskRegion[];
   genericDefinitionId?: string;
   genericDefinitionName?: string;
   /** Definition images are snapshotted when the node is created. */
@@ -72,6 +114,7 @@ export interface GroupNodeData {
 
 export interface GenerateNodeData {
   prompt: string;
+  promptRows?: GeneratePromptRow[];
   model: ImageGenerationModelId;
   size?: ImageGenerationSize;
   outputFormat?: ImageGenerationOutputFormat;
@@ -113,6 +156,7 @@ export interface SupplerNodeData {
   variantId: string | null;
   variantImageUrl: string | null;
   variantImageName: string | null;
+  imageMasks?: ImageMaskRegion[];
   title?: string;
   notes?: string;
   status?: "draft" | "ready" | "blocked";
@@ -132,6 +176,7 @@ export interface ProductNodeData {
   variantId: string | null;
   variantImageUrl: string | null;
   variantImageName: string | null;
+  imageMasks?: ImageMaskRegion[];
   /** Node size in pixels; set by the resize handle. Absent = type default. */
   width?: number;
   height?: number;

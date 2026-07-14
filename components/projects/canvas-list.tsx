@@ -4,7 +4,17 @@ import Link from "next/link";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toDataURL } from "qrcode";
-import { ArrowUpRight, Check, FileImage, Loader2, Mail, Trash2 } from "lucide-react";
+import {
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  FileImage,
+  Loader2,
+  Mail,
+  ShoppingCart,
+  Trash2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { buildCanvasReport } from "@/lib/canvas-report";
@@ -24,12 +34,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateCanvasDialog } from "@/components/projects/create-canvas-dialog";
+import { canvasPurchaseTargets } from "@/lib/canvas-purchase";
 import { sendCanvasReportEmail } from "@/lib/email/client";
 import { emailRecipientSchema } from "@/lib/email/schemas";
 import { useCanvases, useDeleteCanvas } from "@/lib/hooks/use-canvases";
 import { useProject } from "@/lib/hooks/use-projects";
-import { useCustomers, useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
+import { SAMPLE_ORDERS_KEY } from "@/lib/hooks/use-sample-orders";
+import {
+  useCustomers,
+  useProducts,
+  useSuppliers,
+  useWorkspaceOptions,
+} from "@/lib/hooks/use-workspace-records";
 import { formatDate } from "@/lib/format";
+import { sendSamplePurchases } from "@/lib/sample-purchase-client";
 import {
   getCanvasStore,
   type Canvas,
@@ -79,20 +97,171 @@ const emptyCanvasColumnFilters: CanvasColumnFilters = {
   email: "",
 };
 
-function SendCanvasDialog({
-  canvas,
-  project,
-  defaultRecipient,
+interface AddressBookOption {
+  id: string;
+  name: string;
+  email: string;
+  isFavorite: boolean;
+}
+
+function splitEmailList(value: string): string[] {
+  return value
+    .split(/[,\n;]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function appendEmail(value: string, email: string): string {
+  const addresses = splitEmailList(value);
+  if (!addresses.some((address) => address.toLocaleLowerCase() === email.toLocaleLowerCase())) {
+    addresses.push(email);
+  }
+  return addresses.join(", ");
+}
+
+function removeEmail(value: string, email: string): string {
+  return splitEmailList(value)
+    .filter((address) => address.toLocaleLowerCase() !== email.toLocaleLowerCase())
+    .join(", ");
+}
+
+function AddressBookEmailField({
+  id,
+  label,
+  value,
+  disabled,
+  addresses,
+  multiple = false,
+  onChange,
 }: {
-  canvas: Canvas;
-  project: Project | null;
-  defaultRecipient: string;
+  id: string;
+  label: string;
+  value: string;
+  disabled: boolean;
+  addresses: readonly AddressBookOption[];
+  multiple?: boolean;
+  onChange: (value: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [browseAddressBook, setBrowseAddressBook] = useState(false);
+  const selectedAddresses = splitEmailList(value);
+  const selectedAddressSet = new Set(
+    selectedAddresses.map((address) => address.toLocaleLowerCase()),
+  );
+  const visibleAddresses = [...addresses]
+    .filter((address) => {
+      if (multiple && selectedAddressSet.has(address.email.toLocaleLowerCase())) return false;
+      const query = browseAddressBook ? "" : multiple ? (splitEmailList(value).at(-1) ?? "") : value;
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      if (!normalizedQuery) return true;
+      return `${address.name} ${address.email}`.toLocaleLowerCase().includes(normalizedQuery);
+    })
+    .sort((left, right) => Number(right.isFavorite) - Number(left.isFavorite));
+
+  return (
+    <div className="relative grid gap-2">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={multiple ? "text" : "email"}
+          autoComplete="email"
+          placeholder={multiple ? "name@example.com, manager@example.com" : "recipient@example.com"}
+          value={value}
+          disabled={disabled}
+          required={!multiple}
+          className="pr-9"
+          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+          onChange={(event) => {
+            setBrowseAddressBook(false);
+            onChange(event.target.value);
+            setOpen(true);
+          }}
+        />
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className="absolute top-1/2 right-1 -translate-y-1/2"
+          aria-label={`Open ${label} address book`}
+          title="Address book"
+          disabled={disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setBrowseAddressBook(true);
+            setOpen((current) => !current);
+          }}
+        >
+          <BookOpen />
+        </Button>
+      </div>
+      {open && !disabled && visibleAddresses.length > 0 ? (
+        <div className="bg-popover text-popover-foreground absolute top-full right-0 left-0 z-50 mt-1 max-h-44 overflow-y-auto rounded-md border p-1 shadow-lg">
+          {visibleAddresses.map((address) => (
+            <button
+              key={address.id}
+              type="button"
+              className="hover:bg-accent focus-visible:ring-ring flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-2"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(multiple ? appendEmail(value, address.email) : address.email);
+                setBrowseAddressBook(true);
+                setOpen(false);
+              }}
+            >
+              <Mail className="text-muted-foreground mt-0.5 size-3.5 shrink-0" />
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{address.name}</span>
+                <span className="text-muted-foreground block truncate text-xs">
+                  {address.email}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {selectedAddresses.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedAddresses.map((email) => {
+            const valid = emailRecipientSchema.safeParse(email).success;
+            return (
+              <span
+                key={email}
+                className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs ${
+                  valid
+                    ? "bg-muted text-muted-foreground"
+                    : "border-destructive/40 bg-destructive/10 text-destructive"
+                }`}
+                title={valid ? email : "Invalid email address"}
+              >
+                <span className="max-w-52 truncate">{email}</span>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-4"
+                  aria-label={`Remove ${email}`}
+                  disabled={disabled}
+                  onClick={() => onChange(multiple ? removeEmail(value, email) : "")}
+                >
+                  <X className="size-3" />
+                </Button>
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function SendCanvasDialog({ canvas, project }: { canvas: Canvas; project: Project | null }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const customers = useCustomers();
   const suppliers = useSuppliers();
   const products = useProducts();
+  const addressBook = useWorkspaceOptions("address-book");
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [loadedCanvas, setLoadedCanvas] = useState<Canvas | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
@@ -100,7 +269,14 @@ function SendCanvasDialog({
   const [sending, setSending] = useState(false);
   const [sentRecords, setSentRecords] = useState<string[]>([]);
   const [sendHistory, setSendHistory] = useState<CanvasSendRecord[]>([]);
-  const [recipient, setRecipient] = useState(defaultRecipient);
+  const [recipient, setRecipient] = useState("");
+  const [cc, setCc] = useState("");
+  const addressOptions: AddressBookOption[] = (addressBook.data ?? []).map((option) => ({
+    id: option.id,
+    name: option.name,
+    email: option.code,
+    isFavorite: option.isFavorite,
+  }));
   const previewItems = images.map((image) => ({
     id: image.id,
     src: image.url,
@@ -110,7 +286,6 @@ function SendCanvasDialog({
   async function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen);
     if (!nextOpen) return;
-    if (!recipient) setRecipient(defaultRecipient);
     setLoading(true);
     try {
       const [fullCanvas, renderImages] = await Promise.all([
@@ -132,9 +307,24 @@ function SendCanvasDialog({
   }
 
   async function sendSelected() {
-    const parsedRecipient = emailRecipientSchema.safeParse(recipient);
-    if (!parsedRecipient.success) {
-      toast.error(parsedRecipient.error.issues[0]?.message ?? "Enter a valid recipient email.");
+    const recipients = splitEmailList(recipient);
+    if (recipients.length === 0) {
+      toast.error("Enter at least one recipient email.");
+      return;
+    }
+    const invalidRecipient = recipients.find(
+      (address) => !emailRecipientSchema.safeParse(address).success,
+    );
+    if (invalidRecipient) {
+      toast.error(`Enter a valid recipient email address: ${invalidRecipient}`);
+      return;
+    }
+    const ccAddresses = splitEmailList(cc);
+    const invalidCc = ccAddresses.find(
+      (address) => !emailRecipientSchema.safeParse(address).success,
+    );
+    if (invalidCc) {
+      toast.error(`Enter a valid CC email address: ${invalidCc}`);
       return;
     }
     if (selectedImageIds.length === 0) {
@@ -149,7 +339,7 @@ function SendCanvasDialog({
       const approvalToken = makeApprovalToken();
       const provisionalSend = await getCanvasStore().createCanvasSend({
         canvasId: canvas.id,
-        recipientEmail: parsedRecipient.data,
+        recipientEmail: recipients.join(", "),
         reportUrl: `${origin}/canvas-sends/pending`,
         approvalToken,
         approvalUrl: `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=approved`,
@@ -197,7 +387,8 @@ function SendCanvasDialog({
       });
       const filename = canvas.name.replace(/[^a-z0-9-]+/gi, "-").replace(/^-|-$/g, "") || "canvas";
       const result = await sendCanvasReportEmail({
-        to: parsedRecipient.data,
+        to: recipients,
+        cc: ccAddresses,
         canvasName: canvas.name,
         subject: `${canvas.name} canvas report`,
         html: report.html,
@@ -215,15 +406,7 @@ function SendCanvasDialog({
       await getCanvasStore().updateCanvasStatus(canvas.id, "awaiting_approval");
       const sentAt = new Date().toLocaleString();
       setSentRecords((current) => [
-        `${sentAt} · ${selectedImageIds.length} render image${
-          selectedImageIds.length === 1 ? "" : "s"
-        } delivered to ${parsedRecipient.data} with ${
-          result.provider === "163" ? "163.com" : "Gmail"
-        }`,
-        ...current,
-      ]);
-      setSentRecords((current) => [
-        `${sentAt} - ${finalizedSend.sequence} delivered to ${parsedRecipient.data} with ${
+        `${sentAt} - ${finalizedSend.sequence} delivered to ${recipients.join(", ")} with ${
           result.provider === "local"
             ? "Local SMTP"
             : result.provider === "163"
@@ -234,7 +417,9 @@ function SendCanvasDialog({
       ]);
       setSendHistory((current) => [finalizedSend, ...current]);
       void queryClient.invalidateQueries({ queryKey: ["canvases", canvas.projectId] });
-      toast.success(`Email sent to ${parsedRecipient.data}.`);
+      toast.success(`Email sent to ${recipients.length} recipient(s).`, {
+        position: "bottom-right",
+      });
       setSelectedImageIds([]);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Email delivery failed.");
@@ -258,17 +443,24 @@ function SendCanvasDialog({
               Gmail; a PDF copy is attached when available.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-2">
-            <Label htmlFor={`canvas-email-recipient-${canvas.id}`}>Recipient email</Label>
-            <Input
+          <div className="grid gap-3 sm:grid-cols-2">
+            <AddressBookEmailField
               id={`canvas-email-recipient-${canvas.id}`}
-              type="email"
-              autoComplete="email"
-              placeholder="recipient@example.com"
+              label="To"
               value={recipient}
-              onChange={(event) => setRecipient(event.target.value)}
               disabled={sending}
-              required
+              addresses={addressOptions}
+              multiple
+              onChange={setRecipient}
+            />
+            <AddressBookEmailField
+              id={`canvas-email-cc-${canvas.id}`}
+              label="CC"
+              value={cc}
+              disabled={sending}
+              addresses={addressOptions}
+              multiple
+              onChange={setCc}
             />
           </div>
           {loading ? (
@@ -371,7 +563,7 @@ function SendCanvasDialog({
               type="button"
               disabled={
                 sending ||
-                !recipient.trim() ||
+                splitEmailList(recipient).length === 0 ||
                 customers.isLoading ||
                 suppliers.isLoading ||
                 products.isLoading
@@ -391,21 +583,80 @@ function CanvasActions({
   canvas,
   projectId,
   project,
-  defaultRecipient,
   onOpen,
 }: {
   canvas: Canvas;
   projectId: string;
   project: Project | null;
-  defaultRecipient: string;
   onOpen?: (canvasId: string) => void;
 }) {
   const del = useDeleteCanvas(projectId);
+  const queryClient = useQueryClient();
+  const suppliers = useSuppliers();
+  const products = useProducts();
+  const [purchasing, setPurchasing] = useState(false);
 
   async function onDelete() {
     await del.mutateAsync(canvas.id);
     toast.success("Canvas deleted");
   }
+
+  async function sendPurchase() {
+    setPurchasing(true);
+    try {
+      const [fullCanvas, sends] = await Promise.all([
+        getCanvasStore().getCanvas(canvas.id),
+        getCanvasStore().listCanvasSends(canvas.id),
+      ]);
+      const approvedSend =
+        sends.find((send) => send.status === "approved") ??
+        [...sends].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+      if (!approvedSend || canvas.status !== "approved") {
+        toast.error("Approve this canvas before sending supplier purchase orders.");
+        return;
+      }
+      const targetCanvas = fullCanvas ?? canvas;
+      const targets = canvasPurchaseTargets({
+        canvas: targetCanvas,
+        suppliers: suppliers.data ?? [],
+        products: products.data ?? [],
+      });
+      if (targets.length === 0) {
+        toast.error("No supplier emails found in this canvas.");
+        return;
+      }
+
+      const result = await sendSamplePurchases({
+        canvas,
+        project: {
+          id: canvas.projectId,
+          name: project?.name ?? "Project",
+          customerName: project?.customerName ?? null,
+        },
+        approvedSend,
+        targets,
+        origin: window.location.origin,
+      });
+      void queryClient.invalidateQueries({ queryKey: SAMPLE_ORDERS_KEY });
+      const failedCount = result.failedEmailCount + result.failedStatusCount;
+      if (result.failedStatusCount) {
+        toast.error(
+          `Sample Status could not save ${result.failedStatusCount} supplier order(s). ${result.firstError ?? ""}`,
+        );
+      } else if (failedCount) {
+        toast.error(
+          `${result.sentCount} purchase email(s) sent; ${failedCount} failed and can be retried from Sample Status.`,
+        );
+      } else toast.success(`${approvedSend.sequence} purchase sent to ${result.sentCount} supplier(s).`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Purchase email delivery failed.");
+    } finally {
+      setPurchasing(false);
+    }
+  }
+
+  const purchaseDisabled =
+    purchasing || suppliers.isLoading || products.isLoading || canvas.status !== "approved";
 
   return (
     <div className="flex justify-end gap-2">
@@ -425,7 +676,29 @@ function CanvasActions({
           View/Edit
         </Button>
       )}
-      <SendCanvasDialog canvas={canvas} project={project} defaultRecipient={defaultRecipient} />
+      <SendCanvasDialog canvas={canvas} project={project} />
+      <ConfirmDialog
+        title="Send supplier purchase orders?"
+        description="This sends one purchase email per supplier in this approved canvas."
+        confirmLabel="Send purchase"
+        onConfirm={() => void sendPurchase()}
+        trigger={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Send ${canvas.name} supplier purchase emails`}
+            title={
+              canvas.status === "approved"
+                ? "Send supplier purchase"
+                : "Available after canvas approval"
+            }
+            disabled={purchaseDisabled}
+          >
+            <ShoppingCart />
+          </Button>
+        }
+      />
       <ConfirmDialog
         title="Delete canvas?"
         description="This permanently deletes the canvas."
@@ -569,7 +842,6 @@ export function CanvasList({
                           canvas={canvas}
                           projectId={projectId}
                           project={project.data ?? null}
-                          defaultRecipient={project.data?.employeeEmail ?? ""}
                           onOpen={onOpenCanvas}
                         />
                       </td>

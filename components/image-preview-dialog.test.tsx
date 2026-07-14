@@ -236,4 +236,53 @@ describe("ImagePreviewDialog", () => {
       root.unmount();
     });
   });
+
+  it("shows masks for the selected image and highlights the hovered mask name", async () => {
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ImagePreviewDialog
+          src="first.png"
+          alt="First masked image"
+          title="Masked gallery"
+          trigger={<button type="button">Open masked gallery</button>}
+          gallery={[
+            { id: "first", src: "first.png", alt: "First masked image" },
+            { id: "second", src: "second.png", alt: "Second masked image" },
+          ]}
+          selectedItemId="first"
+          masks={[
+            { id: "collar", name: "Collar", imageKey: "first", strokes: [] },
+            { id: "sleeve", name: "Sleeve", imageKey: "second", strokes: [] },
+          ]}
+          onMasksChange={() => undefined}
+        />,
+      );
+    });
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>("button")?.click();
+    });
+
+    const collarButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "Collar",
+    );
+    expect(collarButton).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Sleeve");
+
+    await act(async () => {
+      collarButton?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    });
+    expect(collarButton?.parentElement?.className).toContain("bg-cyan-400/20");
+
+    await act(async () => {
+      collarButton?.click();
+    });
+    expect(collarButton?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });

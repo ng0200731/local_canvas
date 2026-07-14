@@ -10,6 +10,7 @@ import type {
   ImageGenerationSize,
 } from "@/lib/image-generation-models";
 import type { GenerationRunHandle } from "@/lib/generation-run";
+import type { ImageMaskRegion } from "@/lib/nodes/types";
 
 export interface ConnectedImageReference {
   edgeId: string;
@@ -18,6 +19,7 @@ export interface ConnectedImageReference {
   alias: string;
   label: string;
   imageUrl: string;
+  masks: ImageMaskRegion[];
 }
 
 export interface ConnectedPantoneReference {
@@ -76,6 +78,8 @@ export interface CanvasActions {
   ) => boolean;
   /** Remove a node and any wires connected to it. */
   deleteNode: (id: string) => void;
+  /** Count unique nodes connected by wires to this node. */
+  getNodeConnectionCount: (id: string) => number;
   /** Remove a group shell while preserving its children and their connections. */
   ungroupNode: (id: string) => void;
   /** Remove all external outgoing wires created from a group's direct children. */

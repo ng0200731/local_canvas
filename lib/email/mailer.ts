@@ -10,11 +10,13 @@ import {
   sendCanvasEmailRequestSchema,
   sendCanvasReportEmailRequestSchema,
   sendPurchaseSamplingEmailRequestSchema,
+  sendPhysicalSampleApprovalEmailRequestSchema,
   sendTestEmailRequestSchema,
   type EmailDeliveryResponse,
   type SendCanvasEmailRequest,
   type SendCanvasReportEmailRequest,
   type SendPurchaseSamplingEmailRequest,
+  type SendPhysicalSampleApprovalEmailRequest,
   type SendTestEmailRequest,
   type SmtpProviderId,
 } from "@/lib/email/schemas";
@@ -251,23 +253,58 @@ export function prepareTestMail(): PreparedMail {
 }
 
 export function preparePurchaseSamplingMail(input: SendPurchaseSamplingEmailRequest): PreparedMail {
-  const subject = `${input.sequence} start sampling`;
+  const subject = `${input.sequence} purchase order - ${input.supplierName}`;
+  const details = input.supplierDetails.length
+    ? input.supplierDetails.map((detail) => `- ${detail}`).join("\n")
+    : "- No supplier details available";
   const text = [
     `Dear ${input.supplierName},`,
     "",
-    `${input.sequence} start sampling.`,
+    `${input.sequence} purchase order.`,
+    `Purchase date: ${input.purchaseDate}`,
     `Project: ${input.projectName}`,
     `Canvas: ${input.canvasName}`,
+    `Canvas link: ${input.reportUrl}`,
+    `Update sample status: ${input.updateUrl}`,
+    "",
+    "Supplier details:",
+    details,
     "",
     "Please start sampling and reply with the sample schedule.",
   ].join("\n");
+  const htmlDetails = input.supplierDetails.length
+    ? `<ul>${input.supplierDetails.map((detail) => `<li>${escapeHtml(detail)}</li>`).join("")}</ul>`
+    : "<p>No supplier details available.</p>";
   const html = `<p>Dear ${escapeHtml(input.supplierName)},</p><p><strong>${escapeHtml(
     input.sequence,
-  )} start sampling</strong></p><p>Project: ${escapeHtml(
-    input.projectName,
-  )}<br>Canvas: ${escapeHtml(
+  )} purchase order</strong></p><p>Purchase date: ${escapeHtml(
+    input.purchaseDate,
+  )}<br>Project: ${escapeHtml(input.projectName)}<br>Canvas: ${escapeHtml(
     input.canvasName,
-  )}</p><p>Please start sampling and reply with the sample schedule.</p>`;
+  )}<br>Canvas link: <a href="${escapeHtml(input.reportUrl)}">${escapeHtml(
+    input.reportUrl,
+  )}</a></p><p><a href="${escapeHtml(input.updateUrl)}" style="display:inline-block;padding:12px 18px;background:#172554;color:#fff;text-decoration:none;border-radius:6px">Update sample status</a></p><h3>Supplier details</h3>${htmlDetails}<p><img src="${escapeHtml(
+    input.qrCodeDataUrl,
+  )}" alt="QR code for ${escapeHtml(input.sequence)} ${escapeHtml(
+    input.supplierName,
+  )}" width="160" height="160"></p><p>Please start sampling and keep the order status current using the secure link.</p>`;
+  return { subject, text, html, attachments: [] };
+}
+
+export function preparePhysicalSampleApprovalMail(
+  input: SendPhysicalSampleApprovalEmailRequest,
+): PreparedMail {
+  const subject = `${input.sequence} physical sample approval`;
+  const text = [
+    `${input.sequence} has been shipped by ${input.supplierName}.`,
+    `Project: ${input.projectName}`,
+    `Canvas: ${input.canvasName}`,
+    `Tracking: ${input.trackingNumber}`,
+    "",
+    `Approve: ${input.approvalUrl}`,
+    `Reject: ${input.rejectionUrl}`,
+  ].join("\n");
+  const html = `<p><strong>${escapeHtml(input.sequence)} physical sample approval</strong></p><p>${escapeHtml(input.supplierName)} has submitted shipment details.</p><p>Project: ${escapeHtml(input.projectName)}<br>Canvas: ${escapeHtml(input.canvasName)}<br>Tracking: ${escapeHtml(input.trackingNumber)}</p><p><a href="${escapeHtml(input.approvalUrl)}" style="display:inline-block;padding:12px 18px;background:#166534;color:#fff;text-decoration:none;border-radius:6px">Approve physical sample</a> <a href="${escapeHtml(input.rejectionUrl)}" style="display:inline-block;padding:12px 18px;background:#991b1b;color:#fff;text-decoration:none;border-radius:6px">Reject</a></p>`;
   return { subject, text, html, attachments: [] };
 }
 
@@ -324,15 +361,21 @@ export async function prepareCanvasReportMail(
 }
 
 export function createEmailDelivery({ providers, createTransport }: EmailDeliveryDependencies) {
-  return async function deliver(to: string, mail: PreparedMail): Promise<EmailDeliveryResponse> {
+  return async function deliver(
+    to: string | readonly string[],
+    mail: PreparedMail,
+    cc: readonly string[] = [],
+  ): Promise<EmailDeliveryResponse> {
     if (providers.length === 0) throw new EmailConfigurationError();
+    const recipients: string | string[] = typeof to === "string" ? to : [...to];
 
     for (const provider of providers) {
       try {
         const result = smtpSendResultSchema.parse(
           await createTransport(provider).sendMail({
             from: { name: provider.fromName, address: provider.username },
-            to,
+            to: recipients,
+            cc: cc.length > 0 ? [...cc] : undefined,
             subject: mail.subject,
             text: mail.text,
             html: mail.html,
@@ -381,6 +424,7 @@ export async function deliverCanvasReportEmail(input: SendCanvasReportEmailReque
   return delivery()(
     parsed.to,
     await prepareCanvasReportMail(parsed, renderCanvasReportPdf, { requirePdf: true }),
+    parsed.cc ?? [],
   );
 }
 
@@ -392,4 +436,11 @@ export async function deliverTestEmail(input: SendTestEmailRequest) {
 export async function deliverPurchaseSamplingEmail(input: SendPurchaseSamplingEmailRequest) {
   const parsed = sendPurchaseSamplingEmailRequestSchema.parse(input);
   return delivery()(parsed.to, preparePurchaseSamplingMail(parsed));
+}
+
+export async function deliverPhysicalSampleApprovalEmail(
+  input: SendPhysicalSampleApprovalEmailRequest,
+) {
+  const parsed = sendPhysicalSampleApprovalEmailRequestSchema.parse(input);
+  return delivery()(parsed.to, preparePhysicalSampleApprovalMail(parsed));
 }

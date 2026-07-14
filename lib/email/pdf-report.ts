@@ -543,25 +543,27 @@ function drawReport(
     for (const block of section.blocks) drawBlock(doc, report, block, images);
   }
 
-  ensureSpace(doc, 60, report);
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(14)
-    .text("Canvas log", PAGE_MARGIN, doc.y + 8);
-  doc.moveDown(0.6);
-  report.steps.forEach((step, index) => {
-    ensureSpace(doc, 34, report);
+  if (report.steps.length > 0) {
+    ensureSpace(doc, 60, report);
     doc
       .font("Helvetica-Bold")
-      .fontSize(9)
-      .text(`${index + 1}. ${step.title}`, PAGE_MARGIN, doc.y);
-    doc.font("Helvetica").fontSize(8).fillColor("#333333");
-    doc.text(step.detail, PAGE_MARGIN + 14, doc.y + 3, {
-      width: doc.page.width - PAGE_MARGIN * 2 - 14,
+      .fontSize(14)
+      .text("Canvas log", PAGE_MARGIN, doc.y + 8);
+    doc.moveDown(0.6);
+    report.steps.forEach((step, index) => {
+      ensureSpace(doc, 34, report);
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(9)
+        .text(`${index + 1}. ${step.title}`, PAGE_MARGIN, doc.y);
+      doc.font("Helvetica").fontSize(8).fillColor("#333333");
+      doc.text(step.detail, PAGE_MARGIN + 14, doc.y + 3, {
+        width: doc.page.width - PAGE_MARGIN * 2 - 14,
+      });
+      doc.moveDown(0.7);
+      doc.fillColor("#111111");
     });
-    doc.moveDown(0.7);
-    doc.fillColor("#111111");
-  });
+  }
 }
 
 function legacyReport(input: LegacyReportInput): CanvasReportPayload {

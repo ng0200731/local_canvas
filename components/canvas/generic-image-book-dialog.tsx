@@ -56,7 +56,7 @@ export function GenericImageBookDialog({
                       setOpen(false);
                     }}
                     className={cn(
-                      "focus-visible:ring-ring group relative grid gap-2 rounded-lg border p-2 text-left outline-none transition-colors focus-visible:ring-3",
+                      "focus-visible:ring-ring group relative grid gap-2 rounded-lg border p-2 text-left transition-colors outline-none focus-visible:ring-3",
                       selected
                         ? "border-primary bg-primary/5 ring-primary/20 ring-2"
                         : "hover:border-primary/40 hover:bg-muted/40",
@@ -78,7 +78,9 @@ export function GenericImageBookDialog({
                     </span>
                     <span className="min-w-0 px-0.5">
                       <span className="block truncate text-xs font-medium">{image.name}</span>
-                      <span className="text-muted-foreground text-[0.68rem]">Image {index + 1}</span>
+                      <span className="text-muted-foreground text-[0.68rem]">
+                        Image {index + 1}
+                      </span>
                     </span>
                   </button>
                 );

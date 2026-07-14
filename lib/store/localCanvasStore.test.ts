@@ -6,6 +6,56 @@ import { localCanvasStore } from "./localCanvasStore";
 beforeEach(() => localStorage.clear());
 
 describe("localCanvasStore", () => {
+  it("upserts one durable sample order per canvas send and supplier", async () => {
+    const input = {
+      canvasSendId: "send-1",
+      canvasId: "canvas-1",
+      projectId: "project-1",
+      supplierId: "supplier-1",
+      sequence: "CA000018",
+      recipientEmail: "supplier@example.com",
+      approverEmail: "buyer@example.com",
+      supplierTokenHash: "hash",
+      snapshot: {
+        project: { id: "project-1", name: "Project", customerName: "Customer" },
+        canvas: { id: "canvas-1", name: "Canvas", reportUrl: "https://example.com/report" },
+        supplier: {
+          id: "supplier-1",
+          name: "Supplier",
+          email: "supplier@example.com",
+          productTypes: ["woven-label"],
+          employees: [
+            { name: "Contact", title: "Coordinator", email: "supplier@example.com", tel: "123" },
+          ],
+        },
+        lines: [
+          {
+            nodeId: "node-1",
+            productId: null,
+            variantId: null,
+            subject: "Label",
+            details: ["Material: cotton"],
+          },
+        ],
+      },
+    };
+    const first = await localCanvasStore.upsertSampleOrder(input);
+    const second = await localCanvasStore.upsertSampleOrder({
+      ...input,
+      supplierTokenHash: "new-hash",
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.deliveryCount).toBe(2);
+    expect(await localCanvasStore.listSampleOrders()).toHaveLength(1);
+  });
+
+  it("generates ten validated demo sample orders", async () => {
+    await localCanvasStore.generateDemoSampleOrders(10);
+    const records = await localCanvasStore.listSampleOrders();
+    expect(records).toHaveLength(10);
+    expect(new Set(records.map((record) => record.currentStage)).size).toBeGreaterThan(4);
+  });
+
   it("creates and lists projects (newest first)", async () => {
     const a = await localCanvasStore.createProject({ name: "A" });
     const b = await localCanvasStore.createProject({ name: "B" });

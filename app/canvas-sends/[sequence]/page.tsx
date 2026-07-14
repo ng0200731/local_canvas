@@ -123,7 +123,7 @@ export default async function CanvasSendPage({
         </dl>
       </section>
 
-      {report.success ? (
+      {report.success && report.data.steps.length > 0 ? (
         <section className="mt-5 grid gap-4 rounded-lg border p-4">
           <h2 className="text-base font-semibold">Canvas image and report</h2>
           {report.data.sections.map((section) => (

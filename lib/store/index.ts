@@ -35,3 +35,10 @@ export type {
   RecordImageInput,
   UpdateCanvasSendInput,
 } from "./canvasStore";
+export type {
+  RotateSampleOrderTokenInput,
+  SampleOrder,
+  SampleOrderUpdate,
+  UpdateSampleOrderEmailInput,
+  UpsertSampleOrderInput,
+} from "@/lib/sample-orders";

@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useRef,
-  useState,
-  type ClipboardEvent,
-  type DragEvent,
-  type KeyboardEvent,
-} from "react";
+import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { ImagePlus, Images, Loader2, Trash2, Upload } from "lucide-react";
 import { z } from "zod";
 
@@ -150,12 +144,13 @@ export function MultiImageUploadField({
           if (!disabled && !uploading) setDragActive(true);
         }}
         onDragLeave={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false);
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            setDragActive(false);
         }}
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
         className={cn(
-          "border-input focus-visible:ring-ring/50 relative grid min-h-36 place-items-center rounded-lg border border-dashed p-4 text-center outline-none transition-colors focus-visible:ring-3",
+          "border-input focus-visible:ring-ring/50 relative grid min-h-36 place-items-center rounded-lg border border-dashed p-4 text-center transition-colors outline-none focus-visible:ring-3",
           dragActive && "border-primary bg-primary/5 ring-primary/20 ring-3",
           (disabled || uploading) && "pointer-events-none opacity-60",
         )}
@@ -197,7 +192,10 @@ export function MultiImageUploadField({
       {images.length ? (
         <div className="grid gap-2 sm:grid-cols-2">
           {images.map((image, index) => (
-            <div key={image.id} className="bg-muted/20 flex min-w-0 items-center gap-2 rounded-lg border p-2">
+            <div
+              key={image.id}
+              className="bg-muted/20 flex min-w-0 items-center gap-2 rounded-lg border p-2"
+            >
               <ImagePreviewDialog
                 src={image.url}
                 alt={image.name}

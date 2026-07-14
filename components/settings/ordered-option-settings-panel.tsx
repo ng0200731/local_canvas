@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState, type FormEvent } from "react";
-import { Coins, Edit3, MapPin, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Coins, Edit3, Heart, Mail, MapPin, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -23,7 +23,7 @@ import { OrderControls } from "./order-controls";
 import { SettingsPanelHeader } from "./settings-panel-header";
 
 const optionDraftSchema = z.object({
-  code: z.string().trim().min(1, "Code is required.").max(12, "Use 12 characters or fewer."),
+  code: z.string().trim().min(1, "Code is required.").max(254, "Use 254 characters or fewer."),
   name: z.string().trim().min(1, "Name is required.").max(120, "Use 120 characters or fewer."),
   symbol: z.string().trim().max(12, "Use 12 characters or fewer."),
 });
@@ -51,6 +51,12 @@ const panelCopy: Record<
     description: "Delivery destination options and preferred sequence.",
     singular: "destination country",
     searchPlaceholder: "Search country code or name",
+  },
+  "address-book": {
+    title: "Address book",
+    description: "Reusable email recipients for canvas sends.",
+    singular: "address",
+    searchPlaceholder: "Search name or email",
   },
 };
 
@@ -104,6 +110,10 @@ function OptionEditorDialog({
       setErrors(editorErrors(parsed));
       return;
     }
+    if (kind === "address-book" && !z.email().safeParse(parsed.data.code).success) {
+      setErrors({ code: "Enter a valid email address." });
+      return;
+    }
 
     const duplicate = options.some(
       (candidate) =>
@@ -131,22 +141,34 @@ function OptionEditorDialog({
 
           <div className="grid gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor={`${fieldId}-code`}>Code</Label>
+              <Label htmlFor={`${fieldId}-code`}>
+                {kind === "address-book" ? "Email address" : "Code"}
+              </Label>
               <Input
                 id={`${fieldId}-code`}
                 autoFocus
                 value={draft.code}
                 aria-invalid={Boolean(errors.code)}
                 onChange={(event) =>
-                  setDraft((current) => ({ ...current, code: event.target.value.toUpperCase() }))
+                  setDraft((current) => ({
+                    ...current,
+                    code:
+                      kind === "address-book"
+                        ? event.target.value
+                        : event.target.value.toUpperCase(),
+                  }))
                 }
-                placeholder={kind === "currency" ? "USD" : "US"}
+                placeholder={
+                  kind === "currency" ? "USD" : kind === "address-book" ? "buyer@example.com" : "US"
+                }
               />
               {errors.code ? <p className="text-destructive text-xs">{errors.code}</p> : null}
             </div>
 
             <div className="grid gap-1.5">
-              <Label htmlFor={`${fieldId}-name`}>Name</Label>
+              <Label htmlFor={`${fieldId}-name`}>
+                {kind === "address-book" ? "Display name" : "Name"}
+              </Label>
               <Input
                 id={`${fieldId}-name`}
                 value={draft.name}
@@ -154,7 +176,13 @@ function OptionEditorDialog({
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, name: event.target.value }))
                 }
-                placeholder={kind === "currency" ? "US Dollar" : "United States"}
+                placeholder={
+                  kind === "currency"
+                    ? "US Dollar"
+                    : kind === "address-book"
+                      ? "Buyer team"
+                      : "United States"
+                }
               />
               {errors.name ? <p className="text-destructive text-xs">{errors.name}</p> : null}
             </div>
@@ -214,7 +242,7 @@ function OptionsLoadingTable({ kind }: { kind: WorkspaceOptionKind }) {
 
 export function OrderedOptionSettingsPanel({ kind }: { kind: WorkspaceOptionKind }) {
   const copy = panelCopy[kind];
-  const Icon = kind === "currency" ? Coins : MapPin;
+  const Icon = kind === "currency" ? Coins : kind === "address-book" ? Mail : MapPin;
   const query = useWorkspaceOptions(kind);
   const replace = useReplaceWorkspaceOptions(kind);
   const [search, setSearch] = useState("");
@@ -248,9 +276,10 @@ export function OrderedOptionSettingsPanel({ kind }: { kind: WorkspaceOptionKind
     const saved: WorkspaceOption = {
       id: editing?.id ?? uid(),
       kind,
-      code: draft.code.toUpperCase(),
+      code: kind === "address-book" ? draft.code.toLocaleLowerCase() : draft.code.toUpperCase(),
       name: draft.name,
       symbol: kind === "currency" ? draft.symbol || null : null,
+      isFavorite: editing?.isFavorite ?? false,
       sortIndex: editing?.sortIndex ?? options.length,
     };
     const next = editing
@@ -286,6 +315,20 @@ export function OrderedOptionSettingsPanel({ kind }: { kind: WorkspaceOptionKind
       await replace.mutateAsync(next);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to change sequence");
+    }
+  }
+
+  async function toggleFavorite(option: WorkspaceOption) {
+    try {
+      await replace.mutateAsync(
+        options.map((candidate) =>
+          candidate.id === option.id
+            ? { ...candidate, isFavorite: !candidate.isFavorite }
+            : candidate,
+        ),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update favorite");
     }
   }
 
@@ -387,6 +430,23 @@ export function OrderedOptionSettingsPanel({ kind }: { kind: WorkspaceOptionKind
                             disabled={replace.isPending}
                             onMove={(direction) => void moveOption(option, direction)}
                           />
+                          <Button
+                            type="button"
+                            size="icon-sm"
+                            variant="ghost"
+                            aria-label={
+                              option.isFavorite
+                                ? `Remove ${option.name} from favorites`
+                                : `Favorite ${option.name}`
+                            }
+                            title={option.isFavorite ? "Favorite" : "Add favorite"}
+                            disabled={replace.isPending}
+                            onClick={() => void toggleFavorite(option)}
+                          >
+                            <Heart
+                              className={option.isFavorite ? "fill-current text-rose-500" : ""}
+                            />
+                          </Button>
                           <Button
                             type="button"
                             size="icon-sm"

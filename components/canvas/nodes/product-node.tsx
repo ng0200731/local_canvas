@@ -258,6 +258,8 @@ export function ProductNode({ id, data, parentId, selected }: NodeProps<ProductC
                 const galleryItem = selectedGalleryItems[index];
                 if (galleryItem) selectProductImage(galleryItem);
               }}
+              masks={data.imageMasks ?? []}
+              onMasksChange={(imageMasks) => updateNodeData(id, { imageMasks })}
               trigger={
                 <button
                   type="button"

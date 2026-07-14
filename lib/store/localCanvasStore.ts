@@ -1,5 +1,13 @@
 import { EMPTY_CANVAS_CONTENT, type CanvasContent } from "@/lib/nodes/types";
 import { mergeProjectMetadata } from "@/lib/project-metadata";
+import {
+  SAMPLE_STAGES,
+  sampleOrderSchema,
+  type SampleOrder,
+  type SampleOrderUpdate,
+  type SampleStage,
+  type SampleUpdatePayload,
+} from "@/lib/sample-orders";
 
 import type {
   Canvas,
@@ -26,6 +34,7 @@ const KEYS = {
   canvases: "ica:canvases",
   images: "ica:images",
   canvasSends: "ica:canvas-sends",
+  sampleOrders: "ica:sample-orders",
 } as const;
 
 const DB_NAME = "ica:local-store";
@@ -223,6 +232,90 @@ function nextLocalSequence(records: readonly CanvasSendRecord[]): string {
     return Number.isFinite(numeric) ? Math.max(value, numeric) : value;
   }, 0);
   return `CA${String(max + 1).padStart(6, "0")}`;
+}
+
+function readSampleOrders(): SampleOrder[] {
+  return read<unknown[]>(KEYS.sampleOrders, []).flatMap((value) => {
+    const parsed = sampleOrderSchema.safeParse(value);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+function demoPayload(stage: SampleStage, index: number): SampleUpdatePayload {
+  const date = `2026-${String((index % 9) + 1).padStart(2, "0")}-${String((index % 20) + 1).padStart(2, "0")}`;
+  switch (stage) {
+    case "pmc":
+      return {
+        stage,
+        owner: `PMC owner ${index + 1}`,
+        plannedCompletionDate: date,
+        materialReadinessPercent: Math.min(100, 20 + index * 7),
+        notes: "Demo material review",
+      };
+    case "purchase":
+      return {
+        stage,
+        materialItem: `Trim material ${index + 1}`,
+        supplierReference: `SUP-${100 + index}`,
+        orderedQuantity: 500 + index * 100,
+        unit: "pcs",
+        orderDate: date,
+        expectedDeliveryDate: date,
+      };
+    case "production":
+      return {
+        stage,
+        startDate: date,
+        plannedQuantity: 1_000,
+        completedQuantity: index * 80,
+        progressPercent: Math.min(100, 15 + index * 9),
+        expectedFinishDate: date,
+        notes: "Demo production run",
+      };
+    case "quality_control":
+      return {
+        stage,
+        inspectionDate: date,
+        inspector: `Inspector ${index + 1}`,
+        sampleSize: 50,
+        passedQuantity: 47,
+        rejectedQuantity: 3,
+        result: index % 3 === 0 ? "failed" : "passed",
+        evidenceUrl: "",
+      };
+    case "package":
+      return {
+        stage,
+        packagingType: "Export carton",
+        cartonCount: 20 + index,
+        unitsPerCarton: 50,
+        netWeight: 12.5,
+        grossWeight: 13.8,
+        dimensions: "50 x 40 x 35 cm",
+        readyDate: date,
+      };
+    case "shipment":
+      return {
+        stage,
+        carrier: index % 2 ? "DHL" : "FedEx",
+        shippingMethod: "Express",
+        trackingNumber: `TRACK${100000 + index}`,
+        shippedQuantity: 1_000,
+        shipDate: date,
+        eta: date,
+        documentUrl: "",
+      };
+    case "invoice":
+      return {
+        stage,
+        invoiceNumber: `INV-${202600 + index}`,
+        invoiceDate: date,
+        currency: "USD",
+        amount: 1200 + index * 175,
+        dueDate: date,
+        invoiceUrl: "",
+      };
+  }
 }
 
 export const localCanvasStore: CanvasStore = {
@@ -430,6 +523,173 @@ export const localCanvasStore: CanvasStore = {
   },
 
   // ── Image metadata ────────────────────────────────────────────────────
+  async listSampleOrders() {
+    return delay(readSampleOrders().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  },
+
+  async upsertSampleOrder(input) {
+    const records = readSampleOrders();
+    const now = nowISO();
+    const index = records.findIndex(
+      (record) =>
+        record.canvasSendId === input.canvasSendId && record.supplierId === input.supplierId,
+    );
+    if (index >= 0) {
+      records[index] = {
+        ...records[index],
+        recipientEmail: input.recipientEmail,
+        approverEmail: input.approverEmail,
+        snapshot: input.snapshot,
+        emailStatus: "pending",
+        emailError: null,
+        deliveryCount: records[index].deliveryCount + 1,
+        updatedAt: now,
+      };
+      write(KEYS.sampleOrders, records);
+      return delay(records[index]);
+    }
+    const record: SampleOrder = {
+      id: uid(),
+      canvasSendId: input.canvasSendId,
+      canvasId: input.canvasId,
+      projectId: input.projectId,
+      supplierId: input.supplierId,
+      sequence: input.sequence,
+      recipientEmail: input.recipientEmail,
+      approverEmail: input.approverEmail,
+      snapshot: input.snapshot,
+      emailStatus: "pending",
+      emailError: null,
+      deliveryCount: 1,
+      purchaseSentAt: null,
+      currentStage: null,
+      currentPayload: null,
+      latestUpdateAt: null,
+      approvalStatus: "not_requested",
+      approvalEmailStatus: null,
+      approvalError: null,
+      approvalSentAt: null,
+      approvalRespondedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      updates: [],
+    };
+    write(KEYS.sampleOrders, [record, ...records]);
+    return delay(record);
+  },
+
+  async updateSampleOrderEmail(id, input) {
+    const records = readSampleOrders();
+    const index = records.findIndex((record) => record.id === id);
+    if (index < 0) throw new Error("Sample order not found");
+    records[index] = {
+      ...records[index],
+      emailStatus: input.status,
+      emailError: input.error ?? null,
+      purchaseSentAt: input.sentAt === undefined ? records[index].purchaseSentAt : input.sentAt,
+      updatedAt: nowISO(),
+    };
+    write(KEYS.sampleOrders, records);
+    return delay(records[index]);
+  },
+
+  async rotateSampleOrderToken(id) {
+    const records = readSampleOrders();
+    const index = records.findIndex((record) => record.id === id);
+    if (index < 0) throw new Error("Sample order not found");
+    records[index] = {
+      ...records[index],
+      emailStatus: "pending",
+      emailError: null,
+      deliveryCount: records[index].deliveryCount + 1,
+      updatedAt: nowISO(),
+    };
+    write(KEYS.sampleOrders, records);
+    return delay(records[index]);
+  },
+
+  async generateDemoSampleOrders(count) {
+    const records = readSampleOrders();
+    const created: SampleOrder[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const stage = SAMPLE_STAGES[(records.length + index) % SAMPLE_STAGES.length];
+      const now = new Date(Date.now() - index * 3_600_000).toISOString();
+      const payload = demoPayload(stage, index);
+      const id = uid();
+      const update: SampleOrderUpdate = {
+        id: uid(),
+        orderId: id,
+        stage,
+        payload,
+        source: "demo",
+        createdAt: now,
+      };
+      created.push({
+        id,
+        canvasSendId: null,
+        canvasId: null,
+        projectId: null,
+        supplierId: null,
+        sequence: `CA${String(900001 + records.length + index).padStart(6, "0")}`,
+        recipientEmail: `supplier${index + 1}@example.com`,
+        approverEmail: "buyer@example.com",
+        snapshot: {
+          project: {
+            id: `demo-project-${index}`,
+            name: `Seasonal Project ${index + 1}`,
+            customerName: `Customer ${index + 1}`,
+          },
+          canvas: {
+            id: `demo-canvas-${index}`,
+            name: `Sample Canvas ${index + 1}`,
+            reportUrl: "https://example.com/canvas-report",
+          },
+          supplier: {
+            id: `demo-supplier-${index}`,
+            name: `Supplier Workshop ${index + 1}`,
+            email: `supplier${index + 1}@example.com`,
+            productTypes: ["woven-label"],
+            employees: [
+              {
+                name: `Contact ${index + 1}`,
+                title: "Sample coordinator",
+                email: `supplier${index + 1}@example.com`,
+                tel: `+86 755 8800 ${String(1000 + index)}`,
+              },
+            ],
+          },
+          lines: [
+            {
+              nodeId: `demo-node-${index}`,
+              productId: null,
+              variantId: null,
+              subject: `Garment trim sample ${index + 1}`,
+              details: ["Material: recycled polyester", `Quantity: ${500 + index * 100} pcs`],
+            },
+          ],
+        },
+        emailStatus: index % 8 === 0 ? "failed" : "sent",
+        emailError: index % 8 === 0 ? "Demo SMTP timeout" : null,
+        deliveryCount: 1,
+        purchaseSentAt: now,
+        currentStage: stage,
+        currentPayload: payload,
+        latestUpdateAt: now,
+        approvalStatus:
+          stage === "shipment" ? "pending" : stage === "invoice" ? "approved" : "not_requested",
+        approvalEmailStatus: stage === "shipment" || stage === "invoice" ? "sent" : null,
+        approvalError: null,
+        approvalSentAt: stage === "shipment" || stage === "invoice" ? now : null,
+        approvalRespondedAt: stage === "invoice" ? now : null,
+        createdAt: now,
+        updatedAt: now,
+        updates: [update],
+      });
+    }
+    write(KEYS.sampleOrders, [...created, ...records]);
+    return delay(created);
+  },
+
   async listImages(canvasId) {
     const metadata = read<ImageRecord[]>(KEYS.images, []).filter(
       (image) => image.canvasId === canvasId && image.source === "generated",

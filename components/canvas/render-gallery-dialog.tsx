@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Images, LoaderCircle } from "lucide-react";
+import { Copy, Download, Images, LoaderCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { Button } from "@/components/ui/button";
@@ -148,6 +149,17 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
     }
   }
 
+  async function copyPrompt(prompt: string | null) {
+    const value = prompt?.trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success("copied");
+    } catch {
+      toast.error("Unable to copy prompt.");
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => void handleOpenChange(nextOpen)}>
       <DialogTrigger
@@ -244,9 +256,27 @@ export function RenderGalleryDialog({ canvasId }: RenderGalleryDialogProps) {
                         <Badge variant="outline">{durationBadge(image)}</Badge>
                       ) : null}
                     </div>
-                    <p className="text-foreground line-clamp-3 text-xs leading-5">
-                      {image.prompt ?? "No prompt saved"}
-                    </p>
+                    <div className="grid gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground text-[0.68rem] font-medium">
+                          Prompt
+                        </span>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          aria-label="Copy prompt"
+                          title="Copy prompt"
+                          disabled={!image.prompt}
+                          onClick={() => void copyPrompt(image.prompt)}
+                        >
+                          <Copy />
+                        </Button>
+                      </div>
+                      <p className="text-foreground bg-muted/35 max-h-24 overflow-y-auto rounded-md border px-2 py-1.5 text-xs leading-5 whitespace-pre-wrap">
+                        {image.prompt ?? "No prompt saved"}
+                      </p>
+                    </div>
                     <p className="text-muted-foreground mt-auto truncate text-[0.7rem] font-medium">
                       {modelSummary(image) || "No model details"}
                     </p>

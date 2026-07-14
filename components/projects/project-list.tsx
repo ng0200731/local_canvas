@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useRef, useState, type RefObject, type UIEvent } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
@@ -13,7 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,12 +21,14 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
-import { sendPurchaseSamplingEmail } from "@/lib/email/client";
+import { canvasPurchaseTargets } from "@/lib/canvas-purchase";
 import { useDeleteProject, useProjects } from "@/lib/hooks/use-projects";
-import { useSuppliers } from "@/lib/hooks/use-workspace-records";
+import { SAMPLE_ORDERS_KEY } from "@/lib/hooks/use-sample-orders";
+import { useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
 import { formatDate } from "@/lib/format";
+import { sendSamplePurchases } from "@/lib/sample-purchase-client";
 import { getCanvasStore, type Canvas, type CanvasSendRecord, type Project } from "@/lib/store";
-import type { SupplierRecord } from "@/lib/workspace-records";
+import { cn } from "@/lib/utils";
 
 function displayValue(value: string | null | undefined): string {
   const trimmed = value?.trim();
@@ -47,14 +49,6 @@ function canvasStatusLabel(status: Canvas["status"]): string {
   return "Draft";
 }
 
-function projectStatus(canvases: readonly Canvas[] | undefined): Canvas["status"] {
-  if (!canvases || canvases.length === 0) return "draft";
-  if (canvases.some((canvas) => canvas.status === "awaiting_approval")) return "awaiting_approval";
-  if (canvases.some((canvas) => canvas.status === "rejected")) return "rejected";
-  if (canvases.every((canvas) => canvas.status === "approved")) return "approved";
-  return "draft";
-}
-
 function fuzzyMatch(value: string, query: string): boolean {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return true;
@@ -73,14 +67,8 @@ function getProjectSearchText(project: Project): string {
     project.customerName,
     project.employeeName,
     project.employeeTitle,
-    project.employeeEmail,
     project.employeeTel,
     project.name,
-    project.currencyCode,
-    project.currencyName,
-    project.currencySymbol,
-    project.destinationCountryCode,
-    project.destinationCountryName,
   ]
     .filter((value): value is string => Boolean(value))
     .join(" ");
@@ -95,7 +83,6 @@ interface ProjectColumnFilters {
   currency: string;
   destination: string;
   canvasCount: string;
-  status: string;
 }
 
 const emptyProjectColumnFilters: ProjectColumnFilters = {
@@ -107,19 +94,12 @@ const emptyProjectColumnFilters: ProjectColumnFilters = {
   currency: "",
   destination: "",
   canvasCount: "",
-  status: "",
 };
 
 function latestCanvasSendSequence(records: readonly CanvasSendRecord[]): string {
   return (
     [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.sequence ?? "Not sent"
   );
-}
-
-function supplierEmail(supplier: SupplierRecord): string | null {
-  const employee = supplier.employees[0];
-  if (!employee) return null;
-  return `${employee.emailPrefix}@${supplier.company.emailDomainSuffix}`;
 }
 
 function columnInputClassName(): string {
@@ -130,7 +110,6 @@ function projectMatchesColumnFilters(input: {
   project: Project;
   filters: ProjectColumnFilters;
   canvases: readonly Canvas[] | undefined;
-  status: Canvas["status"];
   sequence: string;
   canvasLoading: boolean;
 }): boolean {
@@ -153,8 +132,7 @@ function projectMatchesColumnFilters(input: {
     fuzzyMatch(created, input.filters.created) &&
     fuzzyMatch(formatCurrency(project), input.filters.currency) &&
     fuzzyMatch(displayValue(project.destinationCountryName), input.filters.destination) &&
-    (input.canvasLoading || fuzzyMatch(canvasCount, input.filters.canvasCount)) &&
-    (input.canvasLoading || fuzzyMatch(canvasStatusLabel(input.status), input.filters.status))
+    (input.canvasLoading || fuzzyMatch(canvasCount, input.filters.canvasCount))
   );
 }
 
@@ -162,16 +140,92 @@ function ProjectCanvasDetailRow({
   project,
   canvases,
   loading,
+  sendsByCanvasId,
   onOpenCanvas,
 }: {
   project: Project;
   canvases: readonly Canvas[] | undefined;
   loading: boolean;
+  sendsByCanvasId: Map<string, readonly CanvasSendRecord[]>;
   onOpenCanvas?: (projectId: string, canvasId: string) => void;
 }) {
+  const suppliers = useSuppliers();
+  const products = useProducts();
+  const queryClient = useQueryClient();
+
+  async function sendCanvasPurchase(canvas: Canvas) {
+    try {
+      const [fullCanvas, storedSends] = await Promise.all([
+        getCanvasStore().getCanvas(canvas.id),
+        getCanvasStore().listCanvasSends(canvas.id),
+      ]);
+      const sends = storedSends.length ? storedSends : (sendsByCanvasId.get(canvas.id) ?? []);
+      const approvedSend =
+        sends.find((send) => send.status === "approved") ??
+        [...sends].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+      if (canvas.status !== "approved" || !approvedSend) {
+        toast.error("Approve this canvas before sending supplier purchase orders.");
+        return;
+      }
+      const targets = canvasPurchaseTargets({
+        canvas: fullCanvas ?? canvas,
+        suppliers: suppliers.data ?? [],
+        products: products.data ?? [],
+      });
+      if (targets.length === 0) {
+        toast.error("No supplier emails found in this canvas.");
+        return;
+      }
+      const result = await sendSamplePurchases({
+        canvas,
+        project,
+        approvedSend,
+        targets,
+        origin: window.location.origin,
+      });
+      void queryClient.invalidateQueries({ queryKey: SAMPLE_ORDERS_KEY });
+      const failedCount = result.failedEmailCount + result.failedStatusCount;
+      if (result.failedStatusCount) {
+        toast.error(
+          `Sample Status could not save ${result.failedStatusCount} supplier order(s). ${result.firstError ?? ""}`,
+        );
+      } else if (failedCount) {
+        toast.error(`${result.sentCount} purchase email(s) sent; ${failedCount} failed.`);
+      } else toast.success(`${approvedSend.sequence} purchase sent to ${result.sentCount} supplier(s).`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Purchase email delivery failed.");
+    }
+  }
+
+  function purchaseButton(canvas: Canvas) {
+    return (
+      <ConfirmDialog
+        title="Send supplier purchase orders?"
+        description="This sends one purchase email per supplier in this approved canvas."
+        confirmLabel="Send purchase"
+        onConfirm={() => sendCanvasPurchase(canvas)}
+        trigger={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Send ${canvas.name} supplier purchase emails`}
+            title={
+              canvas.status === "approved" ? "Send supplier purchase" : "Available after approval"
+            }
+            disabled={canvas.status !== "approved" || suppliers.isLoading || products.isLoading}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <ShoppingCart />
+          </Button>
+        }
+      />
+    );
+  }
+
   return (
     <tr className="bg-muted/20">
-      <td colSpan={10} className="px-4 py-3">
+      <td colSpan={9} className="px-4 py-3">
         {loading ? (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, index) => (
@@ -182,34 +236,54 @@ function ProjectCanvasDetailRow({
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {canvases.map((canvas) =>
               onOpenCanvas ? (
-                <button
+                <div
                   key={canvas.id}
-                  type="button"
-                  className="bg-background hover:border-primary/50 focus-visible:ring-ring flex items-start gap-3 rounded-md border p-3 text-left transition-colors outline-none focus-visible:ring-2"
-                  onClick={() => onOpenCanvas(project.id, canvas.id)}
+                  className="bg-background hover:border-primary/50 flex items-start gap-3 rounded-md border p-3 text-left transition-colors"
                 >
-                  <FileImage className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{canvas.name}</span>
-                    <span className="text-muted-foreground mt-0.5 block text-xs">
-                      Created {formatDate(canvas.createdAt)} / {canvasStatusLabel(canvas.status)}
+                  <button
+                    type="button"
+                    className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 rounded-sm text-left outline-none focus-visible:ring-2"
+                    onClick={() => onOpenCanvas(project.id, canvas.id)}
+                  >
+                    <FileImage className="text-muted-foreground mt-0.5 size-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium">{canvas.name}</span>
+                        <Badge variant={canvas.status === "approved" ? "default" : "secondary"}>
+                          {canvasStatusLabel(canvas.status)}
+                        </Badge>
+                      </span>
+                      <span className="text-muted-foreground mt-1 block text-xs">
+                        Created {formatDate(canvas.createdAt)}
+                      </span>
                     </span>
-                  </span>
-                </button>
+                  </button>
+                  {purchaseButton(canvas)}
+                </div>
               ) : (
-                <Link
+                <div
                   key={canvas.id}
-                  href={`/projects/${project.id}/canvases/${canvas.id}`}
-                  className="bg-background hover:border-primary/50 focus-visible:ring-ring flex items-start gap-3 rounded-md border p-3 text-left transition-colors outline-none focus-visible:ring-2"
+                  className="bg-background hover:border-primary/50 flex items-start gap-3 rounded-md border p-3 text-left transition-colors"
                 >
-                  <FileImage className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{canvas.name}</span>
-                    <span className="text-muted-foreground mt-0.5 block text-xs">
-                      Created {formatDate(canvas.createdAt)} / {canvasStatusLabel(canvas.status)}
+                  <Link
+                    href={`/projects/${project.id}/canvases/${canvas.id}`}
+                    className="focus-visible:ring-ring flex min-w-0 flex-1 items-start gap-3 rounded-sm outline-none focus-visible:ring-2"
+                  >
+                    <FileImage className="text-muted-foreground mt-0.5 size-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium">{canvas.name}</span>
+                        <Badge variant={canvas.status === "approved" ? "default" : "secondary"}>
+                          {canvasStatusLabel(canvas.status)}
+                        </Badge>
+                      </span>
+                      <span className="text-muted-foreground mt-1 block text-xs">
+                        Created {formatDate(canvas.createdAt)}
+                      </span>
                     </span>
-                  </span>
-                </Link>
+                  </Link>
+                  {purchaseButton(canvas)}
+                </div>
               ),
             )}
           </div>
@@ -227,13 +301,19 @@ function ProjectTable({
   projects,
   onOpenProject,
   onOpenCanvas,
+  stickyTopClassName,
+  tableViewportClassName,
 }: {
   projects: Project[];
   onOpenProject?: (projectId: string) => void;
   onOpenCanvas?: (projectId: string, canvasId: string) => void;
+  stickyTopClassName: string;
+  tableViewportClassName?: string;
 }) {
   const del = useDeleteProject();
-  const suppliers = useSuppliers();
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const syncingScrollRef = useRef(false);
   const [query, setQuery] = useState("");
   const [columnFilters, setColumnFilters] =
     useState<ProjectColumnFilters>(emptyProjectColumnFilters);
@@ -271,7 +351,6 @@ function ProjectTable({
       project,
       filters: columnFilters,
       canvases,
-      status: projectStatus(canvases),
       sequence: latestCanvasSendSequence(projectSends),
       canvasLoading: Boolean(canvasResult?.isLoading || sendsLoading),
     });
@@ -302,79 +381,51 @@ function ProjectTable({
     toast.success("Project deleted");
   }
 
-  async function sendPurchase(project: Project, canvases: readonly Canvas[] | undefined) {
-    const sequence = latestCanvasSendSequence(
-      (canvases ?? []).flatMap((canvas) => sendsByCanvasId.get(canvas.id) ?? []),
-    );
-    if (sequence === "Not sent") {
-      toast.error("Send the canvas for approval first so a CA number exists.");
-      return;
-    }
-    if (!canvases?.length) {
-      toast.error("No canvases found for this project.");
-      return;
-    }
-    const suppliersById = new Map(
-      (suppliers.data ?? []).map((supplier) => [supplier.id, supplier]),
-    );
-    const targets = new Map<string, { email: string; supplierName: string; canvasName: string }>();
-
-    for (const canvas of canvases) {
-      const fullCanvas = await getCanvasStore().getCanvas(canvas.id);
-      const nodes = fullCanvas?.content.nodes ?? canvas.content.nodes;
-      for (const node of nodes) {
-        if (node.type !== "suppler") continue;
-        const supplierId = typeof node.data.supplierId === "string" ? node.data.supplierId : null;
-        const supplier = supplierId ? suppliersById.get(supplierId) : undefined;
-        if (!supplier) continue;
-        const email = supplierEmail(supplier);
-        if (!email) continue;
-        targets.set(email, {
-          email,
-          supplierName: supplier.company.companyName,
-          canvasName: canvas.name,
-        });
-      }
-    }
-
-    if (targets.size === 0) {
-      toast.error("No supplier emails found under this project's canvases.");
-      return;
-    }
-
-    await Promise.all(
-      [...targets.values()].map((target) =>
-        sendPurchaseSamplingEmail({
-          to: target.email,
-          sequence,
-          supplierName: target.supplierName,
-          projectName: project.name,
-          canvasName: target.canvasName,
-        }),
-      ),
-    );
-    toast.success(`${sequence} start sampling sent to ${targets.size} supplier email(s).`);
+  function syncHorizontalScroll(
+    event: UIEvent<HTMLDivElement>,
+    targetRef: RefObject<HTMLDivElement | null>,
+  ) {
+    if (syncingScrollRef.current) return;
+    const target = targetRef.current;
+    if (!target) return;
+    syncingScrollRef.current = true;
+    target.scrollLeft = event.currentTarget.scrollLeft;
+    window.requestAnimationFrame(() => {
+      syncingScrollRef.current = false;
+    });
   }
 
   return (
-    <div className="bg-card overflow-hidden rounded-lg border shadow-sm">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[940px] text-left text-sm">
+    <div className="bg-card flex min-h-0 flex-1 flex-col rounded-lg border shadow-sm">
+      <div
+        className={`bg-card sticky ${stickyTopClassName} z-20 rounded-t-lg border-b px-4 py-3 shadow-sm`}
+      >
+        <div className="relative mb-3 max-w-md">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Fuzzy search projects"
+            aria-label="Fuzzy search projects"
+            className="bg-background h-9 pl-8 text-sm normal-case"
+          />
+        </div>
+        <div
+          ref={topScrollRef}
+          className="overflow-x-scroll"
+          aria-label="Scroll project table horizontally"
+          onScroll={(event) => syncHorizontalScroll(event, tableScrollRef)}
+        >
+          <div className="h-4 min-w-[1280px]" />
+        </div>
+      </div>
+      <div
+        ref={tableScrollRef}
+        className={cn("min-h-0 overflow-auto", tableViewportClassName)}
+        onScroll={(event) => syncHorizontalScroll(event, topScrollRef)}
+      >
+        <table className="w-full min-w-[1280px] text-left text-sm">
           <thead className="bg-muted/60 text-muted-foreground border-b text-xs font-medium tracking-wide uppercase">
-            <tr>
-              <th scope="col" colSpan={10} className="px-4 py-3">
-                <div className="relative max-w-md">
-                  <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-                  <Input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Fuzzy search projects"
-                    aria-label="Fuzzy search projects"
-                    className="bg-background h-9 pl-8 text-sm normal-case"
-                  />
-                </div>
-              </th>
-            </tr>
             <tr>
               <th scope="col" className="px-4 py-3">
                 CA #
@@ -399,9 +450,6 @@ function ProjectTable({
               </th>
               <th scope="col" className="px-4 py-3 text-center">
                 Canvas #
-              </th>
-              <th scope="col" className="px-4 py-3">
-                Status
               </th>
               <th scope="col" className="w-28 px-4 py-3 text-right">
                 Actions
@@ -436,9 +484,6 @@ function ProjectTable({
                   "bg-background h-8 min-w-20 text-xs normal-case",
                 )}
               </th>
-              <th scope="col" className="px-4 py-2">
-                {filterInput("status", "status")}
-              </th>
               <th scope="col" className="px-4 py-2" />
             </tr>
           </thead>
@@ -449,7 +494,6 @@ function ProjectTable({
                 const canvases = canvasResult?.data;
                 const expanded = expandedProjectId === project.id;
                 const count = canvases?.length ?? 0;
-                const status = projectStatus(canvases);
                 const sequence = latestCanvasSendSequence(
                   (canvases ?? []).flatMap((canvas) => sendsByCanvasId.get(canvas.id) ?? []),
                 );
@@ -519,11 +563,6 @@ function ProjectTable({
                         </Button>
                       </td>
                       <td className="px-4 py-3 align-top">
-                        <Badge variant={status === "approved" ? "default" : "secondary"}>
-                          {canvasResult?.isLoading ? "Loading" : canvasStatusLabel(status)}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 align-top">
                         <div className="flex justify-end gap-1">
                           {onOpenProject ? (
                             <Button
@@ -559,22 +598,6 @@ function ProjectTable({
                               </Button>
                             }
                           />
-                          <Button
-                            type="button"
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`Send ${sequence} start sampling purchase email`}
-                            title="Purchase: start sampling"
-                            disabled={
-                              sequence === "Not sent" ||
-                              suppliers.isLoading ||
-                              canvasResult?.isLoading ||
-                              sendsLoading
-                            }
-                            onClick={() => void sendPurchase(project, canvases)}
-                          >
-                            <ShoppingCart />
-                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -583,6 +606,7 @@ function ProjectTable({
                         project={project}
                         canvases={canvases}
                         loading={Boolean(canvasResult?.isLoading)}
+                        sendsByCanvasId={sendsByCanvasId}
                         onOpenCanvas={onOpenCanvas}
                       />
                     ) : null}
@@ -591,7 +615,7 @@ function ProjectTable({
               })
             ) : (
               <tr>
-                <td colSpan={10} className="text-muted-foreground px-4 py-10 text-center">
+                <td colSpan={9} className="text-muted-foreground px-4 py-10 text-center">
                   No matching projects.
                 </td>
               </tr>
@@ -608,16 +632,22 @@ export function ProjectList({
   onOpenProject,
   onOpenCanvas,
   onProjectCreated,
+  stickyTopClassName = "top-14",
+  className,
+  tableViewportClassName,
 }: {
   redirectOnCreate?: boolean;
   onOpenProject?: (projectId: string) => void;
   onOpenCanvas?: (projectId: string, canvasId: string) => void;
   onProjectCreated?: (projectId: string) => void;
+  stickyTopClassName?: string;
+  className?: string;
+  tableViewportClassName?: string;
 }) {
   const { data: projects, isLoading, isError, error } = useProjects();
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className={cn("flex min-h-0 flex-col gap-6", className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
@@ -649,6 +679,8 @@ export function ProjectList({
           projects={projects}
           onOpenProject={onOpenProject}
           onOpenCanvas={onOpenCanvas}
+          stickyTopClassName={stickyTopClassName}
+          tableViewportClassName={tableViewportClassName}
         />
       ) : (
         <div className="bg-card flex min-h-80 flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-8 text-center shadow-sm">

@@ -299,7 +299,10 @@ export function GenericNodeSettingsPanel() {
                         {definition.sortIndex + 1}
                       </td>
                       <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2" title={`${definition.images.length} images`}>
+                        <div
+                          className="flex items-center gap-2"
+                          title={`${definition.images.length} images`}
+                        >
                           <ImageThumbnailStack images={definition.images} />
                           <span className="text-muted-foreground text-xs tabular-nums">
                             {definition.images.length}

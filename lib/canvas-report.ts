@@ -590,7 +590,7 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
   </div></header>
   ${send}
   ${sections}
-  <section><h2>Canvas log</h2><ol class="steps">${report.steps.map((step) => `<li><strong>${escapeHtml(step.title)}</strong><br>${lineBreaks(step.detail)}</li>`).join("")}</ol></section>
+  ${report.steps.length > 0 ? `<section><h2>Canvas log</h2><ol class="steps">${report.steps.map((step) => `<li><strong>${escapeHtml(step.title)}</strong><br>${lineBreaks(step.detail)}</li>`).join("")}</ol></section>` : ""}
   </div></body></html>`;
 }
 
@@ -628,8 +628,12 @@ function makeText(report: Omit<CanvasReport, "html" | "text">): string {
     }
     lines.push("");
   }
-  lines.push("Canvas log");
-  report.steps.forEach((step, index) => lines.push(`${index + 1}. ${step.title}: ${step.detail}`));
+  if (report.steps.length > 0) {
+    lines.push("Canvas log");
+    report.steps.forEach((step, index) =>
+      lines.push(`${index + 1}. ${step.title}: ${step.detail}`),
+    );
+  }
   return lines.join("\n");
 }
 
@@ -777,15 +781,7 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
       };
     });
 
-  const outputBlocks = nodes
-    .filter((node) => node.type === "imageOutput")
-    .map(outputBlockForNode)
-    .concat(
-      nodes
-        .filter((node) => node.type === "generate")
-        .filter((node) => !findOutputForSource(node.id, nodesById, content.edges))
-        .map(outputBlockForNode),
-    );
+  const outputBlocks = nodes.filter((node) => node.type === "imageOutput").map(outputBlockForNode);
   const reportImage = selectedRenderImage(input.images) ?? finalOutputImage(outputBlocks);
 
   const supplierBreakdowns: CanvasReportBlock[] =
@@ -816,8 +812,11 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     },
   ];
 
+  const logNodes = nodes.filter(
+    (node) => node.type !== "generate" || findOutputForSource(node.id, nodesById, content.edges),
+  );
   const steps: CanvasReportStep[] = [
-    ...nodes.map((node, index) => ({
+    ...logNodes.map((node, index) => ({
       id: `node-${node.id}`,
       title: `${index + 1}. ${node.type} node`,
       detail:

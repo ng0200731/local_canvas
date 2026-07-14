@@ -1,14 +1,15 @@
 import { z } from "zod";
 
-export const workspaceOptionKinds = ["currency", "destination-country"] as const;
+export const workspaceOptionKinds = ["currency", "destination-country", "address-book"] as const;
 export type WorkspaceOptionKind = (typeof workspaceOptionKinds)[number];
 
 export const workspaceOptionSchema = z.object({
   id: z.string().trim().min(1),
   kind: z.enum(workspaceOptionKinds),
-  code: z.string().trim().min(1).max(12),
+  code: z.string().trim().min(1).max(254),
   name: z.string().trim().min(1).max(120),
   symbol: z.string().trim().max(12).nullable(),
+  isFavorite: z.boolean().optional().default(false),
   sortIndex: z.number().int().min(0),
 });
 
@@ -57,16 +58,14 @@ const genericNodeDefinitionRecordSchema = z
   })
   .transform(({ imageUrl, storagePath, ...value }) => ({
     ...value,
-    images:
-      value.images ??
-      [
-        {
-          id: `${value.id}:image:0`,
-          name: "Image 1",
-          url: imageUrl ?? "",
-          storagePath: storagePath ?? null,
-        },
-      ],
+    images: value.images ?? [
+      {
+        id: `${value.id}:image:0`,
+        name: "Image 1",
+        url: imageUrl ?? "",
+        storagePath: storagePath ?? null,
+      },
+    ],
   }));
 
 /** Reads both current multi-image records and legacy single-image records. */
@@ -548,6 +547,7 @@ function supportedCurrencyCodes(): string[] {
 }
 
 export function defaultWorkspaceOptions(kind: WorkspaceOptionKind): WorkspaceOption[] {
+  if (kind === "address-book") return [];
   const codes = kind === "currency" ? supportedCurrencyCodes() : [...COUNTRY_CODES];
   return codes.map((code, sortIndex) => ({
     id: `${kind}:${code}`,
@@ -555,6 +555,7 @@ export function defaultWorkspaceOptions(kind: WorkspaceOptionKind): WorkspaceOpt
     code,
     name: displayName(kind === "currency" ? "currency" : "region", code),
     symbol: kind === "currency" ? currencySymbol(code) : null,
+    isFavorite: false,
     sortIndex,
   }));
 }

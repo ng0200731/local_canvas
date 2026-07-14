@@ -53,7 +53,7 @@ export function ResizeHandle({
   return (
     <div
       onPointerDown={onPointerDown}
-      className="nodrag nopan absolute right-0 bottom-0 flex size-4 cursor-nwse-resize items-center justify-center text-muted-foreground/40 hover:text-muted-foreground"
+      className="nodrag nopan text-muted-foreground/40 hover:text-muted-foreground absolute right-0 bottom-0 flex size-4 cursor-nwse-resize items-center justify-center"
       style={{ touchAction: "none" }}
       aria-label="Resize node"
       role="separator"

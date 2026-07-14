@@ -1,5 +1,11 @@
 import type { CanvasContent } from "@/lib/nodes/types";
 import type { ProjectMetadata } from "@/lib/project-metadata";
+import type {
+  RotateSampleOrderTokenInput,
+  SampleOrder,
+  UpdateSampleOrderEmailInput,
+  UpsertSampleOrderInput,
+} from "@/lib/sample-orders";
 
 export interface Project extends ProjectMetadata {
   id: string;
@@ -131,6 +137,13 @@ export interface CanvasStore {
   listCanvasSends(canvasId: string): Promise<CanvasSendRecord[]>;
   createCanvasSend(input: CreateCanvasSendInput): Promise<CanvasSendRecord>;
   updateCanvasSend(id: string, input: UpdateCanvasSendInput): Promise<CanvasSendRecord>;
+
+  // Supplier sample-order tracking
+  listSampleOrders(): Promise<SampleOrder[]>;
+  upsertSampleOrder(input: UpsertSampleOrderInput): Promise<SampleOrder>;
+  updateSampleOrderEmail(id: string, input: UpdateSampleOrderEmailInput): Promise<SampleOrder>;
+  rotateSampleOrderToken(id: string, input: RotateSampleOrderTokenInput): Promise<SampleOrder>;
+  generateDemoSampleOrders(count: number): Promise<SampleOrder[]>;
 
   // ── Image metadata ────────────────────────────────────────────────────
   listImages(canvasId: string): Promise<ImageRecord[]>;

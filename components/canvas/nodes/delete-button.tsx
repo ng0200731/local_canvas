@@ -7,11 +7,28 @@ import { useCanvasActions } from "../canvas-context";
 
 /** A small × shown at the top-right of a node on hover. Deletes the node. */
 export function NodeDeleteButton({ id }: { id: string }) {
-  const { deleteNode } = useCanvasActions();
+  const { deleteNode, getNodeConnectionCount } = useCanvasActions();
+  const connectionCount = getNodeConnectionCount(id);
   return (
     <ConfirmDialog
       title="Delete node?"
-      description="This removes the node and any connected wires from the canvas."
+      description={
+        <span className="grid gap-2">
+          <span>This removes the node and any connected wires from the canvas.</span>
+          <span>
+            Connected nodes:{" "}
+            <span
+              className={
+                connectionCount > 0
+                  ? "text-destructive block text-7xl leading-none font-black"
+                  : "font-medium"
+              }
+            >
+              {connectionCount}
+            </span>
+          </span>
+        </span>
+      }
       confirmLabel="Delete node"
       onConfirm={() => deleteNode(id)}
       trigger={

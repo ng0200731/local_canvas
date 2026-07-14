@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type FocusEvent } from "react";
-import { Check, Search } from "lucide-react";
+import { Check, Heart, Search } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ export interface SearchableOption {
   label: string;
   description?: string;
   searchText?: string;
+  isFavorite?: boolean;
 }
 
 export function fuzzyOptionMatch(option: SearchableOption, query: string): boolean {
@@ -68,7 +69,9 @@ export function SearchableOptionPicker({
   const inputId = id ?? generatedId;
   const listId = `${inputId}-options`;
   const [open, setOpen] = useState(false);
-  const visibleOptions = options.filter((option) => fuzzyOptionMatch(option, query));
+  const visibleOptions = options
+    .filter((option) => fuzzyOptionMatch(option, query))
+    .sort((left, right) => Number(Boolean(right.isFavorite)) - Number(Boolean(left.isFavorite)));
 
   function closeWhenFocusLeaves(event: FocusEvent<HTMLDivElement>) {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
@@ -135,7 +138,12 @@ export function SearchableOptionPicker({
                   }}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{option.label}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {option.isFavorite ? (
+                        <Heart className="size-3 shrink-0 fill-current text-rose-500" />
+                      ) : null}
+                      <span className="block truncate font-medium">{option.label}</span>
+                    </span>
                     {option.description ? (
                       <span className="text-muted-foreground mt-0.5 block truncate text-xs">
                         {option.description}

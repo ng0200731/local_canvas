@@ -18,12 +18,12 @@ Supabase so canvases are written to Postgres.
 
 Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 
-| Variable                                                     | Effect                                                      |
-| ------------------------------------------------------------ | ----------------------------------------------------------- |
+| Variable                                                            | Effect                                                      |
+| ------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Enables auth + cloud Postgres persistence + Storage uploads |
-| `SUPABASE_SERVICE_ROLE_KEY`                                  | Server-only admin access (storage deletes, etc.)            |
-| `XIANGSU_API_KEY`                                            | Enables server-side image generation via Xiangsu AI         |
-| `NEXT_PUBLIC_APP_URL`                                        | Public app URL (defaults to `http://localhost:3000`)        |
+| `SUPABASE_SERVICE_ROLE_KEY`                                         | Server-only admin access (storage deletes, etc.)            |
+| `XIANGSU_API_KEY`                                                   | Enables server-side image generation via Xiangsu AI         |
+| `NEXT_PUBLIC_APP_URL`                                               | Public app URL (defaults to `http://localhost:3000`)        |
 
 ## Enabling Supabase
 

@@ -156,7 +156,8 @@ export type CanvasReportPayload = z.infer<typeof canvasReportPayloadSchema>;
 
 export const sendCanvasReportEmailRequestSchema = z
   .object({
-    to: emailRecipientSchema,
+    to: z.array(emailRecipientSchema).min(1).max(20),
+    cc: z.array(emailRecipientSchema).max(20).optional(),
     canvasName: z.string().trim().min(1).max(150),
     subject: z.string().trim().min(1).max(180),
     html: z.string().trim().min(1).max(250_000),
@@ -186,11 +187,36 @@ export const sendPurchaseSamplingEmailRequestSchema = z
     supplierName: z.string().trim().min(1).max(300),
     projectName: z.string().trim().min(1).max(300),
     canvasName: z.string().trim().min(1).max(300),
+    purchaseDate: z.string().trim().min(1).max(120),
+    reportUrl: z.url(),
+    updateUrl: z.url(),
+    qrCodeDataUrl: z.string().trim().min(1).max(200_000),
+    supplierDetails: z.array(z.string().trim().min(1).max(1_000)).max(40),
   })
   .strict();
 
 export type SendPurchaseSamplingEmailRequest = z.infer<
   typeof sendPurchaseSamplingEmailRequestSchema
+>;
+
+export const sendPhysicalSampleApprovalEmailRequestSchema = z
+  .object({
+    to: emailRecipientSchema,
+    sequence: z
+      .string()
+      .trim()
+      .regex(/^CA\d{6}$/),
+    projectName: z.string().trim().min(1).max(300),
+    canvasName: z.string().trim().min(1).max(300),
+    supplierName: z.string().trim().min(1).max(300),
+    trackingNumber: z.string().trim().min(1).max(300),
+    approvalUrl: z.url(),
+    rejectionUrl: z.url(),
+  })
+  .strict();
+
+export type SendPhysicalSampleApprovalEmailRequest = z.infer<
+  typeof sendPhysicalSampleApprovalEmailRequestSchema
 >;
 
 export const emailDeliveryResponseSchema = z

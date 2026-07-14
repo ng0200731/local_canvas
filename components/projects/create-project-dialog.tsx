@@ -80,12 +80,14 @@ export function CreateProjectDialog({
     label: `${currency.code} - ${currency.name}`,
     description: currency.symbol ?? undefined,
     searchText: `${currency.code} ${currency.name} ${currency.symbol ?? ""}`,
+    isFavorite: currency.isFavorite,
   }));
   const destinationOptions = (destinations.data ?? []).map((destination) => ({
     value: destination.id,
     label: destination.name,
     description: destination.code,
     searchText: `${destination.name} ${destination.code}`,
+    isFavorite: destination.isFavorite,
   }));
   const visibleCustomers = customerOptions.filter((customer) =>
     fuzzyMatch(

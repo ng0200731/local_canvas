@@ -14,6 +14,15 @@ import {
   xyPositionSchema,
 } from "@/lib/nodes/validation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  sampleApprovalStatusSchema,
+  sampleEmailStatusSchema,
+  sampleOrderSchema,
+  sampleOrderSnapshotSchema,
+  sampleStageSchema,
+  sampleUpdatePayloadSchema,
+  type SampleOrder,
+} from "@/lib/sample-orders";
 
 import type {
   Canvas,
@@ -147,6 +156,42 @@ const canvasSendRowSchema = z.object({
   report_snapshot: z.unknown(),
   created_at: z.string(),
   responded_at: z.string().nullable(),
+});
+
+const sampleOrderUpdateRowSchema = z.object({
+  id: z.string(),
+  order_id: z.string(),
+  stage: sampleStageSchema,
+  payload: sampleUpdatePayloadSchema,
+  source: z.enum(["supplier_web", "demo"]),
+  created_at: z.string(),
+});
+
+const sampleOrderRowSchema = z.object({
+  id: z.string(),
+  canvas_send_id: z.string().nullable(),
+  canvas_id: z.string().nullable(),
+  project_id: z.string().nullable(),
+  supplier_id: z.string().nullable(),
+  sequence: z.string(),
+  recipient_email: z.string(),
+  approver_email: z.string(),
+  snapshot: sampleOrderSnapshotSchema,
+  email_status: sampleEmailStatusSchema,
+  email_error: z.string().nullable(),
+  delivery_count: z.number(),
+  purchase_sent_at: z.string().nullable(),
+  current_stage: sampleStageSchema.nullable(),
+  current_payload: sampleUpdatePayloadSchema.nullable(),
+  latest_update_at: z.string().nullable(),
+  approval_status: sampleApprovalStatusSchema,
+  approval_email_status: sampleEmailStatusSchema.nullable(),
+  approval_error: z.string().nullable(),
+  approval_sent_at: z.string().nullable(),
+  approval_responded_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  sample_order_updates: z.array(sampleOrderUpdateRowSchema).optional().default([]),
 });
 
 const imageRowSchema = z.object({
@@ -288,10 +333,50 @@ const mapCanvasSend = (value: unknown): CanvasSendRecord => {
   };
 };
 
+const mapSampleOrder = (value: unknown): SampleOrder => {
+  const row = sampleOrderRowSchema.parse(value);
+  return sampleOrderSchema.parse({
+    id: row.id,
+    canvasSendId: row.canvas_send_id,
+    canvasId: row.canvas_id,
+    projectId: row.project_id,
+    supplierId: row.supplier_id,
+    sequence: row.sequence,
+    recipientEmail: row.recipient_email,
+    approverEmail: row.approver_email,
+    snapshot: row.snapshot,
+    emailStatus: row.email_status,
+    emailError: row.email_error,
+    deliveryCount: row.delivery_count,
+    purchaseSentAt: row.purchase_sent_at,
+    currentStage: row.current_stage,
+    currentPayload: row.current_payload,
+    latestUpdateAt: row.latest_update_at,
+    approvalStatus: row.approval_status,
+    approvalEmailStatus: row.approval_email_status,
+    approvalError: row.approval_error,
+    approvalSentAt: row.approval_sent_at,
+    approvalRespondedAt: row.approval_responded_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    updates: row.sample_order_updates.map((update) => ({
+      id: update.id,
+      orderId: update.order_id,
+      stage: update.stage,
+      payload: update.payload,
+      source: update.source,
+      createdAt: update.created_at,
+    })),
+  });
+};
+
 const CANVAS_COLUMNS = "id, project_id, name, content, status, created_at, updated_at";
 const LEGACY_CANVAS_COLUMNS = "id, project_id, name, content, created_at, updated_at";
 const CANVAS_SEND_COLUMNS =
   "id, canvas_id, sequence, status, recipient_email, report_url, approval_url, rejection_url, qr_code_data_url, selected_image_ids, report_snapshot, created_at, responded_at";
+const SAMPLE_ORDER_COLUMNS =
+  "id, canvas_send_id, canvas_id, project_id, supplier_id, sequence, recipient_email, approver_email, snapshot, email_status, email_error, delivery_count, purchase_sent_at, current_stage, current_payload, latest_update_at, approval_status, approval_email_status, approval_error, approval_sent_at, approval_responded_at, created_at, updated_at";
+const SAMPLE_ORDER_WITH_UPDATES = `${SAMPLE_ORDER_COLUMNS}, sample_order_updates(id, order_id, stage, payload, source, created_at)`;
 
 function isCanvasStatusSchemaMismatch(message: string): boolean {
   return message.includes("status");
@@ -308,6 +393,21 @@ function isCanvasSendsSchemaMissing(message: string): boolean {
 function canvasSendsMigrationError(context: string): Error {
   return new Error(
     `${context}: the canvas send approval table is missing. Apply Supabase migration 0010_canvas_send_approvals.sql, then restart or refresh the Supabase schema cache.`,
+  );
+}
+
+function isSampleOrdersSchemaMissing(message: string): boolean {
+  return (
+    message.includes("sample_orders") ||
+    message.includes("sample_order_updates") ||
+    message.includes("Could not find the table") ||
+    message.includes("schema cache")
+  );
+}
+
+function sampleOrdersMigrationError(context: string): Error {
+  return new Error(
+    `${context}: the Sample Status tables are missing. Apply Supabase migration 0015_sample_order_workflow.sql, then restart or refresh the Supabase schema cache.`,
   );
 }
 
@@ -757,6 +857,110 @@ export function createSupabaseCanvasStore(): CanvasStore {
     },
 
     // ── Image metadata ──────────────────────────────────────────────────
+    async listSampleOrders() {
+      const { data, error } = await supabase
+        .from("sample_orders")
+        .select(SAMPLE_ORDER_WITH_UPDATES)
+        .order("updated_at", { ascending: false })
+        .order("created_at", { referencedTable: "sample_order_updates", ascending: false });
+      if (error && isSampleOrdersSchemaMissing(error.message)) {
+        throw sampleOrdersMigrationError("listSampleOrders");
+      }
+      assertNoError({ error }, "listSampleOrders");
+      return z.array(sampleOrderRowSchema).parse(data).map(mapSampleOrder);
+    },
+
+    async upsertSampleOrder(input) {
+      const userId = await getCurrentUserId();
+      const existing = await supabase
+        .from("sample_orders")
+        .select("id, delivery_count")
+        .eq("canvas_send_id", input.canvasSendId)
+        .eq("supplier_id", input.supplierId)
+        .maybeSingle();
+      if (existing.error && isSampleOrdersSchemaMissing(existing.error.message)) {
+        throw sampleOrdersMigrationError("findSampleOrder");
+      }
+      assertNoError({ error: existing.error }, "findSampleOrder");
+      const patch = {
+        user_id: userId,
+        canvas_send_id: input.canvasSendId,
+        canvas_id: input.canvasId,
+        project_id: input.projectId,
+        supplier_id: input.supplierId,
+        sequence: input.sequence,
+        recipient_email: input.recipientEmail,
+        approver_email: input.approverEmail,
+        supplier_token_hash: input.supplierTokenHash,
+        snapshot: input.snapshot,
+        email_status: "pending",
+        email_error: null,
+      };
+      const query = existing.data
+        ? supabase
+            .from("sample_orders")
+            .update({ ...patch, delivery_count: Number(existing.data.delivery_count) + 1 })
+            .eq("id", String(existing.data.id))
+        : supabase.from("sample_orders").insert({ ...patch, delivery_count: 1 });
+      const { data, error } = await query.select(SAMPLE_ORDER_WITH_UPDATES).single();
+      if (error && isSampleOrdersSchemaMissing(error.message)) {
+        throw sampleOrdersMigrationError("upsertSampleOrder");
+      }
+      assertNoError({ error }, "upsertSampleOrder");
+      return mapSampleOrder(data);
+    },
+
+    async updateSampleOrderEmail(id, input) {
+      const patch: Record<string, unknown> = {
+        email_status: input.status,
+        email_error: input.error ?? null,
+      };
+      if (input.sentAt !== undefined) patch.purchase_sent_at = input.sentAt;
+      const { data, error } = await supabase
+        .from("sample_orders")
+        .update(patch)
+        .eq("id", id)
+        .select(SAMPLE_ORDER_WITH_UPDATES)
+        .single();
+      if (error && isSampleOrdersSchemaMissing(error.message)) {
+        throw sampleOrdersMigrationError("updateSampleOrderEmail");
+      }
+      assertNoError({ error }, "updateSampleOrderEmail");
+      return mapSampleOrder(data);
+    },
+
+    async rotateSampleOrderToken(id, input) {
+      const existing = await supabase
+        .from("sample_orders")
+        .select("delivery_count")
+        .eq("id", id)
+        .single();
+      if (existing.error && isSampleOrdersSchemaMissing(existing.error.message)) {
+        throw sampleOrdersMigrationError("findSampleOrder");
+      }
+      assertNoError({ error: existing.error }, "findSampleOrder");
+      const { data, error } = await supabase
+        .from("sample_orders")
+        .update({
+          supplier_token_hash: input.supplierTokenHash,
+          email_status: "pending",
+          email_error: null,
+          delivery_count: Number(existing.data.delivery_count) + 1,
+        })
+        .eq("id", id)
+        .select(SAMPLE_ORDER_WITH_UPDATES)
+        .single();
+      if (error && isSampleOrdersSchemaMissing(error.message)) {
+        throw sampleOrdersMigrationError("rotateSampleOrderToken");
+      }
+      assertNoError({ error }, "rotateSampleOrderToken");
+      return mapSampleOrder(data);
+    },
+
+    async generateDemoSampleOrders() {
+      throw new Error("Demo sample orders are available only in local mode.");
+    },
+
     async listImages(canvasId: string) {
       const query = await supabase
         .from("images")
