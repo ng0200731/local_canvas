@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Lock,
   Mouse,
   Move,
   PenLine,
@@ -26,6 +27,7 @@ import {
   RotateCcw,
   Save,
   Trash2,
+  Unlock,
   X,
 } from "lucide-react";
 
@@ -109,6 +111,12 @@ interface SampledColor {
   rgb: readonly [number, number, number];
   alpha: number;
   point: Point;
+  thumbnailUrl: string | null;
+}
+
+interface SelectionMapPreview {
+  url: string;
+  selectedPercent: number;
 }
 
 interface ImageSize {
@@ -116,7 +124,7 @@ interface ImageSize {
   height: number;
 }
 
-type MaskTool = "pen" | "color";
+type MaskTool = "pen" | "color" | "pan";
 
 function uid(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
@@ -127,12 +135,57 @@ function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
 }
 
+function isMaskControlTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("[data-mask-controls='true']"));
+}
+
 function componentToHex(value: number): string {
   return Math.min(255, Math.max(0, value)).toString(16).padStart(2, "0").toUpperCase();
 }
 
 function rgbaToHex(red: number, green: number, blue: number): string {
   return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
+}
+
+function colorThumbnailUrl(source: PixelSource, x: number, y: number): string | null {
+  const sampleSize = 15;
+  const outputSize = 60;
+  const half = Math.floor(sampleSize / 2);
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = sampleSize;
+  sampleCanvas.height = sampleSize;
+  const sampleContext = sampleCanvas.getContext("2d");
+  if (!sampleContext) return null;
+  const imageData = sampleContext.createImageData(sampleSize, sampleSize);
+
+  for (let row = 0; row < sampleSize; row += 1) {
+    for (let column = 0; column < sampleSize; column += 1) {
+      const sourceX = Math.min(source.width - 1, Math.max(0, x + column - half));
+      const sourceY = Math.min(source.height - 1, Math.max(0, y + row - half));
+      const sourceOffset = (sourceY * source.width + sourceX) * 4;
+      const targetOffset = (row * sampleSize + column) * 4;
+      imageData.data[targetOffset] = source.pixels[sourceOffset] ?? 0;
+      imageData.data[targetOffset + 1] = source.pixels[sourceOffset + 1] ?? 0;
+      imageData.data[targetOffset + 2] = source.pixels[sourceOffset + 2] ?? 0;
+      imageData.data[targetOffset + 3] = source.pixels[sourceOffset + 3] ?? 0;
+    }
+  }
+
+  sampleContext.putImageData(imageData, 0, 0);
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = outputSize;
+  outputCanvas.height = outputSize;
+  const outputContext = outputCanvas.getContext("2d");
+  if (!outputContext) return null;
+  outputContext.imageSmoothingEnabled = false;
+  outputContext.drawImage(sampleCanvas, 0, 0, outputSize, outputSize);
+  outputContext.strokeStyle = "rgb(255 255 255)";
+  outputContext.lineWidth = 2;
+  outputContext.strokeRect(outputSize / 2 - 4, outputSize / 2 - 4, 8, 8);
+  outputContext.strokeStyle = "rgb(0 0 0)";
+  outputContext.lineWidth = 1;
+  outputContext.strokeRect(outputSize / 2 - 5, outputSize / 2 - 5, 10, 10);
+  return outputCanvas.toDataURL("image/png");
 }
 
 function samplePixelColor(source: PixelSource, point: Point): SampledColor | null {
@@ -144,7 +197,13 @@ function samplePixelColor(source: PixelSource, point: Point): SampledColor | nul
   const green = source.pixels[offset + 1] ?? 0;
   const blue = source.pixels[offset + 2] ?? 0;
   const alpha = source.pixels[offset + 3] ?? 0;
-  return { hex: rgbaToHex(red, green, blue), rgb: [red, green, blue], alpha, point };
+  return {
+    hex: rgbaToHex(red, green, blue),
+    rgb: [red, green, blue],
+    alpha,
+    point,
+    thumbnailUrl: colorThumbnailUrl(source, x, y),
+  };
 }
 
 function drawStroke(
@@ -202,6 +261,81 @@ function applySelectionPixels(
     overlay.data[offset + 2] = color[2];
     overlay.data[offset + 3] = Math.max(overlay.data[offset + 3], color[3]);
   }
+}
+
+function selectionMapPreviewUrl(
+  source: PixelSource,
+  selected: Uint8ClampedArray,
+): SelectionMapPreview | null {
+  if (source.width <= 0 || source.height <= 0 || selected.length === 0) return null;
+  const previewWidth = 132;
+  const previewHeight = Math.max(44, Math.round((previewWidth * source.height) / source.width));
+  const canvas = document.createElement("canvas");
+  canvas.width = previewWidth;
+  canvas.height = Math.min(92, previewHeight);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const imageData = context.createImageData(canvas.width, canvas.height);
+  let selectedCount = 0;
+  let minX = source.width;
+  let minY = source.height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let index = 0; index < selected.length; index += 1) {
+    if (!selected[index]) continue;
+    selectedCount += 1;
+    const x = index % source.width;
+    const y = Math.floor(index / source.width);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      const sourceX = Math.min(source.width - 1, Math.floor((x / canvas.width) * source.width));
+      const sourceY = Math.min(source.height - 1, Math.floor((y / canvas.height) * source.height));
+      const sourceIndex = sourceY * source.width + sourceX;
+      const sourceOffset = sourceIndex * 4;
+      const targetOffset = (y * canvas.width + x) * 4;
+      const red = source.pixels[sourceOffset] ?? 0;
+      const green = source.pixels[sourceOffset + 1] ?? 0;
+      const blue = source.pixels[sourceOffset + 2] ?? 0;
+      const luminance = Math.round((red + green + blue) / 3);
+      if (selected[sourceIndex]) {
+        imageData.data[targetOffset] = 34;
+        imageData.data[targetOffset + 1] = 211;
+        imageData.data[targetOffset + 2] = 238;
+        imageData.data[targetOffset + 3] = 245;
+      } else {
+        imageData.data[targetOffset] = Math.round(luminance * 0.45);
+        imageData.data[targetOffset + 1] = Math.round(luminance * 0.45);
+        imageData.data[targetOffset + 2] = Math.round(luminance * 0.45);
+        imageData.data[targetOffset + 3] = 210;
+      }
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+  if (selectedCount > 0) {
+    const rectX = (minX / source.width) * canvas.width;
+    const rectY = (minY / source.height) * canvas.height;
+    const rectWidth = ((maxX - minX + 1) / source.width) * canvas.width;
+    const rectHeight = ((maxY - minY + 1) / source.height) * canvas.height;
+    context.strokeStyle = "rgb(255 255 255)";
+    context.lineWidth = 2;
+    context.strokeRect(rectX, rectY, rectWidth, rectHeight);
+    context.strokeStyle = "rgb(8 47 73)";
+    context.lineWidth = 1;
+    context.strokeRect(rectX + 1, rectY + 1, Math.max(0, rectWidth - 2), Math.max(0, rectHeight - 2));
+  }
+
+  return {
+    url: canvas.toDataURL("image/png"),
+    selectedPercent: selectedCount / Math.max(1, source.width * source.height),
+  };
 }
 
 function rasterizeStrokePixels(
@@ -270,6 +404,95 @@ function selectedColorPixelsForMask(
   return excluded.length ? excludeSelectedPixels(selected, excluded) : selected;
 }
 
+function SampledColorPreview({
+  sampledColor,
+  locked,
+  emptyText,
+  onUnlock,
+}: {
+  sampledColor: SampledColor | null;
+  locked: boolean;
+  emptyText: string;
+  onUnlock: () => void;
+}) {
+  if (!sampledColor) return <p className="text-xs text-white/65">{emptyText}</p>;
+
+  return (
+    <div className="grid grid-cols-[60px_1fr] items-center gap-2 rounded-md bg-white/10 p-2">
+      {sampledColor.thumbnailUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={sampledColor.thumbnailUrl}
+          alt={`Sampled color thumbnail ${sampledColor.hex}`}
+          className="size-[60px] rounded border border-white/35 object-cover"
+          draggable={false}
+        />
+      ) : (
+        <span
+          className="size-[60px] rounded border border-white/35"
+          style={{ backgroundColor: sampledColor.hex }}
+          aria-label={`Sampled color ${sampledColor.hex}`}
+        />
+      )}
+      <span className="grid min-w-0 gap-1 text-xs">
+        <span className="flex items-center gap-2">
+          <span
+            className="size-5 shrink-0 rounded border border-white/35"
+            style={{ backgroundColor: sampledColor.hex }}
+            aria-hidden="true"
+          />
+          <span className="truncate font-mono font-semibold text-white">{sampledColor.hex}</span>
+          <span className="ml-auto inline-flex items-center gap-1 text-[0.65rem] text-white/65">
+            {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+            {locked ? "Locked" : "Live"}
+          </span>
+        </span>
+        <span className="text-white/70">
+          RGB {sampledColor.rgb.join(", ")} / Alpha {sampledColor.alpha}
+        </span>
+        {locked ? (
+          <button
+            type="button"
+            className="mt-1 justify-self-start rounded-sm px-1.5 py-0.5 text-[0.65rem] font-medium text-cyan-100 ring-1 ring-cyan-200/35 hover:bg-cyan-300/15"
+            onClick={onUnlock}
+          >
+            Unlock
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+function SelectionMapPreviewCard({ preview }: { preview: SelectionMapPreview | null }) {
+  if (!preview) {
+    return (
+      <div className="grid gap-1 rounded-md border border-dashed border-white/20 bg-white/5 p-2">
+        <span className="text-xs font-medium text-white/80">Selection map</span>
+        <span className="text-xs text-white/55">Click the image to see the selected pattern.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-1 rounded-md bg-white/10 p-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-white/80">Selection map</span>
+        <span className="font-mono text-[0.65rem] text-cyan-100">
+          {(preview.selectedPercent * 100).toFixed(1)}%
+        </span>
+      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={preview.url}
+        alt="Selected region map"
+        className="w-full rounded border border-cyan-200/35 object-contain"
+        draggable={false}
+      />
+    </div>
+  );
+}
+
 export function ImagePreviewDialog({
   src,
   alt,
@@ -308,6 +531,7 @@ export function ImagePreviewDialog({
   const [selectedMaskId, setSelectedMaskId] = useState<string | null>(null);
   const [hiddenMaskIds, setHiddenMaskIds] = useState<string[]>([]);
   const [sampledColor, setSampledColor] = useState<SampledColor | null>(null);
+  const [sampledColorLocked, setSampledColorLocked] = useState(false);
   const dragRef = useRef<DragState | null>(null);
   const drawRef = useRef<DrawState | null>(null);
   const imageFrameRef = useRef<HTMLDivElement>(null);
@@ -369,6 +593,20 @@ export function ImagePreviewDialog({
         .filter((mask): mask is ImageMaskRegion => Boolean(mask)),
     [visibleDraftExcludedMaskIds, visibleMaskLookup],
   );
+  const draftSelectionMapPreview = useMemo(() => {
+    if (!pixelSource || draftColorSelections.length === 0) return null;
+    const selected = new Uint8ClampedArray(pixelSource.width * pixelSource.height);
+    const draftExcludedSelections = draftExcludedMasks.map((mask) =>
+      selectedPixelsForMask(pixelSource, mask, visibleMaskLookup),
+    );
+    for (const selection of draftColorSelections) {
+      mergeSelectionPixels(
+        selected,
+        excludeSelectedPixels(colorSelectionPixels(pixelSource, selection), draftExcludedSelections),
+      );
+    }
+    return selectionMapPreviewUrl(pixelSource, selected);
+  }, [draftColorSelections, draftExcludedMasks, pixelSource, visibleMaskLookup]);
 
   useEffect(() => {
     if (!open || !showingMaskImage || !onMasksChange) return;
@@ -543,10 +781,12 @@ export function ImagePreviewDialog({
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (isMaskControlTarget(event.target)) return;
       if (event.target instanceof Element && event.target.closest("button")) return;
       const target = event.target instanceof Element ? event.target : null;
       const onMaskFrame = Boolean(target?.closest("[data-mask-frame='true']"));
-      const canPanInMaskMode = maskMode && (!onMaskFrame || event.altKey || event.button === 1);
+      const canPanInMaskMode =
+        maskMode && (!onMaskFrame || maskTool === "pan" || event.altKey || event.button === 1);
       if (zoom <= MIN_ZOOM || (maskMode && !canPanInMaskMode)) return;
       event.preventDefault();
       event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -557,7 +797,7 @@ export function ImagePreviewDialog({
       };
       setIsPanning(true);
     },
-    [maskMode, pan, zoom],
+    [maskMode, maskTool, pan, zoom],
   );
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -592,6 +832,7 @@ export function ImagePreviewDialog({
     setDraftColorSelections([]);
     setDraftExcludedMaskIds([]);
     setSampledColor(null);
+    setSampledColorLocked(false);
     setPixelError(null);
     drawRef.current = null;
   }, []);
@@ -618,14 +859,55 @@ export function ImagePreviewDialog({
     };
   }, []);
 
+  const setSampledPoint = useCallback(
+    (point: Point, locked: boolean) => {
+      if (!pixelSource) return;
+      const sampled = samplePixelColor(pixelSource, point);
+      if (!sampled) return;
+      setSampledColor(sampled);
+      setSampledColorLocked(locked);
+    },
+    [pixelSource],
+  );
+
+  const unlockSampledColor = useCallback(() => {
+    setSampledColorLocked(false);
+  }, []);
+
+  const nudgeSampledColor = useCallback(
+    (deltaX: number, deltaY: number) => {
+      if (!pixelSource || !sampledColor) return;
+      const currentX = Math.min(
+        pixelSource.width - 1,
+        Math.max(0, Math.floor(sampledColor.point.x * pixelSource.width)),
+      );
+      const currentY = Math.min(
+        pixelSource.height - 1,
+        Math.max(0, Math.floor(sampledColor.point.y * pixelSource.height)),
+      );
+      const nextX = Math.min(pixelSource.width - 1, Math.max(0, currentX + deltaX));
+      const nextY = Math.min(pixelSource.height - 1, Math.max(0, currentY + deltaY));
+      setSampledPoint(
+        {
+          x: (nextX + 0.5) / pixelSource.width,
+          y: (nextY + 0.5) / pixelSource.height,
+        },
+        true,
+      );
+    },
+    [pixelSource, sampledColor, setSampledPoint],
+  );
+
   const handleDrawPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (!maskMode) return;
+      if (isMaskControlTarget(event.target)) return;
       if (event.altKey || event.button === 1) return;
+      if (maskTool === "pan") return;
       const point = pointFromPointer(event);
       if (!point) return;
       event.preventDefault();
-      if (pixelSource) setSampledColor(samplePixelColor(pixelSource, point));
+      setSampledPoint(point, true);
 
       if (maskTool === "color") {
         if (!pixelSource) {
@@ -660,16 +942,20 @@ export function ImagePreviewDialog({
       maskTool,
       pixelSource,
       pointFromPointer,
+      setSampledPoint,
       strokeThickness,
     ],
   );
 
   const handleDrawPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      const draw = drawRef.current;
-      if (!maskMode || maskTool !== "pen" || !draw || draw.pointerId !== event.pointerId) return;
+      if (!maskMode || isMaskControlTarget(event.target)) return;
       const point = pointFromPointer(event);
       if (!point) return;
+      if (!sampledColorLocked && maskTool !== "pan") setSampledPoint(point, false);
+
+      const draw = drawRef.current;
+      if (maskTool !== "pen" || !draw || draw.pointerId !== event.pointerId) return;
       const previous = draw.stroke.points[draw.stroke.points.length - 1];
       if (previous && Math.hypot(point.x - previous.x, point.y - previous.y) < 0.0015) return;
       draw.stroke = { ...draw.stroke, points: [...draw.stroke.points, point] };
@@ -677,7 +963,7 @@ export function ImagePreviewDialog({
         current.map((stroke) => (stroke.id === draw.stroke.id ? draw.stroke : stroke)),
       );
     },
-    [maskMode, maskTool, pointFromPointer],
+    [maskMode, maskTool, pointFromPointer, sampledColorLocked, setSampledPoint],
   );
 
   const stopDrawing = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -746,6 +1032,20 @@ export function ImagePreviewDialog({
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (sampledColorLocked && sampledColor && !isMaskControlTarget(event.target)) {
+        const nudges: Record<string, Point> = {
+          ArrowLeft: { x: -1, y: 0 },
+          ArrowRight: { x: 1, y: 0 },
+          ArrowUp: { x: 0, y: -1 },
+          ArrowDown: { x: 0, y: 1 },
+        };
+        const nudge = nudges[event.key];
+        if (nudge) {
+          event.preventDefault();
+          nudgeSampledColor(nudge.x, nudge.y);
+          return;
+        }
+      }
       if (event.key === "ArrowLeft" && hasPrevious && !maskMode) {
         event.preventDefault();
         showImage(safeIndex - 1);
@@ -755,7 +1055,16 @@ export function ImagePreviewDialog({
         showImage(safeIndex + 1);
       }
     },
-    [hasNext, hasPrevious, maskMode, safeIndex, showImage],
+    [
+      hasNext,
+      hasPrevious,
+      maskMode,
+      nudgeSampledColor,
+      safeIndex,
+      sampledColor,
+      sampledColorLocked,
+      showImage,
+    ],
   );
 
   return (
@@ -788,9 +1097,13 @@ export function ImagePreviewDialog({
             isPanning
               ? "cursor-grabbing"
               : maskMode
-              ? maskTool === "pen"
-                ? "cursor-crosshair"
-                : "cursor-cell"
+                ? maskTool === "pan"
+                  ? zoom > MIN_ZOOM
+                    ? "cursor-grab"
+                    : "cursor-default"
+                  : maskTool === "pen"
+                    ? "cursor-crosshair"
+                    : "cursor-cell"
               : zoom > MIN_ZOOM
                 ? "cursor-grab"
                 : "cursor-default",
@@ -844,7 +1157,14 @@ export function ImagePreviewDialog({
             />
           </div>
           {canEditMasks ? (
-            <div className="absolute top-0 left-0 z-30 flex max-h-[calc(100%-1rem)] w-72 max-w-[calc(100%-4rem)] flex-col gap-2 overflow-y-auto rounded-md bg-black/80 p-2.5 text-white shadow-xl ring-1 ring-white/20 backdrop-blur">
+            <div
+              data-mask-controls="true"
+              className="absolute top-0 left-0 z-30 flex max-h-[calc(100%-1rem)] w-72 max-w-[calc(100%-4rem)] flex-col gap-2 overflow-y-auto rounded-md bg-black/80 p-2.5 text-white shadow-xl ring-1 ring-white/20 backdrop-blur"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerMove={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onPointerCancel={(event) => event.stopPropagation()}
+            >
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
@@ -873,7 +1193,16 @@ export function ImagePreviewDialog({
               </div>
               {maskMode ? (
                 <div className="grid gap-2.5 border-t border-white/15 pt-2.5">
-                  <div className="grid grid-cols-2 gap-1 rounded-md bg-white/10 p-1">
+                  <div className="grid grid-cols-3 gap-1 rounded-md bg-white/10 p-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={maskTool === "pan" ? "secondary" : "ghost"}
+                      className={cn(maskTool !== "pan" && "text-white hover:text-white")}
+                      onClick={() => setMaskTool("pan")}
+                    >
+                      <Move /> Pan
+                    </Button>
                     <Button
                       type="button"
                       size="sm"
@@ -941,12 +1270,22 @@ export function ImagePreviewDialog({
                         </svg>
                       </div>
                       {sampledColor ? (
-                        <div className="grid grid-cols-[32px_1fr] items-center gap-2 rounded-md bg-white/10 p-2">
-                          <span
-                            className="size-8 rounded border border-white/35"
-                            style={{ backgroundColor: sampledColor.hex }}
-                            aria-label={`Sampled color ${sampledColor.hex}`}
-                          />
+                        <div className="grid grid-cols-[60px_1fr] items-center gap-2 rounded-md bg-white/10 p-2">
+                          {sampledColor.thumbnailUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={sampledColor.thumbnailUrl}
+                              alt={`Sampled color thumbnail ${sampledColor.hex}`}
+                              className="size-[60px] rounded border border-white/35 object-cover"
+                              draggable={false}
+                            />
+                          ) : (
+                            <span
+                              className="size-[60px] rounded border border-white/35"
+                              style={{ backgroundColor: sampledColor.hex }}
+                              aria-label={`Sampled color ${sampledColor.hex}`}
+                            />
+                          )}
                           <span className="grid min-w-0 gap-0.5 text-xs">
                             <span className="font-mono font-semibold text-white">
                               {sampledColor.hex}
@@ -961,7 +1300,16 @@ export function ImagePreviewDialog({
                           Click the image to sample the color under the pen.
                         </p>
                       )}
+                      {sampledColorLocked ? (
+                        <Button type="button" size="sm" variant="ghost" onClick={unlockSampledColor}>
+                          <Unlock /> Unlock color monitor
+                        </Button>
+                      ) : null}
                     </div>
+                  ) : maskTool === "pan" ? (
+                    <p className="rounded-md bg-white/10 p-2 text-xs text-white/70">
+                      Drag the zoomed image to pan.
+                    </p>
                   ) : (
                     <div className="grid gap-2">
                       <div className="grid grid-cols-2 gap-1 rounded-md bg-white/10 p-1">
@@ -1009,6 +1357,13 @@ export function ImagePreviewDialog({
                       <p className="text-xs text-white/65">
                         Click a color in the image to preview the selection.
                       </p>
+                      <SampledColorPreview
+                        sampledColor={sampledColor}
+                        locked={sampledColorLocked}
+                        emptyText="No color sampled yet."
+                        onUnlock={unlockSampledColor}
+                      />
+                      <SelectionMapPreviewCard preview={draftSelectionMapPreview} />
                       {pixelError ? <p className="text-xs text-red-300">{pixelError}</p> : null}
                     </div>
                   )}
