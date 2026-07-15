@@ -253,12 +253,14 @@ function AliasMentionInput({
   disabled,
   ariaLabel,
   aliases,
+  className,
   onChange,
 }: {
   value: string;
   disabled: boolean;
   ariaLabel: string;
   aliases: readonly { nodeId: string; alias: string; label: string }[];
+  className?: string;
   onChange: (value: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -318,7 +320,7 @@ function AliasMentionInput({
         disabled={disabled}
         placeholder="@pantone red"
         aria-label={ariaLabel}
-        className="nodrag nopan h-8 px-2 text-xs"
+        className={cn("nodrag nopan h-8 px-2 text-xs", className)}
         onChange={(event) => {
           onChange(event.target.value);
           updateMention(event.target.value, event.target.selectionStart);
@@ -496,6 +498,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const highlight = useConnectionHighlight(id);
   const accent = useGroupAccent(parentId);
   const { hoveredReferenceNodeId, setHoveredReferenceNodeId } = useReferenceHover();
+  const [invalidPromptRows, setInvalidPromptRows] = useState<ReadonlySet<string>>(new Set());
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
   useEffect(() => {
@@ -683,8 +686,54 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     updateNodeData(id, { promptRows: rows });
   }
 
+  function autoMatchedPromptRow(): GeneratePromptRow {
+    const source = promptReferences[0];
+    const mask = source?.masks[0];
+    return {
+      ...emptyPromptRow(),
+      sourceNodeId: source?.nodeId ?? "",
+      maskId: mask?.id ?? "",
+    };
+  }
+
+  function appendPromptRowText(row: GeneratePromptRow) {
+    if (!row.sourceNodeId || !row.maskId) return;
+    const line = generatePromptRowText(row, promptReferences).trim();
+    if (!line) return;
+    const nextPrompt = [data.prompt.trim(), `- ${line}`].filter(Boolean).join("\n");
+    updateNodeData(id, { prompt: nextPrompt });
+  }
+
   function patchPromptRow(rowId: string, patch: Partial<GeneratePromptRow>) {
+    setInvalidPromptRows((current) => {
+      if (!current.has(rowId)) return current;
+      const next = new Set(current);
+      next.delete(rowId);
+      return next;
+    });
     updatePromptRows(promptRows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  }
+
+  function promptRowMissingFields(row: GeneratePromptRow): string[] {
+    const missing: string[] = [];
+    if (!row.sourceNodeId) missing.push("source");
+    if (!row.maskId) missing.push("mask");
+    if (!row.changeType) missing.push("change");
+    if (!row.targetText.trim()) missing.push("target");
+    return missing;
+  }
+
+  function addPromptRow() {
+    const incompleteRows = promptRows.filter((row) => promptRowMissingFields(row).length > 0);
+    if (incompleteRows.length > 0) {
+      setInvalidPromptRows(new Set(incompleteRows.map((row) => row.id)));
+      return;
+    }
+
+    const lastRow = promptRows[promptRows.length - 1];
+    if (lastRow) appendPromptRowText(lastRow);
+    updatePromptRows([...promptRows, autoMatchedPromptRow()]);
+    setInvalidPromptRows(new Set());
   }
 
   function deletePromptRow(rowId: string) {
@@ -694,7 +743,11 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
 
   async function onGenerate() {
     const rowPrompt = compileGeneratePromptRows(promptRows, promptReferences).trim();
-    const prompt = [data.prompt.trim(), rowPrompt].filter(Boolean).join("\n");
+    const existingPrompt = data.prompt.trim();
+    const missingRows = rowPrompt
+      .split("\n")
+      .filter((line) => line.trim() && !existingPrompt.split("\n").some((existing) => existing.trim() === line.trim()));
+    const prompt = [existingPrompt, ...missingRows].filter(Boolean).join("\n");
     if (!prompt) {
       toast.error("Enter prompt text or complete at least one prompt row first");
       return;
@@ -1121,16 +1174,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           </div>
         </div>
 
-        <div className="grid gap-1">
-          <span className="text-muted-foreground text-xs">Prompt</span>
-          <AliasMentionTextarea
-            value={data.prompt}
-            disabled={isGenerating}
-            aliases={aliasOptions}
-            onChange={(prompt) => updateNodeData(id, { prompt })}
-          />
-        </div>
-
         <div className="bg-background/60 grid gap-2 rounded-md border p-2">
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground text-xs">Prompt program</span>
@@ -1140,7 +1183,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
               variant="outline"
               disabled={isGenerating}
               className="nodrag nopan"
-              onClick={() => updatePromptRows([...promptRows, emptyPromptRow()])}
+              onClick={addPromptRow}
             >
               <Plus />
               Add row
@@ -1156,6 +1199,8 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
               const preview = generatePromptRowText(row, promptReferences);
               const rowState = generatePromptRowState(row, promptReferences);
               const complete = rowState === "complete";
+              const rowInvalid = invalidPromptRows.has(row.id);
+              const missingFields = promptRowMissingFields(row);
 
               return (
                 <div
@@ -1177,7 +1222,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       }
                     >
                       <SelectTrigger
-                        className="nodrag nopan h-8 px-2 text-xs"
+                        className={cn(
+                          "nodrag nopan h-8 px-2 text-xs",
+                          rowInvalid && missingFields.includes("source") && "border-destructive ring-1 ring-destructive/40",
+                        )}
                         aria-label={`Prompt row ${index + 1} source alias`}
                       >
                         <span
@@ -1210,7 +1258,10 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       }}
                     >
                       <SelectTrigger
-                        className="nodrag nopan h-8 px-2 text-xs"
+                        className={cn(
+                          "nodrag nopan h-8 px-2 text-xs",
+                          rowInvalid && missingFields.includes("mask") && "border-destructive ring-1 ring-destructive/40",
+                        )}
                         aria-label={`Prompt row ${index + 1} mask`}
                       >
                         <span
@@ -1246,7 +1297,12 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                         })
                       }
                     >
-                      <SelectTrigger className="nodrag nopan h-8 px-2 text-xs">
+                      <SelectTrigger
+                        className={cn(
+                          "nodrag nopan h-8 px-2 text-xs",
+                          rowInvalid && missingFields.includes("change") && "border-destructive ring-1 ring-destructive/40",
+                        )}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent align="start" className="nodrag nopan">
@@ -1262,6 +1318,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       disabled={isGenerating}
                       aliases={aliasOptions}
                       ariaLabel={`Prompt row ${index + 1} target`}
+                      className={cn(
+                        rowInvalid && missingFields.includes("target") && "border-destructive ring-1 ring-destructive/40",
+                      )}
                       onChange={(targetText) => patchPromptRow(row.id, { targetText })}
                     />
                     <Button
@@ -1290,10 +1349,28 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       Complete the source, mask, and target to include this row.
                     </p>
                   ) : null}
+                  {rowInvalid ? (
+                    <p className="text-destructive text-[0.65rem]">
+                      Complete the highlighted field{missingFields.length === 1 ? "" : "s"} before adding another row.
+                    </p>
+                  ) : null}
                 </div>
               );
             })}
           </div>
+        </div>
+
+        <div className="grid gap-1">
+          <span className="text-muted-foreground text-xs">Prompt</span>
+          <AliasMentionTextarea
+            value={data.prompt}
+            disabled={isGenerating}
+            aliases={aliasOptions}
+            onChange={(prompt) => updateNodeData(id, { prompt })}
+          />
+          <span className="text-muted-foreground text-[0.65rem]">
+            Add context or refine the generated prompt here.
+          </span>
         </div>
 
         <ConfirmDialog
