@@ -3,6 +3,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -641,25 +642,59 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     [setHoveredReferenceNodeId],
   );
 
+  // Stable fallback row id so empty generate nodes don't churn keys / autosave on every render.
+  const fallbackPromptRowIdRef = useRef<string | null>(null);
+  if (fallbackPromptRowIdRef.current === null) {
+    fallbackPromptRowIdRef.current = uid();
+  }
+
   const hasOutput = hasConnectedOutputNode(id);
   const connectedOutput = getConnectedOutputState(id);
   const connectedOutputHasImage = Boolean(connectedOutput?.resultUrl);
-  const connectedReferences = getConnectedInputReferences(id);
-  const connectedImageReferences: ConnectedImageReference[] =
-    connectedReferences.filter(hasImageUrl);
-  const promptReferences: GeneratePromptSourceReference[] = connectedImageReferences.map(
-    (reference) => ({
-      nodeId: reference.nodeId,
-      alias: reference.alias,
-      masks: reference.masks.map((mask) => ({ id: mask.id, name: mask.name })),
-    }),
+  // Memoize on the stable action identity (edges + graphEpoch) so we don't allocate
+  // new reference arrays every parent render / drag frame.
+  const connectedReferences = useMemo(
+    () => getConnectedInputReferences(id),
+    [getConnectedInputReferences, id],
   );
-  const promptRows =
-    Array.isArray(data.promptRows) && data.promptRows.length
-      ? data.promptRows.map((row) => normalizeGeneratePromptRow(row, promptReferences, uid()))
-      : [emptyPromptRow()];
-  const connectedReferenceUrls = new Set(
-    connectedImageReferences.map((reference) => reference.imageUrl),
+  const connectedImageReferences = useMemo(
+    () => connectedReferences.filter(hasImageUrl),
+    [connectedReferences],
+  );
+  const promptReferences: GeneratePromptSourceReference[] = useMemo(
+    () =>
+      connectedImageReferences.map((reference) => ({
+        nodeId: reference.nodeId,
+        alias: reference.alias,
+        masks: reference.masks.map((mask) => ({ id: mask.id, name: mask.name })),
+      })),
+    [connectedImageReferences],
+  );
+  const promptRows = useMemo(() => {
+    if (Array.isArray(data.promptRows) && data.promptRows.length) {
+      return data.promptRows.map((row) => {
+        const existingId = typeof row?.id === "string" && row.id ? row.id : null;
+        return normalizeGeneratePromptRow(
+          row,
+          promptReferences,
+          existingId ?? fallbackPromptRowIdRef.current!,
+        );
+      });
+    }
+    return [emptyGeneratePromptRow(fallbackPromptRowIdRef.current!)];
+  }, [data.promptRows, promptReferences]);
+
+  // Persist a stable empty row once so subsequent renders reuse the same id.
+  useEffect(() => {
+    if (Array.isArray(data.promptRows) && data.promptRows.length > 0) return;
+    updateNodeData(id, {
+      promptRows: [emptyGeneratePromptRow(fallbackPromptRowIdRef.current!)],
+    });
+  }, [data.promptRows, id, updateNodeData]);
+
+  const connectedReferenceUrls = useMemo(
+    () => new Set(connectedImageReferences.map((reference) => reference.imageUrl)),
+    [connectedImageReferences],
   );
   const manualImageReferences = data.references.filter((url) => !connectedReferenceUrls.has(url));
   const allGenerationReferences = connectedReferences

@@ -431,7 +431,29 @@ export const localCanvasStore: CanvasStore = {
     const canvases = read<Canvas[]>(KEYS.canvases, []);
     const idx = canvases.findIndex((c) => c.id === id);
     if (idx === -1) throw new Error("Canvas not found");
-    canvases[idx] = { ...normalizeCanvas(canvases[idx]), content, updatedAt: nowISO() };
+
+    // Prefer metadata-only localStorage updates: strip inline content first so
+    // we never JSON.stringify large node graphs (images/masks) into ica:canvases
+    // when IndexedDB can hold the full payload.
+    const baseMeta = withoutInlineContent(normalizeCanvas(canvases[idx]));
+    const now = nowISO();
+    canvases[idx] = { ...baseMeta, updatedAt: now };
+
+    // Keep large, image-heavy canvas content out of synchronous localStorage.
+    // IndexedDB uses structured cloning and does not require serializing the
+    // entire canvas into the metadata blob on every autosave.
+    if (canUseIndexedDb()) {
+      try {
+        await writeCanvasContentToIndexedDb(id, content);
+        write(KEYS.canvases, canvases);
+        return delay(undefined);
+      } catch {
+        // Fall through to the inline path when IndexedDB is unavailable or
+        // fails, preserving local demo mode on restricted browsers.
+      }
+    }
+
+    canvases[idx] = { ...canvases[idx], content };
     try {
       write(KEYS.canvases, canvases);
       await deleteCanvasContentFromIndexedDb(id);

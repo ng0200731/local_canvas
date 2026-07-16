@@ -80,6 +80,7 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
     palette: true,
     defaultData: () => ({
       prompt: "",
+      promptRows: [{ id: uid(), sourceNodeId: "", maskId: "", changeType: "color", targetText: "" }],
       model: DEFAULT_IMAGE_GENERATION_MODEL,
       size: DEFAULT_IMAGE_GENERATION_SIZE,
       outputFormat: DEFAULT_IMAGE_GENERATION_OUTPUT_FORMAT,

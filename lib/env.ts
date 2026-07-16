@@ -5,9 +5,12 @@ import { z } from "zod";
  *
  * All third-party credentials are OPTIONAL so the app can run in a local/demo
  * mode with zero configuration. Capabilities switch on as their keys are added:
- *   - Supabase configured  → cloud auth, Postgres persistence, Storage uploads
- *   - Xiangsu configured    → AI image generation
+ *   - Supabase configured       → cloud auth, Postgres persistence, Storage
+ *   - Local Postgres configured → Docker Postgres on this machine (no auth)
+ *   - Xiangsu configured        → AI image generation
  * Otherwise the app degrades gracefully (localStorage persistence, no auth, no AI).
+ *
+ * Priority: cloud Supabase > local Postgres > browser localStorage.
  *
  * Treat empty string env entries as "not set" so a blank `.env` line never fails.
  */
@@ -33,6 +36,8 @@ const optionalBoolean = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
+const DEFAULT_LOCAL_USER_ID = "00000000-0000-4000-8000-000000000001";
+
 const envSchema = z
   .object({
     // ── Supabase (optional) ──────────────────────────────────────────────
@@ -41,6 +46,14 @@ const envSchema = z
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: optionalString,
     // Server-only — NEVER expose to the client.
     SUPABASE_SERVICE_ROLE_KEY: optionalString,
+
+    // ── Local Postgres (optional, dev) ───────────────────────────────────
+    // Server-only connection string.
+    DATABASE_URL: optionalString,
+    LOCAL_USER_ID: optionalString.default(DEFAULT_LOCAL_USER_ID),
+    // Browser-visible flag so client store selection can switch without exposing
+    // DATABASE_URL. Set true when developing against local Docker Postgres.
+    NEXT_PUBLIC_LOCAL_POSTGRES: optionalBoolean.default(false),
 
     // ── Xiangsu AI (optional, server-only) ──────────────────────────────
     XIANGSU_API_KEY: optionalString,
@@ -101,6 +114,9 @@ function loadEnv(): Env {
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    DATABASE_URL: process.env.DATABASE_URL,
+    LOCAL_USER_ID: process.env.LOCAL_USER_ID,
+    NEXT_PUBLIC_LOCAL_POSTGRES: process.env.NEXT_PUBLIC_LOCAL_POSTGRES,
     XIANGSU_API_KEY: process.env.XIANGSU_API_KEY,
     SMTP_163_USERNAME: process.env.SMTP_163_USERNAME,
     SMTP_163_PASSWORD: process.env.SMTP_163_PASSWORD,
@@ -130,5 +146,31 @@ export const supabasePublicKey =
 /** True when Supabase URL + anon key are present (auth + cloud persistence active). */
 export const isSupabaseConfigured = Boolean(env.NEXT_PUBLIC_SUPABASE_URL && supabasePublicKey);
 
+/**
+ * Client-safe local Postgres flag. True when the public switch is on and Supabase
+ * is not configured. Server routes still require DATABASE_URL.
+ */
+export const isLocalPostgresConfigured =
+  !isSupabaseConfigured && Boolean(env.NEXT_PUBLIC_LOCAL_POSTGRES);
+
+/** Fixed owner id for single-user local Postgres mode. */
+export const localUserId = env.LOCAL_USER_ID ?? DEFAULT_LOCAL_USER_ID;
+
 /** True when a Xiangsu API key is present (AI image generation active). */
 export const isXiangsuConfigured = Boolean(env.XIANGSU_API_KEY);
+
+/**
+ * Server-only: returns DATABASE_URL when local Postgres mode is active.
+ * Throws if misconfigured.
+ */
+export function requireLocalDatabaseUrl(): string {
+  if (isSupabaseConfigured) {
+    throw new Error("Local Postgres is disabled while Supabase is configured.");
+  }
+  if (!env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL is required for local Postgres mode. See docs/SETUP.md.",
+    );
+  }
+  return env.DATABASE_URL;
+}

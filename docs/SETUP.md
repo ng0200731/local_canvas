@@ -11,8 +11,12 @@ pnpm dev          # http://localhost:3000
 ```
 
 Without any keys you get: local projects/canvases (browser storage), no auth, no AI
-generation. This is only demo mode. For durable multi-device saves, enable
-Supabase so canvases are written to Postgres.
+generation. This is only demo mode.
+
+For durable SQL on this machine during development, use **local Postgres** (Docker).
+For durable multi-device cloud saves with auth, enable **Supabase**.
+
+Priority: **cloud Supabase > local Postgres > browser localStorage**.
 
 ## Environment
 
@@ -22,8 +26,57 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 | ------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Enables auth + cloud Postgres persistence + Storage uploads |
 | `SUPABASE_SERVICE_ROLE_KEY`                                         | Server-only admin access (storage deletes, etc.)            |
+| `DATABASE_URL` + `NEXT_PUBLIC_LOCAL_POSTGRES=true`                  | Local Docker Postgres (no auth; ignored if Supabase is set) |
+| `LOCAL_USER_ID`                                                     | Fixed owner UUID for local Postgres rows (optional)         |
 | `XIANGSU_API_KEY`                                                   | Enables server-side image generation via Xiangsu AI         |
 | `NEXT_PUBLIC_APP_URL`                                               | Public app URL (defaults to `http://localhost:3000`)        |
+
+## Local Postgres (dev, no auth)
+
+Use this when you want real SQL durability on your machine without cloud Supabase.
+
+1. Install Docker Desktop (or another Docker engine with Compose).
+2. Clear or comment out Supabase keys in `.env.local` so cloud mode is off.
+3. Set:
+
+   ```bash
+   DATABASE_URL=postgresql://canvas:canvas@localhost:5432/canvas_dev
+   NEXT_PUBLIC_LOCAL_POSTGRES=true
+   # optional:
+   LOCAL_USER_ID=00000000-0000-4000-8000-000000000001
+   ```
+
+4. Start Postgres and apply the local schema:
+
+   ```bash
+   pnpm db:up
+   pnpm db:migrate
+   ```
+
+5. Run the app:
+
+   ```bash
+   pnpm dev
+   ```
+
+What you get:
+
+- `/projects` opens with **no login**
+- Projects, canvases, graph nodes/edges, images metadata, and workspace CRM
+  (customers / suppliers / products / options / generic nodes) persist in Postgres
+- Uploads go to `.data/uploads/` and are served from `/api/uploads/...`
+- Sample-order public token flows are **out of scope** in this mode (stubbed)
+
+Inspect data with:
+
+```bash
+docker compose exec postgres psql -U canvas -d canvas_dev
+# \dt
+# select id, name from projects;
+```
+
+Switch back to cloud later by putting Supabase keys back into `.env.local`
+(local Postgres is ignored when Supabase is configured).
 
 ## Enabling Supabase
 
@@ -65,9 +118,12 @@ Customer, supplier, and product records also use structured database tables:
 ## Scripts
 
 ```bash
-pnpm dev      # dev server
-pnpm build    # production build
-pnpm lint     # eslint
-pnpm format   # prettier --write .
-pnpm test     # vitest (pure-logic unit tests)
+pnpm dev         # dev server
+pnpm build       # production build
+pnpm lint        # eslint
+pnpm format      # prettier --write .
+pnpm test        # vitest (pure-logic unit tests)
+pnpm db:up       # docker compose up -d (local Postgres)
+pnpm db:down     # docker compose down
+pnpm db:migrate  # apply db/local-init.sql + seed LOCAL_USER_ID profile
 ```

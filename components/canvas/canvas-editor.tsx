@@ -126,6 +126,26 @@ const GROUP_FIT_PADDING = 18;
 const ACTIVE_GENERATION_LEAVE_MESSAGE =
   "Image generation is still running. Leaving this canvas may lose the generated image. Leave anyway?";
 
+const CANVAS_NODE_TYPES: NodeTypes = {
+  note: NoteNode,
+  image: ImageNode,
+  imageInput: InputNode,
+  group: GroupNode,
+  generate: GenerateNode,
+  imageOutput: OutputNode,
+  suppler: SupplerNode,
+  product: ProductNode,
+  action: ActionNode,
+  pantone: PantoneNode,
+};
+
+const CANVAS_EDGE_TYPES: EdgeTypes = { deletable: DeletableEdge };
+
+const DEFAULT_CANVAS_EDGE_OPTIONS = {
+  type: "deletable" as const,
+  style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
+};
+
 type HoverTarget = {
   kind: "node" | "edge";
   id: string;
@@ -670,7 +690,15 @@ function Editor({
   const edgesRef = useRef<CanvasEdge[]>([]);
   const generationRunManagerRef = useRef(createGenerationRunManager());
   const loadedRef = useRef(false);
+  const skipAutosaveAfterLoadRef = useRef(false);
+  const isDraggingRef = useRef(false);
+  const isConnectingRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const logPanelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [logPanelContent, setLogPanelContent] = useState<CanvasContent>({
+    nodes: [],
+    edges: [],
+  });
   const { screenToFlowPosition, getNodes, getInternalNode } = useReactFlow<
     CanvasNode,
     CanvasEdge
@@ -789,46 +817,75 @@ function Editor({
   useEffect(() => {
     if (canvas && !loadedRef.current) {
       loadedRef.current = true;
-      setCanvasNodes(reorderChildrenAfterParents(canvas.content.nodes.map(normalizeNodeType)));
+      skipAutosaveAfterLoadRef.current = true;
+      const nextNodes = reorderChildrenAfterParents(canvas.content.nodes.map(normalizeNodeType));
       // Force the custom (deletable) edge type so the remove button renders.
       // Older edges were saved before dots had explicit ids — backfill
       // sourceHandle/targetHandle (right=source, left=target under the old
       // model) so they keep attaching instead of going limp.
-      setCanvasEdges(
-        canvas.content.edges.map((e) => ({
-          ...e,
-          type: "deletable",
-          sourceHandle: e.sourceHandle ?? "right",
-          targetHandle: e.targetHandle ?? "left",
-          style: { ...e.style, stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
-        })),
-      );
+      const nextEdges = canvas.content.edges.map((e) => ({
+        ...e,
+        type: "deletable" as const,
+        sourceHandle: e.sourceHandle ?? "right",
+        targetHandle: e.targetHandle ?? "left",
+        style: { ...e.style, stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
+      }));
+      setCanvasNodes(nextNodes);
+      setCanvasEdges(nextEdges);
+      setLogPanelContent({ nodes: nextNodes, edges: nextEdges });
     }
   }, [canvas, setCanvasNodes, setCanvasEdges]);
+
+  // Bumped only when node *data* changes (not position). Keeps CanvasActions
+  // stable during drag frames while still refreshing connection consumers when
+  // pantone/image/prompt payloads change.
+  const [graphEpoch, setGraphEpoch] = useState(0);
 
   const updateNodeData = useCallback(
     (id: string, patch: Record<string, unknown>) => {
       setCanvasNodes((nds) =>
         nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
       );
+      setGraphEpoch((epoch) => epoch + 1);
     },
     [setCanvasNodes],
   );
 
+  // Live topology/data is read from refs. Depend on edges + graphEpoch so
+  // connect/disconnect and data edits refresh consumers, while pure position
+  // drags leave the actions object stable (no context re-render storm).
   const getConnectedInputReferences = useCallback(
-    (nodeId: string) => findConnectedInputReferences(nodes, edges, nodeId),
-    [edges, nodes],
+    (nodeId: string) =>
+      findConnectedInputReferences(nodesRef.current, edgesRef.current, nodeId),
+    [edges, graphEpoch],
   );
 
   const hasConnectedOutputNode = useCallback(
-    (generateNodeId: string) => findConnectedOutputNodeId(nodes, edges, generateNodeId) !== null,
-    [edges, nodes],
+    (generateNodeId: string) =>
+      findConnectedOutputNodeId(nodesRef.current, edgesRef.current, generateNodeId) !== null,
+    [edges, graphEpoch],
   );
 
   const getConnectedOutputState = useCallback(
-    (generateNodeId: string) => findConnectedOutputState(nodes, edges, generateNodeId),
-    [edges, nodes],
+    (generateNodeId: string) =>
+      findConnectedOutputState(nodesRef.current, edgesRef.current, generateNodeId),
+    [edges, graphEpoch],
   );
+
+  const scheduleAutosave = useCallback(() => {
+    if (!loadedRef.current || skipAutosaveAfterLoadRef.current) return;
+    if (isDraggingRef.current || isConnectingRef.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      if (isDraggingRef.current || isConnectingRef.current) return;
+      const content = getCurrentCanvasContent();
+      void getCanvasStore()
+        .saveCanvasContent(canvasId, content)
+        .catch((error: unknown) => {
+          toast.error(error instanceof Error ? error.message : "Failed to autosave canvas");
+        });
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }, [canvasId, getCurrentCanvasContent]);
 
   function openSaveDialog() {
     setCanvasName(canvas?.name ?? "");
@@ -863,21 +920,37 @@ function Editor({
   }
 
   // Debounced autosave whenever nodes/edges change (after the initial load).
+  // Skip while dragging/connecting so position updates don't thrash IndexedDB + localStorage.
   useEffect(() => {
     if (!loadedRef.current) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const content = getCurrentCanvasContent();
-      void getCanvasStore()
-        .saveCanvasContent(canvasId, content)
-        .catch((error: unknown) => {
-          toast.error(error instanceof Error ? error.message : "Failed to autosave canvas");
-        });
-    }, AUTOSAVE_DEBOUNCE_MS);
+    if (skipAutosaveAfterLoadRef.current) {
+      skipAutosaveAfterLoadRef.current = false;
+      return;
+    }
+    scheduleAutosave();
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [nodes, edges, canvasId, getCurrentCanvasContent]);
+  }, [nodes, edges, scheduleAutosave]);
+
+  // Keep the side log panel off the hot path: it only needs a slightly lagged snapshot.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    if (logPanelTimer.current) clearTimeout(logPanelTimer.current);
+    logPanelTimer.current = setTimeout(() => {
+      setLogPanelContent(getCurrentCanvasContent());
+    }, 250);
+    return () => {
+      if (logPanelTimer.current) clearTimeout(logPanelTimer.current);
+    };
+  }, [nodes, edges, getCurrentCanvasContent]);
+
+  useEffect(
+    () => () => {
+      if (logPanelTimer.current) clearTimeout(logPanelTimer.current);
+    },
+    [],
+  );
 
   const addCanvasConnection = useCallback(
     (connection: Connection) => {
@@ -999,6 +1072,7 @@ function Editor({
   const onConnectStart = useCallback(
     (_event: MouseEvent | TouchEvent, { nodeId }: OnConnectStartParams) => {
       // Light up the node the wire is coming from (both its dots); clear stale target.
+      isConnectingRef.current = true;
       setConnectionSourceId(nodeId);
       setConnectionTargetId(null);
       setConnectionTargetDot(null);
@@ -1031,11 +1105,13 @@ function Editor({
         }
       }
 
+      isConnectingRef.current = false;
+      scheduleAutosave();
       setConnectionSourceId(null);
       setConnectionTargetId(null);
       setConnectionTargetDot(null);
     },
-    [addCanvasConnection],
+    [addCanvasConnection, scheduleAutosave],
   );
 
   useEffect(
@@ -1213,10 +1289,22 @@ function Editor({
     setPendingGroupMembershipChange(null);
   }
 
+  const onNodeDragStart = useCallback(() => {
+    isDraggingRef.current = true;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+  }, []);
+
   // Group membership changes are explicit: dropping into or out of a group
   // opens a confirmation dialog, then geometry is fitted around the result.
+  // Also end the drag guard and schedule one deferred autosave for the final positions.
   const onNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, _node: CanvasNode, draggedNodes: CanvasNode[]) => {
+      isDraggingRef.current = false;
+      scheduleAutosave();
+
       if (pendingGroupMembershipChange) return;
       const allNodes = getNodes();
       const groups = new Map<string, { x: number; y: number; w: number; h: number }>();
@@ -1268,7 +1356,7 @@ function Editor({
         }
       }
     },
-    [getInternalNode, getNodes, pendingGroupMembershipChange],
+    [getInternalNode, getNodes, pendingGroupMembershipChange, scheduleAutosave],
   );
 
   // Release children to the canvas when their group is removed via React Flow's
@@ -1360,6 +1448,7 @@ function Editor({
           node.id === outputNodeId ? { ...node, data: { ...node.data, ...patch } } : node,
         ),
       );
+      setGraphEpoch((epoch) => epoch + 1);
 
       return true;
     },
@@ -1440,6 +1529,7 @@ function Editor({
             : node,
         ),
       );
+      setGraphEpoch((epoch) => epoch + 1);
       return true;
     },
     [setCanvasNodes],
@@ -1745,22 +1835,6 @@ function Editor({
 
   const clearDragOverGroup = useCallback(() => setDragOverGroupId(null), []);
 
-  const nodeTypes = useMemo<NodeTypes>(
-    () => ({
-      note: NoteNode,
-      image: ImageNode,
-      imageInput: InputNode,
-      group: GroupNode,
-      generate: GenerateNode,
-      imageOutput: OutputNode,
-      suppler: SupplerNode,
-      product: ProductNode,
-      action: ActionNode,
-      pantone: PantoneNode,
-    }),
-    [],
-  );
-
   const hoveredGraph = useMemo(() => {
     const nodeIds = new Set<string>();
     const edgeIds = new Set<string>();
@@ -1836,20 +1910,10 @@ function Editor({
     setHoverTarget({ kind: "edge", id: edge.id });
   }, []);
 
-  // Smooth bezier links, quiet by default and highlighted on hover.
-  const defaultEdgeOptions = useMemo(
-    () => ({
-      type: "deletable" as const,
-      style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
-    }),
-    [],
-  );
-
-  const edgeTypes = useMemo<EdgeTypes>(() => ({ deletable: DeletableEdge }), []);
-
+  // Lagged snapshot keeps the log panel off the drag/render hot path.
   const liveCanvas = useMemo(
-    () => (canvas ? { ...canvas, content: { nodes, edges } } : null),
-    [canvas, edges, nodes],
+    () => (canvas ? { ...canvas, content: logPanelContent } : null),
+    [canvas, logPanelContent],
   );
 
   const actions = useMemo(
@@ -2096,13 +2160,14 @@ function Editor({
                     onNodeMouseLeave={clearHoverTarget}
                     onEdgeMouseEnter={onEdgeMouseEnter}
                     onEdgeMouseLeave={clearHoverTarget}
+                    onNodeDragStart={onNodeDragStart}
                     onNodeDragStop={onNodeDragStop}
                     onSelectionEnd={handleSelectionEnd}
                     selectionOnDrag
                     selectionMode={SelectionMode.Partial}
                     panOnDrag={[1, 2]}
-                    nodeTypes={nodeTypes}
-                    edgeTypes={edgeTypes}
+                    nodeTypes={CANVAS_NODE_TYPES}
+                    edgeTypes={CANVAS_EDGE_TYPES}
                     nodeOrigin={[0.5, 0.5]}
                     connectionMode={ConnectionMode.Loose}
                     connectionLineType={ConnectionLineType.Bezier}
@@ -2110,7 +2175,7 @@ function Editor({
                       stroke: connectionColor,
                       strokeWidth: EDGE_WIDTH,
                     }}
-                    defaultEdgeOptions={defaultEdgeOptions}
+                    defaultEdgeOptions={DEFAULT_CANVAS_EDGE_OPTIONS}
                     deleteKeyCode={["Delete", "Backspace"]}
                     fitView
                     className="bg-background"
