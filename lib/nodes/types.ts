@@ -39,7 +39,7 @@ export interface ImageMaskRegion {
   colorSelections?: ImageMaskColorSelection[];
 }
 
-export const GENERATE_CHANGE_TYPES = ["texture", "color", "density", "object"] as const;
+export const GENERATE_CHANGE_TYPES = ["texture", "color", "density", "object", "other"] as const;
 export type GenerateChangeType = (typeof GENERATE_CHANGE_TYPES)[number];
 
 export interface GeneratePromptRow {

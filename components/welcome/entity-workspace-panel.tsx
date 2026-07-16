@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 
 import { ProductImageBrowserDialog } from "@/components/product-image-browser-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,10 +79,12 @@ import {
   useProducts,
   useSuppliers,
   useDeleteSuppliers,
+  useDeleteProducts,
   useUpsertCustomer,
   useUpsertProduct,
   useUpsertSupplier,
 } from "@/lib/hooks/use-workspace-records";
+import type { ProductImageGalleryItem } from "@/lib/product-image-gallery";
 import { productRecordSearchText } from "@/lib/product-image-gallery";
 import { uploadImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -1786,7 +1789,9 @@ function PartyWorkspacePanel({
   const products = useProducts();
   const upsertCustomer = useUpsertCustomer();
   const upsertSupplier = useUpsertSupplier();
+  const upsertProduct = useUpsertProduct();
   const deleteSuppliers = useDeleteSuppliers();
+  const deleteProducts = useDeleteProducts();
 
   const domainSuffix =
     kind === "customer" ? customerCompany.emailDomainSuffix : supplierCompany.emailDomainSuffix;
@@ -1854,12 +1859,6 @@ function PartyWorkspacePanel({
   async function deleteSupplierRecords(ids: string[]) {
     const uniqueIds = Array.from(new Set(ids));
     if (uniqueIds.length === 0) return;
-    const confirmed = window.confirm(
-      uniqueIds.length === 1
-        ? "Delete this supplier record? Products from this supplier will become unlinked."
-        : `Delete ${uniqueIds.length} supplier records? Products from these suppliers will become unlinked.`,
-    );
-    if (!confirmed) return;
     try {
       await deleteSuppliers.mutateAsync(uniqueIds);
       setSelectedSupplierIds((current) => current.filter((id) => !uniqueIds.includes(id)));
@@ -1868,6 +1867,79 @@ function PartyWorkspacePanel({
       toast.success(uniqueIds.length === 1 ? "Supplier deleted" : "Suppliers deleted");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to delete supplier");
+    }
+  }
+
+  async function deleteSupplierProductImages(items: readonly ProductImageGalleryItem[]) {
+    const uniqueItems = Array.from(new Map(items.map((item) => [item.id, item])).values());
+    if (uniqueItems.length === 0) return;
+
+    const itemsByProduct = new Map<string, ProductImageGalleryItem[]>();
+    for (const item of uniqueItems) {
+      const current = itemsByProduct.get(item.product.id) ?? [];
+      current.push(item);
+      itemsByProduct.set(item.product.id, current);
+    }
+
+    const recordsById = new Map((products.data ?? []).map((record) => [record.id, record]));
+    const productIdsToDelete: string[] = [];
+    const productUpdates: Array<{
+      record: ProductRecord;
+      remainingVariants: ProductVariantRecord[];
+    }> = [];
+
+    for (const [productId, productItems] of itemsByProduct) {
+      const record = recordsById.get(productId);
+      if (!record) continue;
+      const selectedVariantIds = new Set(productItems.map((item) => item.variant.id));
+      const remainingVariants = record.variants.filter(
+        (variant) => !selectedVariantIds.has(variant.id),
+      );
+
+      if (remainingVariants.length === 0) {
+        productIdsToDelete.push(record.id);
+        continue;
+      }
+
+      productUpdates.push({ record, remainingVariants });
+    }
+
+    try {
+      for (const { record, remainingVariants } of productUpdates) {
+        await upsertProduct.mutateAsync({
+          id: record.id,
+          input: {
+            ownerKind: record.ownerKind,
+            supplierId: record.ownerKind === "supplier" ? record.supplierId : null,
+            customerId: record.ownerKind === "customer" ? record.customerId : null,
+            productType: record.productType,
+            subject: record.subject,
+            detail: record.detail,
+            variants: remainingVariants.map((variant, sortIndex) => {
+              if (!variant.image) {
+                throw new Error("This image gallery contains an empty variant and cannot be deleted.");
+              }
+              return {
+                id: variant.id,
+                sortIndex,
+                material: variant.material,
+                colorNotes: variant.colorNotes,
+                parameters: variant.parameters,
+                unitPrice: variant.unitPrice,
+                priceUnit: variant.priceUnit,
+                image: variant.image,
+              };
+            }),
+          },
+        });
+      }
+
+      if (productIdsToDelete.length > 0) {
+        await deleteProducts.mutateAsync(Array.from(new Set(productIdsToDelete)));
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete product image");
+      throw error;
     }
   }
 
@@ -1932,15 +2004,18 @@ function PartyWorkspacePanel({
     kind === "customer"
       ? customerCompanySchema.safeParse(customerCompany).success
       : supplierCompanySchema.safeParse(supplierCompany).success;
+  const selectedFilteredSupplierIds = filteredSupplierRecords
+    .map((record) => record.id)
+    .filter((id) => selectedSupplierIds.includes(id));
+  const allFilteredSuppliersSelected =
+    filteredSupplierRecords.length > 0 &&
+    selectedFilteredSupplierIds.length === filteredSupplierRecords.length;
+  const selectedSupplierDeleteDescription =
+    selectedSupplierIds.length === 1
+      ? "Delete this supplier record? Products from this supplier will become unlinked."
+      : `Delete ${selectedSupplierIds.length} supplier records? Products from these suppliers will become unlinked.`;
 
   if (mode === "records" && editingId === null) {
-    const selectedFilteredSupplierIds = filteredSupplierRecords
-      .map((record) => record.id)
-      .filter((id) => selectedSupplierIds.includes(id));
-    const allFilteredSuppliersSelected =
-      filteredSupplierRecords.length > 0 &&
-      selectedFilteredSupplierIds.length === filteredSupplierRecords.length;
-
     return (
       <section className="mx-auto grid w-full max-w-6xl gap-5">
         <div>
@@ -1965,16 +2040,25 @@ function PartyWorkspacePanel({
                 />
               </div>
               {kind === "supplier" && selectedSupplierIds.length > 0 ? (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  disabled={deleteSuppliers.isPending}
-                  onClick={() => void deleteSupplierRecords(selectedSupplierIds)}
-                >
-                  <Trash2 />
-                  Delete selected ({selectedSupplierIds.length})
-                </Button>
+                <ConfirmDialog
+                  title="Delete supplier records?"
+                  description={selectedSupplierDeleteDescription}
+                  confirmLabel={
+                    selectedSupplierIds.length === 1 ? "Delete supplier" : "Delete suppliers"
+                  }
+                  onConfirm={() => deleteSupplierRecords(selectedSupplierIds)}
+                  trigger={
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={deleteSuppliers.isPending}
+                    >
+                      <Trash2 />
+                      Delete selected ({selectedSupplierIds.length})
+                    </Button>
+                  }
+                />
               ) : null}
             </div>
           </div>
@@ -2146,6 +2230,7 @@ function PartyWorkspacePanel({
                                 <ProductImageBrowserDialog
                                   products={productRecords}
                                   title={`${record.company.companyName} product images`}
+                                  onDeleteItems={deleteSupplierProductImages}
                                   trigger={
                                     <Button type="button" variant="ghost" size="sm">
                                       View product ({productImageCount})
@@ -2166,16 +2251,23 @@ function PartyWorkspacePanel({
                                 <Pencil />
                                 Edit
                               </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                disabled={deleteSuppliers.isPending}
-                                onClick={() => void deleteSupplierRecords([record.id])}
-                              >
-                                <Trash2 />
-                                Delete
-                              </Button>
+                              <ConfirmDialog
+                                title="Delete supplier record?"
+                                description={`Delete ${record.company.companyName}? Products from this supplier will become unlinked.`}
+                                confirmLabel="Delete supplier"
+                                onConfirm={() => deleteSupplierRecords([record.id])}
+                                trigger={
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={deleteSuppliers.isPending}
+                                  >
+                                    <Trash2 />
+                                    Delete
+                                  </Button>
+                                }
+                              />
                             </div>
                           </td>
                         </tr>

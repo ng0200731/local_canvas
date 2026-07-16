@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { type NodeProps } from "@xyflow/react";
 import { Loader2, Plus, Sparkles, Square, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -248,6 +255,74 @@ function mentionAtCaret(value: string, caret: number): MentionMatch | null {
   return { start: match.index, end: caret, query: match[1] ?? "" };
 }
 
+function aliasAtOffset(
+  value: string,
+  offset: number,
+  aliases: readonly { nodeId: string; alias: string; label: string }[],
+  masks: readonly { nodeId: string; name: string }[] = [],
+): string | null {
+  const match = /(^|\s)(@?[^\s@]*)/g;
+  let token: RegExpExecArray | null;
+  while ((token = match.exec(value))) {
+    const start = (token.index ?? 0) + token[1].length;
+    const end = start + token[2].length + 1;
+    if (offset < start || offset > end) continue;
+    const rawName = token[2] ?? "";
+    const isAlias = rawName.startsWith("@");
+    const name = (isAlias ? rawName.slice(1) : rawName).toLocaleLowerCase();
+    if (!name) continue;
+    return (
+      (isAlias
+        ? aliases.find((option) => option.alias.toLocaleLowerCase() === name)?.nodeId
+        : undefined) ??
+      masks.find((mask) => mask.name.toLocaleLowerCase() === name)?.nodeId ??
+      null
+    );
+  }
+  return null;
+}
+
+function caretOffsetFromPoint(event: ReactMouseEvent<HTMLTextAreaElement>): number | null {
+  const documentWithCaret = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const position = documentWithCaret.caretPositionFromPoint?.(event.clientX, event.clientY);
+  if (position?.offsetNode === event.currentTarget) return position.offset;
+  const range = documentWithCaret.caretRangeFromPoint?.(event.clientX, event.clientY);
+  return range?.startContainer === event.currentTarget ? range.startOffset : null;
+}
+
+function renderHighlightedAliases(
+  value: string,
+  aliases: readonly { nodeId: string; alias: string; label: string }[],
+  masks: readonly { nodeId: string; name: string }[] = [],
+) {
+  const tokenPattern = /(^|\s)(@?[^\s@]+)/g;
+  const parts: Array<{ text: string; highlight: "alias" | "mask" | null }> = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(value))) {
+    const token = match[2] ?? "";
+    const tokenStart = (match.index ?? 0) + (match[1]?.length ?? 0);
+    const tokenEnd = tokenStart + token.length;
+    const isAlias = token.startsWith("@");
+    const name = (isAlias ? token.slice(1) : token).toLocaleLowerCase();
+    const highlight =
+      isAlias && aliases.some((option) => option.alias.toLocaleLowerCase() === name)
+        ? "alias"
+        : !isAlias && masks.some((mask) => mask.name.toLocaleLowerCase() === name)
+          ? "mask"
+          : null;
+    if (!highlight) continue;
+    if (tokenStart > cursor) parts.push({ text: value.slice(cursor, tokenStart), highlight: null });
+    parts.push({ text: value.slice(tokenStart, tokenEnd), highlight });
+    cursor = tokenEnd;
+  }
+  if (cursor < value.length) parts.push({ text: value.slice(cursor), highlight: null });
+  return parts.length ? parts : [{ text: value, highlight: null }];
+}
+
 function AliasMentionInput({
   value,
   disabled,
@@ -368,16 +443,21 @@ function AliasMentionTextarea({
   value,
   disabled,
   aliases,
+  masks = [],
   onChange,
 }: {
   value: string;
   disabled: boolean;
   aliases: readonly { nodeId: string; alias: string; label: string }[];
+  masks?: readonly { nodeId: string; name: string }[];
   onChange: (value: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef<{ start: number; end: number } | null>(null);
   const [mention, setMention] = useState<MentionMatch | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const { setHoveredReferenceNodeId } = useReferenceHover();
   const suggestions = mention
     ? aliases.filter((option) => {
         const query = mention.query.toLocaleLowerCase();
@@ -405,6 +485,13 @@ function AliasMentionTextarea({
     });
   }
 
+  useLayoutEffect(() => {
+    const selection = selectionRef.current;
+    if (!selection || !textareaRef.current) return;
+    textareaRef.current.setSelectionRange(selection.start, selection.end);
+    selectionRef.current = null;
+  }, [value]);
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (!mention || suggestions.length === 0) return;
     if (event.key === "ArrowDown") {
@@ -429,15 +516,19 @@ function AliasMentionTextarea({
   }
 
   return (
-    <div className="relative">
+    <div className="bg-background/60 border-input focus-within:border-ring focus-within:ring-ring/30 relative rounded-md border focus-within:ring-2">
       <textarea
         ref={textareaRef}
         rows={5}
         value={value}
         disabled={disabled}
         placeholder="Describe the image... use @ to mention connected aliases"
-        className="nodrag bg-background/60 border-input focus-visible:border-ring focus-visible:ring-ring/30 block min-h-28 w-full resize-y rounded-md border p-2 text-sm leading-5 outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className="nodrag nopan caret-foreground placeholder:text-muted-foreground relative z-10 block min-h-28 w-full resize-y rounded-md border-0 bg-transparent p-2 text-sm leading-5 text-transparent outline-none selection:bg-yellow-300/40 disabled:cursor-not-allowed disabled:opacity-50"
         onChange={(event) => {
+          selectionRef.current = {
+            start: event.currentTarget.selectionStart,
+            end: event.currentTarget.selectionEnd,
+          };
           onChange(event.target.value);
           updateMention(event.target.value, event.target.selectionStart);
         }}
@@ -449,8 +540,45 @@ function AliasMentionTextarea({
           updateMention(event.currentTarget.value, event.currentTarget.selectionStart);
         }}
         onKeyDown={handleKeyDown}
-        onBlur={() => window.setTimeout(() => setMention(null), 120)}
+        onMouseMove={(event) => {
+          const offset = caretOffsetFromPoint(event);
+          setHoveredReferenceNodeId(
+            offset === null ? null : aliasAtOffset(value, offset, aliases, masks),
+          );
+        }}
+        onScroll={(event) => {
+          if (highlightRef.current) {
+            highlightRef.current.scrollTop = event.currentTarget.scrollTop;
+            highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+          }
+        }}
+        onMouseLeave={() => setHoveredReferenceNodeId(null)}
+        onBlur={() => {
+          window.setTimeout(() => setMention(null), 120);
+          setHoveredReferenceNodeId(null);
+        }}
       />
+      <div
+        ref={highlightRef}
+        aria-hidden="true"
+        className="text-foreground pointer-events-none absolute inset-0 z-0 overflow-hidden p-2 text-sm leading-5 break-words whitespace-pre-wrap"
+      >
+        {renderHighlightedAliases(value, aliases, masks).map((part, index) =>
+          part.highlight ? (
+            <mark
+              key={`${part.text}-${index}`}
+              className={cn(
+                "text-foreground rounded-sm",
+                part.highlight === "alias" ? "bg-yellow-300/70" : "bg-cyan-300/70",
+              )}
+            >
+              {part.text}
+            </mark>
+          ) : (
+            <span key={`${part.text}-${index}`}>{part.text}</span>
+          ),
+        )}
+      </div>
       {mention ? (
         <div className="nodrag nopan bg-popover text-popover-foreground absolute right-2 left-2 z-40 mt-1 max-h-36 overflow-y-auto rounded-md border p-1 shadow-md">
           {suggestions.length ? (
@@ -697,7 +825,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   }
 
   function appendPromptRowText(row: GeneratePromptRow) {
-    if (!row.sourceNodeId || !row.maskId) return;
+    if (!row.sourceNodeId || !row.targetText.trim()) return;
     const line = generatePromptRowText(row, promptReferences).trim();
     if (!line) return;
     const nextPrompt = [data.prompt.trim(), `- ${line}`].filter(Boolean).join("\n");
@@ -717,7 +845,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   function promptRowMissingFields(row: GeneratePromptRow): string[] {
     const missing: string[] = [];
     if (!row.sourceNodeId) missing.push("source");
-    if (!row.maskId) missing.push("mask");
     if (!row.changeType) missing.push("change");
     if (!row.targetText.trim()) missing.push("target");
     return missing;
@@ -746,7 +873,11 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     const existingPrompt = data.prompt.trim();
     const missingRows = rowPrompt
       .split("\n")
-      .filter((line) => line.trim() && !existingPrompt.split("\n").some((existing) => existing.trim() === line.trim()));
+      .filter(
+        (line) =>
+          line.trim() &&
+          !existingPrompt.split("\n").some((existing) => existing.trim() === line.trim()),
+      );
     const prompt = [existingPrompt, ...missingRows].filter(Boolean).join("\n");
     if (!prompt) {
       toast.error("Enter prompt text or complete at least one prompt row first");
@@ -1224,7 +1355,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       <SelectTrigger
                         className={cn(
                           "nodrag nopan h-8 px-2 text-xs",
-                          rowInvalid && missingFields.includes("source") && "border-destructive ring-1 ring-destructive/40",
+                          rowInvalid &&
+                            missingFields.includes("source") &&
+                            "border-destructive ring-destructive/40 ring-1",
                         )}
                         aria-label={`Prompt row ${index + 1} source alias`}
                       >
@@ -1235,7 +1368,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                             !selectedSourceReference && "text-muted-foreground",
                           )}
                         >
-                          {selectedSourceReference ? `@${selectedSourceReference.alias}` : "@source"}
+                          {selectedSourceReference
+                            ? `@${selectedSourceReference.alias}`
+                            : "@source"}
                         </span>
                       </SelectTrigger>
                       <SelectContent align="start" className="nodrag nopan">
@@ -1249,7 +1384,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                     </Select>
                     <Select
                       value={row.maskId || "__mask__"}
-                      disabled={isGenerating || !row.sourceNodeId || sourceMasks.length === 0}
+                      disabled={isGenerating || !row.sourceNodeId}
                       onValueChange={(value) => {
                         const nextValue = value ?? "__mask__";
                         patchPromptRow(row.id, {
@@ -1258,10 +1393,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       }}
                     >
                       <SelectTrigger
-                        className={cn(
-                          "nodrag nopan h-8 px-2 text-xs",
-                          rowInvalid && missingFields.includes("mask") && "border-destructive ring-1 ring-destructive/40",
-                        )}
+                        className={cn("nodrag nopan h-8 px-2 text-xs")}
                         aria-label={`Prompt row ${index + 1} mask`}
                       >
                         <span
@@ -1272,12 +1404,16 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                           )}
                         >
                           {selectedMaskReference?.name ??
-                            (row.sourceNodeId && sourceMasks.length === 0 ? "No saved masks" : "mask")}
+                            (row.sourceNodeId && sourceMasks.length === 0
+                              ? "No mask (optional)"
+                              : "mask (optional)")}
                         </span>
                       </SelectTrigger>
                       <SelectContent align="start" className="nodrag nopan">
                         <SelectItem value="__mask__">
-                          {row.sourceNodeId && sourceMasks.length === 0 ? "No saved masks" : "mask"}
+                          {row.sourceNodeId && sourceMasks.length === 0
+                            ? "No mask (optional)"
+                            : "mask (optional)"}
                         </SelectItem>
                         {sourceMasks.map((mask) => (
                           <SelectItem key={mask.id} value={mask.id}>
@@ -1300,7 +1436,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       <SelectTrigger
                         className={cn(
                           "nodrag nopan h-8 px-2 text-xs",
-                          rowInvalid && missingFields.includes("change") && "border-destructive ring-1 ring-destructive/40",
+                          rowInvalid &&
+                            missingFields.includes("change") &&
+                            "border-destructive ring-destructive/40 ring-1",
                         )}
                       >
                         <SelectValue />
@@ -1319,7 +1457,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       aliases={aliasOptions}
                       ariaLabel={`Prompt row ${index + 1} target`}
                       className={cn(
-                        rowInvalid && missingFields.includes("target") && "border-destructive ring-1 ring-destructive/40",
+                        rowInvalid &&
+                          missingFields.includes("target") &&
+                          "border-destructive ring-destructive/40 ring-1",
                       )}
                       onChange={(targetText) => patchPromptRow(row.id, { targetText })}
                     />
@@ -1346,12 +1486,13 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                   </p>
                   {rowState === "partial" ? (
                     <p className="text-[0.65rem] text-amber-600 dark:text-amber-300">
-                      Complete the source, mask, and target to include this row.
+                      Complete the source and target to include this row. Mask is optional.
                     </p>
                   ) : null}
                   {rowInvalid ? (
                     <p className="text-destructive text-[0.65rem]">
-                      Complete the highlighted field{missingFields.length === 1 ? "" : "s"} before adding another row.
+                      Complete the highlighted field{missingFields.length === 1 ? "" : "s"} before
+                      adding another row.
                     </p>
                   ) : null}
                 </div>
@@ -1366,6 +1507,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             value={data.prompt}
             disabled={isGenerating}
             aliases={aliasOptions}
+            masks={promptReferences.flatMap((reference) =>
+              reference.masks.map((mask) => ({ nodeId: reference.nodeId, name: mask.name })),
+            )}
             onChange={(prompt) => updateNodeData(id, { prompt })}
           />
           <span className="text-muted-foreground text-[0.65rem]">

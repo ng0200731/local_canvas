@@ -9,8 +9,18 @@ import {
   type ReactElement,
   type WheelEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, Check, ImageIcon, Mouse, Move, Search } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  ImageIcon,
+  Mouse,
+  Move,
+  Search,
+  Trash2,
+} from "lucide-react";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +47,7 @@ interface ProductImageBrowserDialogProps {
   trigger: ReactElement;
   selectedItemId?: string | null;
   onSelect?: (item: ProductImageGalleryItem) => void;
+  onDeleteItems?: (items: readonly ProductImageGalleryItem[]) => void | Promise<void>;
 }
 
 interface Point {
@@ -255,9 +266,12 @@ export function ProductImageBrowserDialog({
   trigger,
   selectedItemId = null,
   onSelect,
+  onDeleteItems,
 }: ProductImageBrowserDialogProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
   const allItems = useMemo(() => getProductImageGalleryItems(products), [products]);
   const filteredItems = useMemo(
     () => filterProductImageGalleryItems(allItems, query),
@@ -283,11 +297,39 @@ export function ProductImageBrowserDialog({
   const hasNext = previewIndex >= 0 && previewIndex < filteredItems.length - 1;
   const visibleItems = filteredItems.slice(0, visibleCount);
   const hasHiddenItems = visibleCount < filteredItems.length;
+  const selectedItems = useMemo(
+    () => allItems.filter((item) => selectedItemIds.includes(item.id)),
+    [allItems, selectedItemIds],
+  );
+  const hasDeleteActions = onDeleteItems !== undefined;
+  const selectedDeleteLabel =
+    selectedItems.length === 1 ? "Delete image" : `Delete ${selectedItems.length} images`;
 
   function handleSelect(item: ProductImageGalleryItem) {
     onSelect?.(item);
     setOpen(false);
     setPreviewItemId(null);
+  }
+
+  function toggleSelectedItem(itemId: string) {
+    setSelectedItemIds((current) =>
+      current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId],
+    );
+  }
+
+  async function deleteItems(items: readonly ProductImageGalleryItem[]) {
+    if (!onDeleteItems || items.length === 0) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteItems(items);
+      const deletedIds = new Set(items.map((item) => item.id));
+      setSelectedItemIds((current) => current.filter((id) => !deletedIds.has(id)));
+      if (previewItemId && deletedIds.has(previewItemId)) {
+        setPreviewItemId(null);
+      }
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -298,6 +340,7 @@ export function ProductImageBrowserDialog({
         if (!nextOpen) {
           setPreviewItemId(null);
           setVisibleCount(INITIAL_VISIBLE_IMAGE_COUNT);
+          setSelectedItemIds([]);
         }
       }}
     >
@@ -362,30 +405,114 @@ export function ProductImageBrowserDialog({
               </div>
               {activeItem ? (
                 <div className="grid min-h-0 gap-3">
+                  {hasDeleteActions ? (
+                    <div className="bg-muted/35 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+                      <p className="text-muted-foreground text-xs">
+                        {selectedItems.length > 0
+                          ? `${selectedItems.length} selected`
+                          : "Select images to delete"}
+                      </p>
+                      {selectedItems.length > 0 ? (
+                        <ConfirmDialog
+                          title="Delete selected images?"
+                          description={`Delete ${selectedItems.length} image${
+                            selectedItems.length === 1 ? "" : "s"
+                          } from their products? This cannot be undone.`}
+                          confirmLabel={selectedDeleteLabel}
+                          onConfirm={() => deleteItems(selectedItems)}
+                          trigger={
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              disabled={isDeleting}
+                            >
+                              <Trash2 />
+                              Delete selected ({selectedItems.length})
+                            </Button>
+                          }
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="grid max-h-[calc(100dvh-17rem)] min-h-0 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
                     {visibleItems.map((item) => (
-                      <button
+                      <div
                         key={item.id}
-                        type="button"
                         className={cn(
-                          "bg-muted group focus-visible:ring-ring relative overflow-hidden rounded-md border text-left outline-none focus-visible:ring-2",
-                          selectedItemId === item.id && "ring-primary ring-2",
+                          "bg-muted group relative overflow-hidden rounded-md border text-left",
+                          (selectedItemId === item.id || selectedItemIds.includes(item.id)) &&
+                            "ring-primary ring-2",
                         )}
-                        onClick={() => {
-                          setActiveItemId(item.id);
-                          setPreviewItemId(item.id);
-                        }}
                       >
-                        <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={item.variant.image.url}
-                            alt={`${item.product.subject} variant ${item.variantIndex + 1}`}
-                            className="max-h-full max-w-full object-contain p-1 transition-transform group-hover:scale-[1.03]"
-                          />
-                        </span>
-                        <ProductHoverDetails item={item} query={query} />
-                      </button>
+                        <button
+                          type="button"
+                          className="focus-visible:ring-ring block w-full text-left outline-none focus-visible:ring-2"
+                          onClick={() => {
+                            setActiveItemId(item.id);
+                            setPreviewItemId(item.id);
+                          }}
+                        >
+                          <span className="bg-background flex aspect-[5/2] w-full items-center justify-center overflow-hidden">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={item.variant.image.url}
+                              alt={`${item.product.subject} variant ${item.variantIndex + 1}`}
+                              className="max-h-full max-w-full object-contain p-1 transition-transform group-hover:scale-[1.03]"
+                            />
+                          </span>
+                          <ProductHoverDetails item={item} query={query} />
+                        </button>
+                        {hasDeleteActions ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant={selectedItemIds.includes(item.id) ? "default" : "secondary"}
+                              className="absolute top-2 left-2 z-20 shadow-md"
+                              aria-label={
+                                selectedItemIds.includes(item.id)
+                                  ? "Deselect image"
+                                  : "Select image for deletion"
+                              }
+                              title={
+                                selectedItemIds.includes(item.id)
+                                  ? "Deselect image"
+                                  : "Select image for deletion"
+                              }
+                              disabled={isDeleting}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleSelectedItem(item.id);
+                              }}
+                            >
+                              <Check className="size-3.5" />
+                            </Button>
+                            <ConfirmDialog
+                              title="Delete image?"
+                              description={`Delete ${
+                                item.product.subject
+                              } image variant ${item.variantIndex + 1}? This cannot be undone.`}
+                              confirmLabel="Delete image"
+                              onConfirm={() => deleteItems([item])}
+                              trigger={
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="destructive"
+                                  className="absolute top-2 right-2 z-20 shadow-md"
+                                  disabled={isDeleting}
+                                  aria-label="Delete image"
+                                  title="Delete image"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <Trash2 />
+                                </Button>
+                              }
+                            />
+                          </>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                   {hasHiddenItems ? (

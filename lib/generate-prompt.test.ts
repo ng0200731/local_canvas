@@ -51,7 +51,7 @@ describe("generate prompt rows", () => {
     });
   });
 
-  it("compiles only complete rows in point form", () => {
+  it("compiles rows without requiring a mask", () => {
     const complete = {
       id: "row-1",
       sourceNodeId: "product-node",
@@ -60,9 +60,9 @@ describe("generate prompt rows", () => {
       targetText: "@pantone red",
     };
     const partial = { ...complete, id: "row-2", maskId: "" };
-    expect(generatePromptRowState(partial, references)).toBe("partial");
+    expect(generatePromptRowState(partial, references)).toBe("complete");
     expect(compileGeneratePromptRows([complete, partial], references)).toBe(
-      "- @product use collar region change color to @pantone red",
+      "- @product use collar region change color to @pantone red\n- @product change color to @pantone red",
     );
   });
 });

@@ -2,6 +2,7 @@
 
 import { useState, type ReactElement, type ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogClose,
@@ -12,7 +13,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 
 /**
  * Reusable confirmation dialog (Base UI). `trigger` is rendered via DialogTrigger's
@@ -43,6 +43,8 @@ export function ConfirmDialog({
     try {
       await onConfirm();
       setOpen(false);
+    } catch {
+      return;
     } finally {
       setPending(false);
     }
@@ -65,7 +67,7 @@ export function ConfirmDialog({
             disabled={pending}
             onClick={handle}
           >
-            {pending ? "Working…" : confirmLabel}
+            {pending ? "Working..." : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -352,6 +352,13 @@ export const localWorkspaceRecordStore: WorkspaceRecordStore = {
     return record;
   },
 
+  async deleteProducts(ids) {
+    const idSet = new Set(ids);
+    if (idSet.size === 0) return;
+    const records = await listLocalProducts();
+    await saveLocalProducts(records.filter((record) => !idSet.has(record.id)));
+  },
+
   async getProduct(productId) {
     const records = await listLocalProducts();
     return records.find((record) => record.id === productId) ?? null;

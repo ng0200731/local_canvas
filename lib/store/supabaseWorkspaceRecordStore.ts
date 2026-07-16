@@ -525,6 +525,12 @@ export function createSupabaseWorkspaceRecordStore(): WorkspaceRecordStore {
       return mapProduct(saved.data);
     },
 
+    async deleteProducts(ids) {
+      if (ids.length === 0) return;
+      const { error } = await supabase.from("products").delete().in("id", ids);
+      assertNoError({ error }, "deleteProducts");
+    },
+
     async getProduct(productId) {
       const query = await supabase
         .from("products")

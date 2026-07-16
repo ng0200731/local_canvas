@@ -21,6 +21,7 @@ export interface WorkspaceRecordStore {
   deleteSuppliers(ids: string[]): Promise<void>;
   listProducts(): Promise<ProductRecord[]>;
   upsertProduct(id: string | null, input: ProductRecordInput): Promise<ProductRecord>;
+  deleteProducts(ids: string[]): Promise<void>;
   getProduct(productId: string): Promise<ProductRecord | null>;
   listWorkspaceOptions(kind: WorkspaceOptionKind): Promise<WorkspaceOption[]>;
   replaceWorkspaceOptions(

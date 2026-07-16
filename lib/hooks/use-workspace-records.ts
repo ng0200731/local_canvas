@@ -106,6 +106,14 @@ export function useUpsertProduct() {
   });
 }
 
+export function useDeleteProducts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => getWorkspaceRecordStore().deleteProducts(ids),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PRODUCTS_KEY }),
+  });
+}
+
 export function useWorkspaceOptions(kind: WorkspaceOptionKind) {
   return useQuery({
     queryKey: workspaceOptionsKey(kind),

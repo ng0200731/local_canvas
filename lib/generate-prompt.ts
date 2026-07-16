@@ -76,8 +76,7 @@ export function generatePromptRowState(
   const hasUserValue = Boolean(row.sourceNodeId || row.maskId || row.targetText.trim());
   if (!hasUserValue) return "empty";
   const source = references.find((reference) => reference.nodeId === row.sourceNodeId);
-  const mask = source?.masks.find((candidate) => candidate.id === row.maskId);
-  return source && mask && row.targetText.trim() ? "complete" : "partial";
+  return source && row.targetText.trim() ? "complete" : "partial";
 }
 
 export function generatePromptRowText(
@@ -88,7 +87,8 @@ export function generatePromptRowText(
   const mask = source?.masks.find((candidate) => candidate.id === row.maskId);
   const sourceToken = source ? `@${source.alias}` : "";
   const target = row.targetText.trim();
-  return [sourceToken, "use", mask?.name ?? "", "region", "change", row.changeType, "to", target]
+  const maskTokens = mask ? ["use", mask.name, "region"] : [];
+  return [sourceToken, ...maskTokens, "change", row.changeType, "to", target]
     .filter(Boolean)
     .join(" ");
 }
