@@ -262,11 +262,20 @@ function aliasAtOffset(
   aliases: readonly { nodeId: string; alias: string; label: string }[],
   masks: readonly { nodeId: string; name: string }[] = [],
 ): string | null {
-  const match = /(^|\s)(@?[^\s@]*)/g;
+  // Empty / whitespace-only prompts used to hang the tab: `(@?[^\s@]*)` can match
+  // zero-length tokens, so RegExp.lastIndex never advances and the loop never exits.
+  // Require a non-empty token (`+`) — same shape as renderHighlightedAliases.
+  if (!value || offset < 0 || offset > value.length) return null;
+  const match = /(^|\s)(@?[^\s@]+)/g;
   let token: RegExpExecArray | null;
   while ((token = match.exec(value))) {
+    // Defensive: never spin forever if a future pattern can match empty.
+    if (token[0].length === 0) {
+      match.lastIndex += 1;
+      continue;
+    }
     const start = (token.index ?? 0) + token[1].length;
-    const end = start + token[2].length + 1;
+    const end = start + token[2].length;
     if (offset < start || offset > end) continue;
     const rawName = token[2] ?? "";
     const isAlias = rawName.startsWith("@");
@@ -542,10 +551,16 @@ function AliasMentionTextarea({
         }}
         onKeyDown={handleKeyDown}
         onMouseMove={(event) => {
+          // Hover-highlight connected sources named in the prompt. Skip empty
+          // prompts entirely so we never pay the token scan cost on click/focus.
+          if (!value) {
+            setHoveredReferenceNodeId(null);
+            return;
+          }
           const offset = caretOffsetFromPoint(event);
-          setHoveredReferenceNodeId(
-            offset === null ? null : aliasAtOffset(value, offset, aliases, masks),
-          );
+          const nextHover =
+            offset === null ? null : aliasAtOffset(value, offset, aliases, masks);
+          setHoveredReferenceNodeId(nextHover);
         }}
         onScroll={(event) => {
           if (highlightRef.current) {
