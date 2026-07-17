@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FileText, ListChecks, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, ListChecks, Loader2 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { useCustomers, useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
 import { getCanvasStore, type Canvas, type ImageRecord, type Project } from "@/lib/store";
 import type { CanvasEdge, CanvasNode, NodeType } from "@/lib/nodes/types";
+import { cn } from "@/lib/utils";
 
 interface LogSection {
   id: string;
@@ -93,6 +95,7 @@ export function CanvasLogPanel({ canvas, project }: { canvas: Canvas; project: P
   const products = useProducts();
   const [images, setImages] = useState<ImageRecord[]>([]);
   const [loadedImagesCanvasId, setLoadedImagesCanvasId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -137,83 +140,117 @@ export function CanvasLogPanel({ canvas, project }: { canvas: Canvas; project: P
     loadedImagesCanvasId !== canvas.id;
 
   return (
-    <aside className="bg-card hidden w-80 shrink-0 border-l lg:flex lg:flex-col">
-      <div className="flex h-14 items-center gap-2 border-b px-4">
-        <ListChecks className="size-4" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">Log</p>
-          <p className="text-muted-foreground truncate text-xs">Canvas report steps</p>
+    <aside
+      className={cn(
+        "bg-card relative hidden shrink-0 border-l transition-[width] duration-200 ease-out lg:flex lg:flex-col",
+        collapsed ? "w-10" : "w-80",
+      )}
+    >
+      <Button
+        type="button"
+        variant="outline"
+        size="icon-xs"
+        className="bg-card absolute top-1/2 -left-3 z-20 size-6 -translate-y-1/2 rounded-full shadow-sm"
+        aria-label={collapsed ? "Expand log panel" : "Collapse log panel"}
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((value) => !value)}
+      >
+        {collapsed ? <ChevronLeft className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+      </Button>
+
+      {collapsed ? (
+        <div className="flex flex-1 flex-col items-center gap-3 py-4">
+          <ListChecks className="size-4" />
+          <p
+            className="text-muted-foreground text-[0.65rem] font-semibold tracking-wide uppercase"
+            style={{ writingMode: "vertical-rl" }}
+          >
+            Log
+          </p>
+          {loading ? <Loader2 className="text-muted-foreground size-3.5 animate-spin" /> : null}
         </div>
-        {loading ? <Loader2 className="text-muted-foreground ml-auto size-4 animate-spin" /> : null}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="grid gap-4">
-          <section className="rounded-lg border p-3">
-            <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-              Header
-            </p>
-            <p className="mt-2 text-sm font-medium">{customerName}</p>
-            <p className="text-muted-foreground text-xs">{employeeEmail}</p>
-            <p className="text-muted-foreground text-xs">
-              {currency} / {destination}
-            </p>
-          </section>
-
-          <section>
-            <p className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
-              Report menu
-            </p>
-            <div className="grid gap-2">
-              {sections.map((section) => (
-                <article key={section.id} className="bg-background rounded-lg border p-3">
-                  <div className="flex items-center gap-2">
-                    <FileText className="text-muted-foreground size-3.5" />
-                    <p className="text-xs font-semibold">{section.title}</p>
-                    <span className="text-muted-foreground ml-auto text-[0.65rem]">
-                      {section.blocks.length}
-                    </span>
-                  </div>
-                  {section.blocks.length ? (
-                    <div className="mt-2 grid gap-1">
-                      {section.blocks.slice(0, 4).map((block) => (
-                        <p key={block} className="text-muted-foreground truncate text-xs">
-                          {block}
-                        </p>
-                      ))}
-                      {section.blocks.length > 4 ? (
-                        <p className="text-muted-foreground text-xs">
-                          +{section.blocks.length - 4} more
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground mt-2 text-xs">No records yet.</p>
-                  )}
-                </article>
-              ))}
+      ) : (
+        <>
+          <div className="flex h-14 items-center gap-2 border-b px-4">
+            <ListChecks className="size-4" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Log</p>
+              <p className="text-muted-foreground truncate text-xs">Canvas report steps</p>
             </div>
-          </section>
-
-          <section>
-            <p className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
-              Detailed steps
-            </p>
-            <div className="grid gap-2">
-              {steps.map((step) => (
-                <article key={step.id} className="bg-background rounded-lg border p-3">
-                  <p className="text-xs font-semibold">{step.title}</p>
-                  <p className="text-muted-foreground mt-1 text-xs leading-5">{step.detail}</p>
-                </article>
-              ))}
-              {steps.length === 0 ? (
-                <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
-                  No canvas actions yet. Add nodes or links to build the report log.
+            {loading ? (
+              <Loader2 className="text-muted-foreground ml-auto size-4 animate-spin" />
+            ) : null}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="grid gap-4">
+              <section className="rounded-lg border p-3">
+                <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                  Header
                 </p>
-              ) : null}
+                <p className="mt-2 text-sm font-medium">{customerName}</p>
+                <p className="text-muted-foreground text-xs">{employeeEmail}</p>
+                <p className="text-muted-foreground text-xs">
+                  {currency} / {destination}
+                </p>
+              </section>
+
+              <section>
+                <p className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
+                  Report menu
+                </p>
+                <div className="grid gap-2">
+                  {sections.map((section) => (
+                    <article key={section.id} className="bg-background rounded-lg border p-3">
+                      <div className="flex items-center gap-2">
+                        <FileText className="text-muted-foreground size-3.5" />
+                        <p className="text-xs font-semibold">{section.title}</p>
+                        <span className="text-muted-foreground ml-auto text-[0.65rem]">
+                          {section.blocks.length}
+                        </span>
+                      </div>
+                      {section.blocks.length ? (
+                        <div className="mt-2 grid gap-1">
+                          {section.blocks.slice(0, 4).map((block) => (
+                            <p key={block} className="text-muted-foreground truncate text-xs">
+                              {block}
+                            </p>
+                          ))}
+                          {section.blocks.length > 4 ? (
+                            <p className="text-muted-foreground text-xs">
+                              +{section.blocks.length - 4} more
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground mt-2 text-xs">No records yet.</p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <p className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
+                  Detailed steps
+                </p>
+                <div className="grid gap-2">
+                  {steps.map((step) => (
+                    <article key={step.id} className="bg-background rounded-lg border p-3">
+                      <p className="text-xs font-semibold">{step.title}</p>
+                      <p className="text-muted-foreground mt-1 text-xs leading-5">{step.detail}</p>
+                    </article>
+                  ))}
+                  {steps.length === 0 ? (
+                    <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+                      No canvas actions yet. Add nodes or links to build the report log.
+                    </p>
+                  ) : null}
+                </div>
+              </section>
             </div>
-          </section>
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </aside>
   );
 }

@@ -39,7 +39,7 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronLeft, Save, Trash2 } from "lucide-react";
+import { ChevronLeft, RefreshCw, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -59,7 +59,10 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCanvas } from "@/lib/hooks/use-canvas";
 import { useProject } from "@/lib/hooks/use-projects";
-import { useGenericNodeDefinitions } from "@/lib/hooks/use-workspace-records";
+import {
+  refreshWorkspaceRecords,
+  useGenericNodeDefinitions,
+} from "@/lib/hooks/use-workspace-records";
 import {
   normalizeImageGenerationModel,
   normalizeImageGenerationOutputFormat,
@@ -1694,6 +1697,50 @@ function Editor({
     setCanvasEdges([]);
     toast.success("Canvas cleared");
   }, [setCanvasNodes, setCanvasEdges]);
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const applyCanvasContent = useCallback(
+    (content: CanvasContent) => {
+      skipAutosaveAfterLoadRef.current = true;
+      const nextNodes = reorderChildrenAfterParents(content.nodes.map(normalizeNodeType));
+      const nextEdges = content.edges.map((e) => ({
+        ...e,
+        type: "deletable" as const,
+        sourceHandle: e.sourceHandle ?? "right",
+        targetHandle: e.targetHandle ?? "left",
+        style: { ...e.style, stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
+      }));
+      setCanvasNodes(nextNodes);
+      setCanvasEdges(nextEdges);
+      setLogPanelContent({ nodes: nextNodes, edges: nextEdges });
+      setGraphEpoch((epoch) => epoch + 1);
+    },
+    [setCanvasNodes, setCanvasEdges],
+  );
+
+  const refreshCanvasData = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await Promise.all([
+        refreshWorkspaceRecords(queryClient),
+        queryClient.refetchQueries({ queryKey: ["canvas", canvasId] }),
+        queryClient.refetchQueries({ queryKey: ["canvases", projectId] }),
+      ]);
+      const freshCanvas = await getCanvasStore().getCanvas(canvasId);
+      if (freshCanvas) {
+        loadedRef.current = true;
+        applyCanvasContent(freshCanvas.content);
+      }
+      toast.success("Refreshed customers, suppliers, nodes, and generic nodes");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to refresh data");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [applyCanvasContent, canvasId, projectId, queryClient, refreshing]);
 
   const resizeNode = useCallback(
     (id: string, width: number, height: number) => {

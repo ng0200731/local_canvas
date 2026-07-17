@@ -15,6 +15,7 @@ import type {
   WorkspaceOptionKind,
 } from "@/lib/workspace-settings";
 
+const WORKSPACE_RECORDS_ROOT_KEY = ["workspace-records"] as const;
 const CUSTOMERS_KEY = ["workspace-records", "customers"] as const;
 const SUPPLIERS_KEY = ["workspace-records", "suppliers"] as const;
 const PRODUCTS_KEY = ["workspace-records", "products"] as const;
@@ -22,6 +23,13 @@ const GENERIC_NODE_DEFINITIONS_KEY = ["workspace-records", "generic-node-definit
 
 function workspaceOptionsKey(kind: WorkspaceOptionKind) {
   return ["workspace-records", "workspace-options", kind] as const;
+}
+
+/** Refetch customers, suppliers, products, generic nodes, and workspace options. */
+export async function refreshWorkspaceRecords(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  await queryClient.refetchQueries({ queryKey: WORKSPACE_RECORDS_ROOT_KEY });
 }
 
 function optimisticId(): string {
