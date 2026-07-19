@@ -1,10 +1,11 @@
 "use client";
 
 import { type NodeProps } from "@xyflow/react";
-import { BookOpen, ImageIcon, Package, Search, X } from "lucide-react";
+import { BookOpen, Eye, ImageIcon, Package, Search, X } from "lucide-react";
 
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { ProductImageBrowserDialog } from "@/components/product-image-browser-dialog";
+import { SupplierImageManagementDialog } from "@/components/canvas/supplier-image-management-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
@@ -17,6 +18,7 @@ import type { SupplerCanvasNode } from "@/lib/nodes/types";
 import {
   supplierProductTypeLabels,
   supplierProductTypes,
+  isSupplierProductType,
   type SupplierProductType,
 } from "@/lib/workspace-records";
 import { cn } from "@/lib/utils";
@@ -60,6 +62,12 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
   const alias = typeof data.alias === "string" ? data.alias : "supplier";
   const supplierProducts = (products.data ?? []).filter(
     (product) => product.ownerKind === "supplier",
+  );
+  const selectedSupplier = (suppliers.data ?? []).find(
+    (supplier) => supplier.id === data.supplierId,
+  );
+  const selectedSupplierCatalogProducts = supplierProducts.filter(
+    (product) => product.supplierId === data.supplierId,
   );
   const selectedSupplierProducts = supplierProducts.filter(
     (product) =>
@@ -121,7 +129,17 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
   }
 
   function selectProductImage(item: ProductImageGalleryItem) {
+    if (!isSupplierProductType(item.product.productType)) return;
+    const supplier = (suppliers.data ?? []).find(
+      (candidate) => candidate.id === item.product.supplierId,
+    );
+    const supplierName = supplier?.company.companyName ?? null;
     updateNodeData(id, {
+      selectedProductType: item.product.productType,
+      productTypeQuery: supplierProductTypeLabels[item.product.productType],
+      supplierId: item.product.supplierId,
+      supplierName,
+      supplierQuery: supplierName ?? "",
       productId: item.product.id,
       productSubject: item.product.subject,
       variantId: item.variant.id,
@@ -278,10 +296,21 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
           <p className="text-muted-foreground truncate text-xs">
             {data.supplierName ?? "No supplier selected"}
           </p>
-          {data.supplierId ? (
-            <ProductImageBrowserDialog
-              products={selectedSupplierProducts}
-              title={`${data.supplierName ?? "Supplier"} product images`}
+          <div className="flex shrink-0 items-center gap-1">
+            <SupplierImageManagementDialog
+              products={selectedSupplierCatalogProducts}
+              suppliers={selectedSupplier ? [selectedSupplier] : []}
+              isCatalogLoading={suppliers.isLoading || products.isLoading}
+              catalogError={
+                !data.supplierId
+                  ? "Select a supplier before searching its product images."
+                  : suppliers.error instanceof Error
+                    ? suppliers.error.message
+                    : products.error instanceof Error
+                      ? products.error.message
+                      : null
+              }
+              currentSupplierId={data.supplierId}
               selectedItemId={selectedGalleryItemId}
               onSelect={selectProductImage}
               trigger={
@@ -289,16 +318,36 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
                   type="button"
                   size="icon-sm"
                   variant="outline"
-                  aria-label="Open supplier product image book"
-                  title="Open supplier product image book"
+                  aria-label="Search similar images for this supplier"
+                  title="Search similar images for this supplier"
                   className="nodrag"
-                  disabled={selectedSupplierProducts.length === 0}
                 >
-                  <BookOpen />
+                  <Eye />
                 </Button>
               }
             />
-          ) : null}
+            {data.supplierId ? (
+              <ProductImageBrowserDialog
+                products={selectedSupplierProducts}
+                title={`${data.supplierName ?? "Supplier"} product images`}
+                selectedItemId={selectedGalleryItemId}
+                onSelect={selectProductImage}
+                trigger={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Open supplier product image book"
+                    title="Open supplier product image book"
+                    className="nodrag"
+                    disabled={selectedSupplierProducts.length === 0}
+                  >
+                    <BookOpen />
+                  </Button>
+                }
+              />
+            ) : null}
+          </div>
         </div>
         {data.variantImageUrl ? (
           <div className="bg-muted overflow-hidden rounded-md border">

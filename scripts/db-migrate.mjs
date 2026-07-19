@@ -38,7 +38,7 @@ loadEnvFile(".env.local");
 loadEnvFile(".env");
 
 const databaseUrl =
-  process.env.DATABASE_URL ?? "postgresql://canvas:canvas@localhost:5432/canvas_dev";
+  process.env.DATABASE_URL ?? "postgresql://canvas:canvas@localhost:15432/canvas_dev";
 const localUserId =
   process.env.LOCAL_USER_ID ?? "00000000-0000-4000-8000-000000000001";
 

@@ -10,9 +10,13 @@ import {
 import { mergeProjectMetadata, type ProjectMetadata } from "@/lib/project-metadata";
 import { ensureLocalProfile, query, queryOne, withTransaction } from "@/lib/db/client";
 import { localUserId } from "@/lib/env";
-import type {
-  SampleOrder,
-} from "@/lib/sample-orders";
+import {
+  listLocalSampleOrders,
+  rotateLocalSampleOrderToken,
+  updateLocalSampleOrderEmail,
+  upsertLocalSampleOrder,
+} from "@/lib/sample-order-postgres";
+import type { SampleOrder } from "@/lib/sample-orders";
 
 import type {
   Canvas,
@@ -343,12 +347,6 @@ async function replaceCanvasGraph(canvasId: string, content: CanvasContent, user
   });
 }
 
-function sampleOrdersUnavailable(): never {
-  throw new Error(
-    "Sample-order token flows are out of scope for local Postgres mode. Use browser local mode or cloud Supabase.",
-  );
-}
-
 export function createPostgresCanvasStore(): CanvasStore {
   return {
     async listProjects() {
@@ -636,19 +634,23 @@ export function createPostgresCanvasStore(): CanvasStore {
       return mapCanvasSend(row);
     },
 
-    async listSampleOrders(): Promise<SampleOrder[]> {
-      return [];
+    async listSampleOrders() {
+      await ensureLocalProfile();
+      return await listLocalSampleOrders();
     },
-    async upsertSampleOrder(_input): Promise<SampleOrder> {
-      return sampleOrdersUnavailable();
+    async upsertSampleOrder(input) {
+      await ensureLocalProfile();
+      return await upsertLocalSampleOrder(input);
     },
-    async updateSampleOrderEmail(_id, _input): Promise<SampleOrder> {
-      return sampleOrdersUnavailable();
+    async updateSampleOrderEmail(id, input) {
+      await ensureLocalProfile();
+      return await updateLocalSampleOrderEmail(id, input);
     },
-    async rotateSampleOrderToken(_id, _input): Promise<SampleOrder> {
-      return sampleOrdersUnavailable();
+    async rotateSampleOrderToken(id, input) {
+      await ensureLocalProfile();
+      return await rotateLocalSampleOrderToken(id, input);
     },
-    async generateDemoSampleOrders(_count): Promise<SampleOrder[]> {
+    async generateDemoSampleOrders(): Promise<SampleOrder[]> {
       throw new Error("Demo sample orders are available only in browser local mode.");
     },
 

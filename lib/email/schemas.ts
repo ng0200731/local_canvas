@@ -109,6 +109,7 @@ const canvasReportStepSchema = z
 
 export const canvasReportPayloadSchema = z
   .object({
+    schemaVersion: z.literal(2).optional(),
     title: z.string().trim().min(1).max(300),
     generatedAt: z.iso.datetime(),
     send: z
@@ -126,6 +127,7 @@ export const canvasReportPayloadSchema = z
       .optional(),
     project: z
       .object({
+        id: z.string().trim().min(1).max(200).optional(),
         name: z.string().trim().min(1).max(300),
         customerName: z.string().trim().min(1).max(300),
         employeeName: z.string().trim().min(1).max(300),
@@ -136,6 +138,15 @@ export const canvasReportPayloadSchema = z
         destination: z.string().trim().min(1).max(300),
       })
       .strict(),
+    canvas: z
+      .object({
+        id: z.string().trim().min(1).max(200),
+        name: z.string().trim().min(1).max(300),
+        createdAt: z.iso.datetime(),
+        updatedAt: z.iso.datetime(),
+      })
+      .strict()
+      .optional(),
     sections: z
       .array(
         z
@@ -209,7 +220,7 @@ export const sendPhysicalSampleApprovalEmailRequestSchema = z
     projectName: z.string().trim().min(1).max(300),
     canvasName: z.string().trim().min(1).max(300),
     supplierName: z.string().trim().min(1).max(300),
-    trackingNumber: z.string().trim().min(1).max(300),
+    awb: z.string().trim().min(1).max(300),
     approvalUrl: z.url(),
     rejectionUrl: z.url(),
   })

@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 
+import {
+  canvasSendDecisionSchema,
+  canvasSendResponseSchema,
+  respondLocalCanvasSend,
+} from "@/lib/canvas-send-public";
+import { isLocalPostgresConfigured, isSupabaseConfigured } from "@/lib/env";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-
-const decisionSchema = z.enum(["approved", "rejected"]);
-const responseSchema = z.object({
-  sequence: z.string(),
-  status: z.enum(["approved", "rejected"]),
-  alreadyResponded: z.boolean().optional(),
-});
 
 export const runtime = "nodejs";
 
@@ -84,20 +82,30 @@ function resultPage(input: {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const token = url.searchParams.get("token") ?? "";
-  const decision = decisionSchema.safeParse(url.searchParams.get("decision"));
+  const decision = canvasSendDecisionSchema.safeParse(url.searchParams.get("decision"));
   if (!token || !decision.success) {
     return NextResponse.json({ error: "Invalid approval link." }, { status: 400 });
   }
 
   try {
-    const supabase = await getSupabaseServerClient();
-    const response = await supabase.rpc("respond_canvas_send", {
-      p_status: decision.data,
-      p_token: token,
-    });
-    if (response.error) throw new Error(response.error.message);
+    const send = isSupabaseConfigured
+      ? await (async () => {
+          const supabase = await getSupabaseServerClient();
+          const response = await supabase.rpc("respond_canvas_send", {
+            p_status: decision.data,
+            p_token: token,
+          });
+          if (response.error) throw new Error(response.error.message);
+          return canvasSendResponseSchema.parse(response.data);
+        })()
+      : isLocalPostgresConfigured
+        ? await respondLocalCanvasSend(token, decision.data)
+        : null;
 
-    const send = responseSchema.parse(response.data);
+    if (!send) {
+      throw new Error("Canvas send approval links require Supabase or local Postgres mode.");
+    }
+
     return new NextResponse(
       resultPage({
         sequence: send.sequence,

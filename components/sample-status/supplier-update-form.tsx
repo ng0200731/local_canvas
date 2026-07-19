@@ -16,8 +16,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  SAMPLE_STAGES,
   SAMPLE_STAGE_LABELS,
+  SUPPLIER_UPDATE_STAGES,
   sampleUpdatePayloadSchema,
   type SampleStage,
 } from "@/lib/sample-orders";
@@ -31,9 +31,8 @@ interface FieldDefinition {
 
 const FIELDS: Record<SampleStage, readonly FieldDefinition[]> = {
   pmc: [
-    { key: "owner", label: "PMC owner", type: "text" },
-    { key: "plannedCompletionDate", label: "Planned completion", type: "date" },
-    { key: "materialReadinessPercent", label: "Material readiness (%)", type: "number" },
+    { key: "receivedBy", label: "Received by", type: "text" },
+    { key: "pmcDate", label: "PMC date", type: "date" },
     { key: "notes", label: "Notes", type: "textarea" },
   ],
   purchase: [
@@ -46,35 +45,24 @@ const FIELDS: Record<SampleStage, readonly FieldDefinition[]> = {
   ],
   production: [
     { key: "startDate", label: "Production start", type: "date" },
-    { key: "plannedQuantity", label: "Planned quantity", type: "number" },
-    { key: "completedQuantity", label: "Completed quantity", type: "number" },
-    { key: "progressPercent", label: "Progress (%)", type: "number" },
-    { key: "expectedFinishDate", label: "Expected finish", type: "date" },
+    { key: "plannedFinishDate", label: "Planned finish", type: "date" },
     { key: "notes", label: "Production notes", type: "textarea" },
   ],
   quality_control: [
-    { key: "inspectionDate", label: "Inspection date", type: "date" },
-    { key: "inspector", label: "Inspector", type: "text" },
-    { key: "sampleSize", label: "Sample size", type: "number" },
-    { key: "passedQuantity", label: "Passed quantity", type: "number" },
-    { key: "rejectedQuantity", label: "Rejected quantity", type: "number" },
-    { key: "result", label: "QC result", type: "select", options: ["pending", "passed", "failed"] },
-    { key: "evidenceUrl", label: "Evidence URL", type: "url" },
+    { key: "qcStartDate", label: "QC start date", type: "date" },
+    { key: "defectivePercent", label: "Defective (%)", type: "number" },
+    { key: "inspectedQuantity", label: "Inspected quantity", type: "number" },
+    { key: "evidenceUrl", label: "QC document URL", type: "url" },
   ],
   package: [
-    { key: "packagingType", label: "Packaging type", type: "text" },
+    { key: "packagingStartDate", label: "Packaging start", type: "date" },
     { key: "cartonCount", label: "Carton count", type: "number" },
     { key: "unitsPerCarton", label: "Units per carton", type: "number" },
-    { key: "netWeight", label: "Net weight (kg)", type: "number" },
-    { key: "grossWeight", label: "Gross weight (kg)", type: "number" },
-    { key: "dimensions", label: "Carton dimensions", type: "text" },
-    { key: "readyDate", label: "Ready date", type: "date" },
+    { key: "notes", label: "Packaging notes", type: "textarea" },
   ],
   shipment: [
     { key: "carrier", label: "Carrier", type: "text" },
-    { key: "shippingMethod", label: "Shipping method", type: "text" },
-    { key: "trackingNumber", label: "Tracking number", type: "text" },
-    { key: "shippedQuantity", label: "Shipped quantity", type: "number" },
+    { key: "awb", label: "AWB", type: "text" },
     { key: "shipDate", label: "Ship date", type: "date" },
     { key: "eta", label: "Estimated arrival", type: "date" },
     { key: "documentUrl", label: "Shipping document URL", type: "url" },
@@ -84,8 +72,7 @@ const FIELDS: Record<SampleStage, readonly FieldDefinition[]> = {
     { key: "invoiceDate", label: "Invoice date", type: "date" },
     { key: "currency", label: "Currency", type: "text" },
     { key: "amount", label: "Amount", type: "number" },
-    { key: "dueDate", label: "Due date", type: "date" },
-    { key: "invoiceUrl", label: "Invoice URL", type: "url" },
+    { key: "documentUrl", label: "Invoice document URL", type: "url" },
   ],
 };
 
@@ -162,7 +149,7 @@ export function SupplierUpdateForm({ token }: { token: string }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {SAMPLE_STAGES.map((value) => (
+            {SUPPLIER_UPDATE_STAGES.map((value) => (
               <SelectItem key={value} value={value}>
                 {SAMPLE_STAGE_LABELS[value]}
               </SelectItem>

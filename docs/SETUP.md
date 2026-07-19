@@ -40,11 +40,15 @@ Use this when you want real SQL durability on your machine without cloud Supabas
 3. Set:
 
    ```bash
-   DATABASE_URL=postgresql://canvas:canvas@localhost:5432/canvas_dev
+   DATABASE_URL=postgresql://canvas:canvas@localhost:15432/canvas_dev
    NEXT_PUBLIC_LOCAL_POSTGRES=true
    # optional:
    LOCAL_USER_ID=00000000-0000-4000-8000-000000000001
    ```
+
+   Host `15432` maps to container `5432` because Windows often reserves host `5432`
+   via Hyper-V excluded port ranges. If you use another free host port, keep
+   `DATABASE_URL` and `docker-compose.yml` in sync.
 
 4. Start Postgres and apply the local schema:
 

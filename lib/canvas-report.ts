@@ -46,10 +46,12 @@ export interface CanvasReportSection {
 }
 
 export interface CanvasReport {
+  schemaVersion: 2;
   title: string;
   generatedAt: string;
   send?: CanvasReportSendInfo;
   project: {
+    id: string;
     name: string;
     customerName: string;
     employeeName: string;
@@ -58,6 +60,12 @@ export interface CanvasReport {
     employeeTel: string;
     currency: string;
     destination: string;
+  };
+  canvas: {
+    id: string;
+    name: string;
+    createdAt: string;
+    updatedAt: string;
   };
   customerProducts: CanvasReportBlock[];
   supplierBlocks: CanvasReportBlock[];
@@ -80,7 +88,10 @@ export interface CanvasReportSendInfo {
 }
 
 export interface BuildCanvasReportInput {
-  canvas: Pick<Canvas, "id" | "name" | "content" | "createdAt" | "updatedAt">;
+  canvas: Pick<
+    Canvas,
+    "id" | "projectId" | "name" | "content" | "createdAt" | "updatedAt"
+  >;
   project: Project | null;
   customers: readonly CustomerRecord[];
   suppliers: readonly SupplierRecord[];
@@ -577,9 +588,11 @@ function makeHtml(report: Omit<CanvasReport, "html" | "text">): string {
     )
     .join("");
   const send = report.send
-    ? `<section class="approval"><div><h2>Canvas approval</h2><p><strong>Sequence:</strong> ${escapeHtml(report.send.sequence)}</p><p><strong>Scan:</strong> <a href="${escapeHtml(report.send.reportUrl)}">${escapeHtml(report.send.reportUrl)}</a></p><p><strong>Approve:</strong> <a href="${escapeHtml(report.send.approvalUrl)}">Confirm approval</a></p><p><strong>Reject:</strong> <a href="${escapeHtml(report.send.rejectionUrl)}">Reject canvas</a></p></div>${report.send.qrCodeDataUrl ? `<img src="${escapeHtml(report.send.qrCodeDataUrl)}" alt="QR code for ${escapeHtml(report.send.sequence)}">` : ""}</section>`
+    ? `<section class="approval"><div><h2>Canvas QR reference</h2><p><strong>Reference:</strong> ${escapeHtml(report.send.sequence)}</p><p><strong>Project:</strong> ${escapeHtml(project.name)}</p><p><strong>Canvas:</strong> ${escapeHtml(report.canvas.name)}</p><p><strong>Relationship:</strong> ${escapeHtml(project.name)} &rarr; ${escapeHtml(report.canvas.name)} &rarr; ${escapeHtml(report.send.sequence)}</p><p><strong>Scan:</strong> <a href="${escapeHtml(report.send.reportUrl)}">Open this canvas report</a></p><p><strong>Approve:</strong> <a href="${escapeHtml(report.send.approvalUrl)}">Confirm approval</a></p><p><strong>Reject:</strong> <a href="${escapeHtml(report.send.rejectionUrl)}">Reject canvas</a></p></div>${report.send.qrCodeDataUrl ? `<img src="${escapeHtml(report.send.qrCodeDataUrl)}" alt="QR code for canvas ${escapeHtml(report.canvas.name)} in project ${escapeHtml(project.name)}, reference ${escapeHtml(report.send.sequence)}">` : ""}</section>`
     : "";
   return `<!doctype html><html><head><meta charset="utf-8"><style>${pageCss}</style></head><body><div class="page"><header><h1>${escapeHtml(report.title)}</h1><div class="meta">
+    <span><strong>Project:</strong> ${escapeHtml(project.name)}</span>
+    <span><strong>Canvas:</strong> ${escapeHtml(report.canvas.name)}</span>
     <span><strong>Customer:</strong> ${escapeHtml(project.customerName)}</span>
     <span><strong>Contact:</strong> ${escapeHtml([project.employeeName, project.employeeTitle].filter(Boolean).join(" / "))}</span>
     <span><strong>Email:</strong> ${escapeHtml(project.employeeEmail)}</span>
@@ -599,12 +612,15 @@ function makeText(report: Omit<CanvasReport, "html" | "text">): string {
     report.title,
     ...(report.send
       ? [
-          `Canvas sequence: ${report.send.sequence}`,
+          `Canvas report reference: ${report.send.sequence}`,
+          `Relationship: ${report.project.name} -> ${report.canvas.name} -> ${report.send.sequence}`,
           `Scan URL: ${report.send.reportUrl}`,
           `Approve: ${report.send.approvalUrl}`,
           `Reject: ${report.send.rejectionUrl}`,
         ]
       : []),
+    `Project: ${report.project.name}`,
+    `Canvas: ${report.canvas.name}`,
     `Customer: ${report.project.customerName}`,
     `Contact: ${[report.project.employeeName, report.project.employeeTitle].filter(Boolean).join(" / ")}`,
     `Email: ${report.project.employeeEmail}`,
@@ -839,10 +855,12 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
   ];
 
   const baseReport: Omit<CanvasReport, "html" | "text"> = {
+    schemaVersion: 2,
     title: `${input.canvas.name} canvas report`,
     generatedAt: new Date().toISOString(),
     send: input.send,
     project: {
+      id: input.project?.id ?? input.canvas.projectId,
       name: input.project?.name ?? "Project",
       customerName: input.project?.customerName ?? customer?.company.companyName ?? "Not set",
       employeeName: input.project?.employeeName ?? "Not set",
@@ -853,6 +871,12 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
         [input.project?.currencyCode, input.project?.currencySymbol].filter(Boolean).join(" ") ||
         "Not set",
       destination: input.project?.destinationCountryName ?? "Not set",
+    },
+    canvas: {
+      id: input.canvas.id,
+      name: input.canvas.name,
+      createdAt: input.canvas.createdAt,
+      updatedAt: input.canvas.updatedAt,
     },
     customerProducts,
     supplierBlocks,

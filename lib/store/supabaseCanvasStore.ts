@@ -895,6 +895,8 @@ export function createSupabaseCanvasStore(): CanvasStore {
         snapshot: input.snapshot,
         email_status: "pending",
         email_error: null,
+        current_stage: "purchase",
+        current_payload: null,
       };
       const query = existing.data
         ? supabase

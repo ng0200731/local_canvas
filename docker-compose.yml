@@ -6,7 +6,8 @@ services:
       POSTGRES_PASSWORD: canvas
       POSTGRES_DB: canvas_dev
     ports:
-      - "5432:5432"
+      # Host 15432: Windows often reserves 5432 via Hyper-V/WSL excluded ranges.
+      - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

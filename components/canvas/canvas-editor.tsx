@@ -1723,12 +1723,18 @@ function Editor({
     if (refreshing) return;
     setRefreshing(true);
     try {
+      // Flush any pending autosave so local graph edits aren't dropped.
       if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (loadedRef.current) {
+        await getCanvasStore().saveCanvasContent(canvasId, getCurrentCanvasContent());
+      }
+
       await Promise.all([
         refreshWorkspaceRecords(queryClient),
         queryClient.refetchQueries({ queryKey: ["canvas", canvasId] }),
         queryClient.refetchQueries({ queryKey: ["canvases", projectId] }),
       ]);
+
       const freshCanvas = await getCanvasStore().getCanvas(canvasId);
       if (freshCanvas) {
         loadedRef.current = true;
@@ -1740,7 +1746,14 @@ function Editor({
     } finally {
       setRefreshing(false);
     }
-  }, [applyCanvasContent, canvasId, projectId, queryClient, refreshing]);
+  }, [
+    applyCanvasContent,
+    canvasId,
+    getCurrentCanvasContent,
+    projectId,
+    queryClient,
+    refreshing,
+  ]);
 
   const resizeNode = useCallback(
     (id: string, width: number, height: number) => {
@@ -2048,6 +2061,17 @@ function Editor({
         <div className="ml-auto flex items-center gap-2">
           {canvas ? <SendCanvasDialog canvas={canvas} project={project ?? null} /> : null}
           <RenderGalleryDialog canvasId={canvasId} />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shadow-sm"
+            disabled={isLoading || !canvas || refreshing}
+            onClick={() => void refreshCanvasData()}
+          >
+            <RefreshCw className={cn(refreshing && "animate-spin")} />
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </Button>
           <ConfirmDialog
             title="Delete all nodes?"
             description="This removes every node and wire from this canvas."

@@ -146,6 +146,72 @@ CREATE INDEX IF NOT EXISTS canvas_sends_user_id_idx ON public.canvas_sends(user_
 CREATE INDEX IF NOT EXISTS canvas_sends_canvas_id_idx ON public.canvas_sends(canvas_id);
 
 -- ── Customers / suppliers / products ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.sample_orders (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id               uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  canvas_send_id        uuid REFERENCES public.canvas_sends(id) ON DELETE SET NULL,
+  canvas_id             uuid REFERENCES public.canvases(id) ON DELETE SET NULL,
+  project_id            uuid REFERENCES public.projects(id) ON DELETE SET NULL,
+  supplier_id           uuid,
+  sequence              text NOT NULL CHECK (sequence ~ '^CA[0-9]{6}$'),
+  recipient_email       text NOT NULL,
+  approver_email        text NOT NULL,
+  snapshot              jsonb NOT NULL,
+  supplier_token_hash   text NOT NULL UNIQUE,
+  email_status          text NOT NULL DEFAULT 'pending'
+    CHECK (email_status IN ('pending', 'sent', 'failed')),
+  email_error           text,
+  delivery_count        integer NOT NULL DEFAULT 1 CHECK (delivery_count >= 0),
+  purchase_sent_at      timestamptz,
+  current_stage         text
+    CHECK (
+      current_stage IN (
+        'pmc', 'purchase', 'production', 'quality_control', 'package', 'shipment', 'invoice'
+      )
+    ),
+  current_payload       jsonb,
+  latest_update_at      timestamptz,
+  approval_status       text NOT NULL DEFAULT 'not_requested'
+    CHECK (approval_status IN ('not_requested', 'pending', 'approved', 'rejected')),
+  approval_token_hash   text UNIQUE,
+  approval_email_status text CHECK (approval_email_status IN ('pending', 'sent', 'failed')),
+  approval_error        text,
+  approval_sent_at      timestamptz,
+  approval_responded_at timestamptz,
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  updated_at            timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT sample_orders_snapshot_object CHECK (jsonb_typeof(snapshot) = 'object'),
+  CONSTRAINT sample_orders_payload_object CHECK (
+    current_payload IS NULL OR jsonb_typeof(current_payload) = 'object'
+  )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sample_orders_send_supplier_unique
+  ON public.sample_orders(canvas_send_id, supplier_id)
+  WHERE canvas_send_id IS NOT NULL AND supplier_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS sample_orders_user_updated_idx
+  ON public.sample_orders(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS sample_orders_sequence_idx ON public.sample_orders(sequence);
+CREATE INDEX IF NOT EXISTS sample_orders_supplier_token_idx
+  ON public.sample_orders(supplier_token_hash);
+CREATE INDEX IF NOT EXISTS sample_orders_approval_token_idx
+  ON public.sample_orders(approval_token_hash);
+
+CREATE TABLE IF NOT EXISTS public.sample_order_updates (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id   uuid NOT NULL REFERENCES public.sample_orders(id) ON DELETE CASCADE,
+  user_id    uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  stage      text NOT NULL
+    CHECK (
+      stage IN ('pmc', 'purchase', 'production', 'quality_control', 'package', 'shipment', 'invoice')
+    ),
+  payload    jsonb NOT NULL,
+  source     text NOT NULL DEFAULT 'supplier_web' CHECK (source IN ('supplier_web', 'demo')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT sample_order_updates_payload_object CHECK (jsonb_typeof(payload) = 'object')
+);
+CREATE INDEX IF NOT EXISTS sample_order_updates_order_created_idx
+  ON public.sample_order_updates(order_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS public.customers (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id             uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -284,7 +350,7 @@ DECLARE
   t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    'projects', 'canvases', 'canvas_nodes', 'canvas_edges',
+    'projects', 'canvases', 'canvas_nodes', 'canvas_edges', 'sample_orders',
     'customers', 'customer_employees', 'suppliers', 'supplier_employees',
     'products', 'product_variants', 'workspace_options', 'generic_node_definitions'
   ]

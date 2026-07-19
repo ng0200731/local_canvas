@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 import { getWorkspaceRecordStore } from "@/lib/store/workspaceRecords";
 import type {
@@ -26,9 +31,7 @@ function workspaceOptionsKey(kind: WorkspaceOptionKind) {
 }
 
 /** Refetch customers, suppliers, products, generic nodes, and workspace options. */
-export async function refreshWorkspaceRecords(
-  queryClient: ReturnType<typeof useQueryClient>,
-) {
+export async function refreshWorkspaceRecords(queryClient: QueryClient) {
   await queryClient.refetchQueries({ queryKey: WORKSPACE_RECORDS_ROOT_KEY });
 }
 

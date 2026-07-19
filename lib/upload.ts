@@ -1,5 +1,7 @@
 "use client";
 
+import { z } from "zod";
+
 import { isLocalPostgresConfigured, isSupabaseConfigured } from "@/lib/env";
 import type { ImageGenerationOutputFormat } from "@/lib/image-generation-models";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -12,6 +14,12 @@ export interface UploadResult {
 const MAX_DIMENSION = 1280;
 const QUALITY = 0.85;
 const DEFAULT_FORMAT: ImageGenerationOutputFormat = "webp";
+
+const localUploadResponseSchema = z.object({
+  url: z.string().min(1).optional(),
+  storagePath: z.string().min(1).optional(),
+  error: z.string().min(1).optional(),
+});
 
 function mimeForFormat(format: ImageGenerationOutputFormat): string {
   if (format === "png") return "image/png";
@@ -38,7 +46,7 @@ function uid(): string {
 async function fileToScaled(
   file: File,
   format: ImageGenerationOutputFormat,
-): Promise<{ dataUrl: string; blob: Blob }> {
+): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
@@ -53,7 +61,6 @@ async function fileToScaled(
   bitmap.close?.();
 
   const mime = mimeForFormat(format);
-  const dataUrl = canvas.toDataURL(mime, QUALITY);
   const blob: Blob = await new Promise((resolve, reject) => {
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("Failed to encode image"))),
@@ -61,7 +68,24 @@ async function fileToScaled(
       QUALITY,
     );
   });
-  return { dataUrl, blob };
+  return blob;
+}
+
+/** Data URLs are needed only in zero-storage demo mode. FileReader keeps the
+ * base64 conversion asynchronous instead of blocking the UI with toDataURL. */
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read the encoded image."));
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Failed to create an image data URL."));
+      }
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function uploadToLocalPostgres(
@@ -80,15 +104,15 @@ async function uploadToLocalPostgres(
     method: "POST",
     body: form,
   });
-  const payload = (await response.json().catch(() => ({}))) as {
-    url?: string;
-    storagePath?: string;
-    error?: string;
-  };
-  if (!response.ok || !payload.url) {
-    throw new Error(payload.error ?? "Failed to upload image to local Postgres storage.");
+  const payload: unknown = await response.json().catch(() => null);
+  const parsed = localUploadResponseSchema.safeParse(payload);
+  if (!response.ok || !parsed.success || !parsed.data.url) {
+    throw new Error(
+      (parsed.success ? parsed.data.error : null) ??
+        "Failed to upload image to local Postgres storage.",
+    );
   }
-  return { url: payload.url, storagePath: payload.storagePath ?? null };
+  return { url: parsed.data.url, storagePath: parsed.data.storagePath ?? null };
 }
 
 /**
@@ -101,7 +125,7 @@ export async function uploadImage(
   file: File,
   format: ImageGenerationOutputFormat = DEFAULT_FORMAT,
 ): Promise<UploadResult> {
-  const { dataUrl, blob } = await fileToScaled(file, format);
+  const blob = await fileToScaled(file, format);
 
   if (isSupabaseConfigured) {
     const supabase = getSupabaseBrowserClient();
@@ -124,7 +148,7 @@ export async function uploadImage(
     return uploadToLocalPostgres(blob, format);
   }
 
-  return { url: dataUrl, storagePath: null };
+  return { url: await blobToDataUrl(blob), storagePath: null };
 }
 
 /** Converts a provider result (data URL or remote URL) into durable app storage. */

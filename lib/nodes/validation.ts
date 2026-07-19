@@ -41,7 +41,7 @@ export const canvasEdgeSchema = z
   })
   .passthrough();
 
-const canvasContentSchema = z.object({
+export const canvasContentSchema = z.object({
   nodes: z.array(canvasNodeSchema),
   edges: z.array(canvasEdgeSchema),
 });

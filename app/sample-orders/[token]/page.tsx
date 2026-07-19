@@ -5,6 +5,8 @@ import { z } from "zod";
 
 import { SupplierUpdateForm } from "@/components/sample-status/supplier-update-form";
 import { Badge } from "@/components/ui/badge";
+import { isLocalPostgresConfigured, isSupabaseConfigured } from "@/lib/env";
+import { getLocalPublicSampleOrder } from "@/lib/sample-order-postgres";
 import {
   sampleApprovalStatusSchema,
   sampleOrderSnapshotSchema,
@@ -36,6 +38,27 @@ const rowSchema = z.object({
     .default([]),
 });
 
+async function getSampleOrder(hash: string): Promise<z.infer<typeof rowSchema> | null> {
+  if (isSupabaseConfigured) {
+    const supabase = getSupabaseServiceClient();
+    const result = await supabase
+      .from("sample_orders")
+      .select(
+        "sequence, snapshot, current_stage, current_payload, approval_status, purchase_sent_at, sample_order_updates(id, stage, payload, created_at)",
+      )
+      .eq("supplier_token_hash", hash)
+      .maybeSingle();
+    if (result.error || !result.data) return null;
+    return rowSchema.parse(result.data);
+  }
+
+  if (isLocalPostgresConfigured) {
+    return await getLocalPublicSampleOrder(hash);
+  }
+
+  return null;
+}
+
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "Not set";
 }
@@ -46,16 +69,9 @@ export default async function SampleOrderPage({ params }: { params: Promise<{ to
   let order: z.infer<typeof rowSchema>;
   try {
     const hash = createHash("sha256").update(token).digest("hex");
-    const supabase = getSupabaseServiceClient();
-    const result = await supabase
-      .from("sample_orders")
-      .select(
-        "sequence, snapshot, current_stage, current_payload, approval_status, purchase_sent_at, sample_order_updates(id, stage, payload, created_at)",
-      )
-      .eq("supplier_token_hash", hash)
-      .maybeSingle();
-    if (result.error || !result.data) notFound();
-    order = rowSchema.parse(result.data);
+    const result = await getSampleOrder(hash);
+    if (!result) notFound();
+    order = result;
   } catch (error) {
     if (error && typeof error === "object" && "digest" in error) throw error;
     notFound();

@@ -3,6 +3,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { deliverPhysicalSampleApprovalEmail } from "@/lib/email/mailer";
+import { env, isLocalPostgresConfigured, isSupabaseConfigured } from "@/lib/env";
+import {
+  getLocalApprovalRetrySampleOrder,
+  markLocalSampleOrderApprovalEmail,
+  prepareLocalSampleOrderApproval,
+} from "@/lib/sample-order-postgres";
 import { sampleOrderSnapshotSchema, sampleUpdatePayloadSchema } from "@/lib/sample-orders";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -21,6 +27,47 @@ export async function POST(request: Request) {
   const body = requestSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "Invalid sample order." }, { status: 400 });
   try {
+    if (isLocalPostgresConfigured) {
+      const order = await getLocalApprovalRetrySampleOrder(body.data.orderId);
+      const token = randomBytes(32).toString("hex");
+      const tokenHash = createHash("sha256").update(token).digest("hex");
+      await prepareLocalSampleOrderApproval(order.id, tokenHash);
+      const origin = (env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+      try {
+        await deliverPhysicalSampleApprovalEmail({
+          to: order.approverEmail,
+          sequence: order.sequence,
+          projectName: order.snapshot.project.name,
+          canvasName: order.snapshot.canvas.name,
+          supplierName: order.snapshot.supplier.name,
+          awb: order.currentPayload.awb,
+          approvalUrl: `${origin}/api/sample-orders/approval?token=${token}&decision=approved`,
+          rejectionUrl: `${origin}/api/sample-orders/approval?token=${token}&decision=rejected`,
+        });
+        await markLocalSampleOrderApprovalEmail({
+          orderId: order.id,
+          status: "sent",
+          sentAt: new Date().toISOString(),
+          error: null,
+        });
+        return NextResponse.json({ success: true });
+      } catch (error) {
+        await markLocalSampleOrderApprovalEmail({
+          orderId: order.id,
+          status: "failed",
+          error: error instanceof Error ? error.message : "Approval email failed",
+        });
+        throw error;
+      }
+    }
+
+    if (!isSupabaseConfigured) {
+      return NextResponse.json(
+        { error: "Sample-order storage is not configured." },
+        { status: 503 },
+      );
+    }
+
     const supabase = await getSupabaseServerClient();
     const {
       data: { user },
@@ -51,7 +98,7 @@ export async function POST(request: Request) {
       })
       .eq("id", order.id);
     if (prepared.error) throw new Error(prepared.error.message);
-    const origin = new URL(request.url).origin;
+    const origin = (env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
     try {
       await deliverPhysicalSampleApprovalEmail({
         to: order.approver_email,
@@ -59,7 +106,7 @@ export async function POST(request: Request) {
         projectName: order.snapshot.project.name,
         canvasName: order.snapshot.canvas.name,
         supplierName: order.snapshot.supplier.name,
-        trackingNumber: order.current_payload.trackingNumber,
+        awb: order.current_payload.awb,
         approvalUrl: `${origin}/api/sample-orders/approval?token=${token}&decision=approved`,
         rejectionUrl: `${origin}/api/sample-orders/approval?token=${token}&decision=rejected`,
       });

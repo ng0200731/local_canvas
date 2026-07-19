@@ -139,10 +139,15 @@ function addHeader(doc: PDFKit.PDFDocument, report: CanvasReportPayload) {
   doc.font("Helvetica-Bold").fontSize(12).fillColor("#111111");
   doc.text(report.title, PAGE_MARGIN, 24, { width: width * 0.54, lineBreak: false });
   doc.font("Helvetica").fontSize(8).fillColor("#555555");
-  doc.text(`Customer: ${report.project.customerName}`, PAGE_MARGIN, 40, {
-    width: width * 0.54,
-    lineBreak: false,
-  });
+  doc.text(
+    `Project: ${report.project.name} | Canvas: ${report.canvas?.name ?? report.title}`,
+    PAGE_MARGIN,
+    40,
+    {
+      width: width * 0.54,
+      lineBreak: false,
+    },
+  );
   doc.text(
     `Contact: ${[report.project.employeeName, report.project.employeeTitle].filter(Boolean).join(" / ")}`,
     PAGE_MARGIN + width * 0.58,
@@ -492,25 +497,42 @@ function drawReport(
   doc.y = PAGE_MARGIN + HEADER_HEIGHT;
 
   if (report.send) {
-    ensureSpace(doc, 108, report);
+    ensureSpace(doc, 144, report);
     const contentWidth = doc.page.width - PAGE_MARGIN * 2;
     const top = doc.y;
-    doc.roundedRect(PAGE_MARGIN, top, contentWidth, 96, 8).fillAndStroke("#fafafa", "#dddddd");
+    const canvasName = report.canvas?.name ?? report.title;
+    doc.roundedRect(PAGE_MARGIN, top, contentWidth, 128, 8).fillAndStroke("#fafafa", "#dddddd");
     doc.font("Helvetica-Bold").fontSize(12).fillColor("#111111");
-    doc.text("Canvas approval", PAGE_MARGIN + 12, top + 12, { width: contentWidth - 150 });
+    doc.text("Canvas QR reference", PAGE_MARGIN + 12, top + 10, {
+      width: contentWidth - 150,
+    });
     doc.font("Helvetica").fontSize(8).fillColor("#333333");
-    doc.text(`Sequence: ${report.send.sequence}`, PAGE_MARGIN + 12, top + 32, {
+    doc.text(`Reference: ${report.send.sequence}`, PAGE_MARGIN + 12, top + 28, {
       width: contentWidth - 150,
     });
-    doc.text(`Scan: ${report.send.reportUrl}`, PAGE_MARGIN + 12, top + 46, {
-      width: contentWidth - 150,
-      ellipsis: true,
-    });
-    doc.text(`Approve: ${report.send.approvalUrl}`, PAGE_MARGIN + 12, top + 60, {
+    doc.text(`Project: ${report.project.name}`, PAGE_MARGIN + 12, top + 42, {
       width: contentWidth - 150,
       ellipsis: true,
     });
-    doc.text(`Reject: ${report.send.rejectionUrl}`, PAGE_MARGIN + 12, top + 74, {
+    doc.text(`Canvas: ${canvasName}`, PAGE_MARGIN + 12, top + 56, {
+      width: contentWidth - 150,
+      ellipsis: true,
+    });
+    doc.text(
+      `Relationship: ${report.project.name} -> ${canvasName} -> ${report.send.sequence}`,
+      PAGE_MARGIN + 12,
+      top + 70,
+      { width: contentWidth - 150, ellipsis: true },
+    );
+    doc.text(`Scan: ${report.send.reportUrl}`, PAGE_MARGIN + 12, top + 84, {
+      width: contentWidth - 150,
+      ellipsis: true,
+    });
+    doc.text(`Approve: ${report.send.approvalUrl}`, PAGE_MARGIN + 12, top + 98, {
+      width: contentWidth - 150,
+      ellipsis: true,
+    });
+    doc.text(`Reject: ${report.send.rejectionUrl}`, PAGE_MARGIN + 12, top + 112, {
       width: contentWidth - 150,
       ellipsis: true,
     });
@@ -519,13 +541,13 @@ function drawReport(
         doc,
         report.send.qrCodeDataUrl,
         PAGE_MARGIN + contentWidth - 104,
-        top + 8,
+        top + 16,
         88,
-        80,
+        96,
         "QR code",
       );
     }
-    doc.y = top + 110;
+    doc.y = top + 142;
     doc.fillColor("#111111");
   }
 

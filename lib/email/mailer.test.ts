@@ -6,6 +6,7 @@ import {
   prepareCanvasMail,
   prepareCanvasReportMail,
   prepareCanvasReportHtmlOnlyMail,
+  preparePurchaseSamplingMail,
   type MailTransportFactory,
   type SmtpProviderConfig,
 } from "@/lib/email/mailer";
@@ -219,6 +220,30 @@ describe("SMTP email delivery", () => {
     expect(prepared.attachments).toEqual([]);
     expect(prepared.text).toBe("Report body");
     expect(prepared.html).toBe("<p>Report body</p>");
+  });
+
+  it("prepares purchase order email with HTML QR and a QR PDF attachment", async () => {
+    const prepared = await preparePurchaseSamplingMail({
+      to: "supplier@example.com",
+      sequence: "CA000001",
+      supplierName: "Supplier A",
+      projectName: "Project A",
+      canvasName: "Canvas A",
+      purchaseDate: "2026-07-18",
+      reportUrl: "https://example.com/canvas-report",
+      updateUrl: "https://example.com/sample-orders/token",
+      qrCodeDataUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+      supplierDetails: ["Line 1", "Line 2"],
+    });
+
+    expect(prepared.html).toContain("https://example.com/sample-orders/token");
+    expect(prepared.html).toContain("data:image/png;base64");
+    expect(prepared.attachments).toHaveLength(1);
+    expect(prepared.attachments[0]).toMatchObject({
+      filename: "CA000001-sample-status-qr.pdf",
+      contentType: "application/pdf",
+    });
   });
 
   it("can require the PDF attachment for the second diagnostic report email", async () => {

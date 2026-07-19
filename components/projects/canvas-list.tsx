@@ -18,6 +18,11 @@ import {
 import { toast } from "sonner";
 
 import { buildCanvasReport } from "@/lib/canvas-report";
+import {
+  buildCanvasSendLinks,
+  createCanvasSendToken,
+  normalizePublicAppUrl,
+} from "@/lib/canvas-send-links";
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,11 +66,6 @@ function canvasStatusLabel(status: Canvas["status"]): string {
   if (status === "approved") return "Approved";
   if (status === "rejected") return "Rejected";
   return "Draft";
-}
-
-function makeApprovalToken(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `approval-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function fuzzyMatch(value: string, query: string): boolean {
@@ -335,22 +335,27 @@ export function SendCanvasDialog({ canvas, project }: { canvas: Canvas; project:
     setSending(true);
     try {
       const selectedImages = images.filter((image) => selectedImageIds.includes(image.id));
-      const origin = window.location.origin;
-      const approvalToken = makeApprovalToken();
+      const publicAppUrl = normalizePublicAppUrl(
+        process.env.NEXT_PUBLIC_APP_URL,
+        window.location.origin,
+      );
+      const approvalToken = createCanvasSendToken();
       const provisionalSend = await getCanvasStore().createCanvasSend({
         canvasId: canvas.id,
         recipientEmail: recipients.join(", "),
-        reportUrl: `${origin}/canvas-sends/pending`,
+        reportUrl: publicAppUrl,
         approvalToken,
-        approvalUrl: `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=approved`,
-        rejectionUrl: `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=rejected`,
+        approvalUrl: publicAppUrl,
+        rejectionUrl: publicAppUrl,
         qrCodeDataUrl: null,
         selectedImageIds,
         reportSnapshot: { pending: true },
       });
-      const reportUrl = `${origin}/canvas-sends/${provisionalSend.sequence}?token=${approvalToken}`;
-      const approvalUrl = `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=approved`;
-      const rejectionUrl = `${origin}/api/canvas-sends/respond?token=${approvalToken}&decision=rejected`;
+      const { reportUrl, approvalUrl, rejectionUrl } = buildCanvasSendLinks({
+        baseUrl: publicAppUrl,
+        sequence: provisionalSend.sequence,
+        token: approvalToken,
+      });
       const qrCodeDataUrl = await toDataURL(reportUrl, {
         width: 180,
         margin: 1,
@@ -377,9 +382,11 @@ export function SendCanvasDialog({ canvas, project }: { canvas: Canvas; project:
         rejectionUrl,
         qrCodeDataUrl,
         reportSnapshot: {
+          schemaVersion: report.schemaVersion,
           title: report.title,
           generatedAt: report.generatedAt,
           project: report.project,
+          canvas: report.canvas,
           sections: report.sections,
           steps: report.steps,
           send: report.send,
@@ -395,9 +402,11 @@ export function SendCanvasDialog({ canvas, project }: { canvas: Canvas; project:
         text: report.text,
         pdfFilename: `${filename}-report.pdf`,
         report: {
+          schemaVersion: report.schemaVersion,
           title: report.title,
           generatedAt: report.generatedAt,
           project: report.project,
+          canvas: report.canvas,
           sections: report.sections,
           steps: report.steps,
           send: report.send,

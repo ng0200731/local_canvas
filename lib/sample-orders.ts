@@ -13,13 +13,22 @@ export const SAMPLE_STAGES = [
 export const sampleStageSchema = z.enum(SAMPLE_STAGES);
 export type SampleStage = z.infer<typeof sampleStageSchema>;
 
+export const SUPPLIER_UPDATE_STAGES = [
+  "pmc",
+  "production",
+  "quality_control",
+  "package",
+  "shipment",
+  "invoice",
+] as const satisfies readonly SampleStage[];
+
 export const SAMPLE_STAGE_LABELS: Record<SampleStage, string> = {
-  pmc: "PMC",
-  purchase: "Purchase",
-  production: "Production",
-  quality_control: "Quality control",
-  package: "Package",
-  shipment: "Shipment",
+  pmc: "Receive order",
+  purchase: "Purchase order sent",
+  production: "Start production",
+  quality_control: "Start QC",
+  package: "Start packaging",
+  shipment: "Ship out",
   invoice: "Invoice",
 };
 
@@ -30,12 +39,65 @@ const nonNegative = z.coerce.number().finite().min(0);
 const percentage = z.coerce.number().finite().min(0).max(100);
 const optionalUrl = z.union([z.literal(""), z.url().max(2_000)]).default("");
 
-export const sampleUpdatePayloadSchema = z.discriminatedUnion("stage", [
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeLegacySamplePayload(value: unknown): unknown {
+  if (!isRecord(value) || typeof value.stage !== "string") return value;
+  if (value.stage === "pmc" && "owner" in value) {
+    return {
+      ...value,
+      receivedBy: value.owner,
+      pmcDate: value.plannedCompletionDate,
+    };
+  }
+  if (value.stage === "production" && "expectedFinishDate" in value) {
+    return {
+      ...value,
+      plannedFinishDate: value.expectedFinishDate,
+    };
+  }
+  if (value.stage === "quality_control" && "rejectedQuantity" in value) {
+    const rejected = Number(value.rejectedQuantity ?? 0);
+    const sampleSize = Number(value.sampleSize ?? 0);
+    return {
+      ...value,
+      qcStartDate: value.inspectionDate,
+      inspectedQuantity: Number.isFinite(sampleSize) && sampleSize > 0 ? sampleSize : rejected,
+      defectivePercent:
+        Number.isFinite(sampleSize) && sampleSize > 0
+          ? Math.min(100, Math.max(0, (rejected / sampleSize) * 100))
+          : 0,
+    };
+  }
+  if (value.stage === "package" && "readyDate" in value) {
+    return {
+      ...value,
+      packagingStartDate: value.readyDate,
+      notes: value.dimensions,
+    };
+  }
+  if (value.stage === "shipment" && "trackingNumber" in value) {
+    return {
+      ...value,
+      awb: value.trackingNumber,
+    };
+  }
+  if (value.stage === "invoice" && "invoiceUrl" in value) {
+    return {
+      ...value,
+      documentUrl: value.invoiceUrl,
+    };
+  }
+  return value;
+}
+
+const sampleUpdatePayloadCoreSchema = z.discriminatedUnion("stage", [
   z.object({
     stage: z.literal("pmc"),
-    owner: requiredText,
-    plannedCompletionDate: dateText,
-    materialReadinessPercent: percentage,
+    receivedBy: requiredText,
+    pmcDate: dateText,
     notes: optionalNotes,
   }),
   z.object({
@@ -50,38 +112,27 @@ export const sampleUpdatePayloadSchema = z.discriminatedUnion("stage", [
   z.object({
     stage: z.literal("production"),
     startDate: dateText,
-    plannedQuantity: nonNegative,
-    completedQuantity: nonNegative,
-    progressPercent: percentage,
-    expectedFinishDate: dateText,
+    plannedFinishDate: dateText,
     notes: optionalNotes,
   }),
   z.object({
     stage: z.literal("quality_control"),
-    inspectionDate: dateText,
-    inspector: requiredText,
-    sampleSize: nonNegative,
-    passedQuantity: nonNegative,
-    rejectedQuantity: nonNegative,
-    result: z.enum(["pending", "passed", "failed"]),
+    qcStartDate: dateText,
+    defectivePercent: percentage,
+    inspectedQuantity: nonNegative,
     evidenceUrl: optionalUrl,
   }),
   z.object({
     stage: z.literal("package"),
-    packagingType: requiredText,
+    packagingStartDate: dateText,
     cartonCount: nonNegative,
-    unitsPerCarton: nonNegative,
-    netWeight: nonNegative,
-    grossWeight: nonNegative,
-    dimensions: requiredText,
-    readyDate: dateText,
+    unitsPerCarton: nonNegative.optional(),
+    notes: optionalNotes,
   }),
   z.object({
     stage: z.literal("shipment"),
     carrier: requiredText,
-    shippingMethod: requiredText,
-    trackingNumber: requiredText,
-    shippedQuantity: nonNegative,
+    awb: requiredText,
     shipDate: dateText,
     eta: dateText,
     documentUrl: optionalUrl,
@@ -92,10 +143,14 @@ export const sampleUpdatePayloadSchema = z.discriminatedUnion("stage", [
     invoiceDate: dateText,
     currency: requiredText,
     amount: nonNegative,
-    dueDate: dateText,
-    invoiceUrl: optionalUrl,
+    documentUrl: optionalUrl,
   }),
 ]);
+
+export const sampleUpdatePayloadSchema = z.preprocess(
+  normalizeLegacySamplePayload,
+  sampleUpdatePayloadCoreSchema,
+);
 
 export type SampleUpdatePayload = z.infer<typeof sampleUpdatePayloadSchema>;
 
@@ -231,19 +286,19 @@ export interface RotateSampleOrderTokenInput {
 export function payloadSummary(payload: SampleUpdatePayload): string {
   switch (payload.stage) {
     case "pmc":
-      return `${payload.materialReadinessPercent}% material ready`;
+      return `Received by ${payload.receivedBy} on ${payload.pmcDate}`;
     case "purchase":
       return `${payload.orderedQuantity} ${payload.unit} ordered`;
     case "production":
-      return `${payload.progressPercent}% complete`;
+      return `Started ${payload.startDate}`;
     case "quality_control":
-      return `${payload.result} · ${payload.passedQuantity} passed`;
+      return `${payload.defectivePercent}% defective`;
     case "package":
       return `${payload.cartonCount} cartons`;
     case "shipment":
-      return `${payload.carrier} · ${payload.trackingNumber}`;
+      return `${payload.carrier} · AWB ${payload.awb}`;
     case "invoice":
-      return `${payload.currency} ${payload.amount}`;
+      return `${payload.invoiceNumber} · ${payload.currency} ${payload.amount}`;
   }
 }
 

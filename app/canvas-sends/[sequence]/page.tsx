@@ -2,35 +2,10 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  getCanvasSendPublic,
+} from "@/lib/canvas-send-public";
 import { canvasReportPayloadSchema } from "@/lib/email/schemas";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
-
-const sendRowSchema = z.object({
-  sequence: z.string(),
-  status: z.enum(["awaiting_approval", "approved", "rejected"]),
-  recipient_email: z.string(),
-  report_snapshot: z.unknown(),
-  created_at: z.string(),
-  responded_at: z.string().nullable(),
-  canvases: z
-    .object({
-      name: z.string(),
-      created_at: z.string(),
-      updated_at: z.string(),
-      content: z.unknown(),
-      projects: z
-        .object({
-          name: z.string(),
-          customer_name: z.string().nullable(),
-          employee_name: z.string().nullable(),
-          employee_title: z.string().nullable(),
-          employee_email: z.string().nullable(),
-          employee_tel: z.string().nullable(),
-        })
-        .nullable(),
-    })
-    .nullable(),
-});
 
 function formatDateTime(value: string | null): string {
   if (!value) return "Not set";
@@ -54,14 +29,9 @@ export default async function CanvasSendPage({
   const { token } = await searchParams;
   if (!token) notFound();
 
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase.rpc("get_canvas_send_public", {
-    p_sequence: sequence,
-    p_token: token,
-  });
-  if (error || !data) notFound();
+  const row = await getCanvasSendPublic(sequence, token);
+  if (!row) notFound();
 
-  const row = sendRowSchema.parse(data);
   const report = canvasReportPayloadSchema.safeParse(row.report_snapshot);
   const project = row.canvases?.projects;
   const nodes = z
@@ -82,8 +52,17 @@ export default async function CanvasSendPage({
       </div>
 
       <section className="grid gap-4 rounded-lg border p-4">
-        <h2 className="text-base font-semibold">Canvas details</h2>
+        <div>
+          <h2 className="text-base font-semibold">Project and canvas relationship</h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            This QR identifies one canvas report inside its parent project.
+          </p>
+        </div>
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground">Report reference</dt>
+            <dd>{row.sequence}</dd>
+          </div>
           <div>
             <dt className="text-muted-foreground">Canvas</dt>
             <dd>{valueOrFallback(row.canvases?.name)}</dd>

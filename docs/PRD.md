@@ -2,13 +2,15 @@
 
 > Reverse-engineered product and redevelopment specification
 >
-> Document version: 2.0
+> Document version: 2.1
 >
 > Status: Implementation baseline
 >
-> Last updated: 2026-07-14
+> Last updated: 2026-07-17
 >
 > Primary audience: Product managers, UX/UI designers, software architects, frontend and backend engineers, QA engineers, and DevOps engineers
+>
+> Companion user guide: [docs/user-prd.md](./user-prd.md)
 
 ---
 
@@ -153,22 +155,154 @@ Configures SMTP, currencies, destinations, address-book entries, and reusable ge
 The default `/` experience is a full-height application shell with:
 
 - A collapsible left sidebar.
-- Expandable sections for Customer, Product, Supplier, Project, and Settings.
+- Expandable Level-1 sections for Customer, Product, Supplier, Project, Sample Status, and Settings.
+- Level-2 child actions under each section where applicable.
 - A tab strip allowing multiple functional areas to remain open.
-- A main content region that changes according to the active tab.
+- A main content region (right frame) that changes according to the active tab.
 - Runtime indicators showing `Cloud sync` or `Local mode`, and `AI enabled` or `AI disabled`.
 
-Sidebar structure:
+#### 6.1.1 Left menu — Level 1 and Level 2
 
-| Section  | Child actions / pages                                                   |
-| -------- | ----------------------------------------------------------------------- |
-| Customer | New; View / edit                                                        |
-| Product  | New; View / edit                                                        |
-| Supplier | New; View / edit                                                        |
-| Project  | View / edit                                                             |
-| Settings | SMTP setting; Currency; Destination country; Address book; Generic node |
+| Level 1 (section) | Level 2 (child)       | Opens main tab           | Mode / notes                              |
+| ----------------- | --------------------- | ------------------------ | ----------------------------------------- |
+| Customer          | New                   | Customer +               | Create form (`mode = new`)                |
+| Customer          | View / edit           | Customer +               | Directory / edit (`mode = records`)       |
+| Product           | New                   | Product +                | Create form                               |
+| Product           | View / edit           | Product +                | Product directory                         |
+| Supplier          | New                   | Supplier +               | Create form                               |
+| Supplier          | View / edit           | Supplier +               | Directory (table + multi-delete)          |
+| Project           | View / edit           | Project                  | Project list → detail → canvas            |
+| Sample Status     | _(none)_              | Sample Status            | Opens dashboard directly                  |
+| Settings          | SMTP setting          | SMTP Setting             | Test email + provider help                |
+| Settings          | Currency              | Currency                 | Ordered option list                       |
+| Settings          | Destination country   | Destination Country      | Ordered option list                       |
+| Settings          | Address book          | Address Book             | Reusable email recipients                 |
+| Settings          | Generic node          | Generic Node             | Canvas palette presets                    |
+
+Shell behaviors:
+
+| Control | Usage |
+| ------- | ----- |
+| Collapse / expand menu | Icon button at top of sidebar |
+| Click L1 section | Expands/collapses children; for Project, Sample Status, Settings also opens that tab |
+| Click L2 item | Opens (or focuses) a main tab and sets create vs view mode where relevant |
+| Tab strip | Keep multiple areas open; click a tab to switch; close a tab with its close control |
+| Close **Project** tab | Clears the in-memory selected project and canvas |
 
 The shell must preserve the currently selected project and canvas while the Project tab remains open. Closing the Project tab resets that in-memory selection.
+
+#### 6.1.2 Main tabs (right frame titles)
+
+| Tab label | Content |
+| --------- | ------- |
+| Customer + | Customer company / employee / product forms or directory |
+| Product + | Product create form or product records table |
+| Supplier + | Supplier company / employee / product forms or directory |
+| Project | Project list, project detail + canvases, or embedded canvas editor |
+| Sample Status | Sampling operations dashboard |
+| SMTP Setting | SMTP status cards + test email |
+| Currency | Currency options manager |
+| Destination Country | Destination options manager |
+| Address Book | Address-book options manager |
+| Generic Node | Generic node definition manager |
+
+#### 6.1.3 User forms — input fields, mini-tabs, buttons
+
+**Customer (+)** mini-tabs: **Company**, **Employee** (after company validates), **Product** (after company is complete).
+
+| Form area | Input fields | Buttons / actions |
+| --------- | ------------ | ----------------- |
+| Customer company | Company name; Email domain suffix; Type | Dummy input; Save and add employees |
+| Customer employee (per contact) | User name; Email prefix; Title; Tel | Dummy employees; Add more; Remove (trash); Save employees / Update employees |
+| Customer directory | Search company or employee | Expand/collapse; Add product; Edit; Product images browser |
+| Post-save dialog | — | Not now; Add product |
+
+**Supplier (+)** uses the same mini-tab shell as Customer.
+
+| Form area | Input fields | Buttons / actions |
+| --------- | ------------ | ----------------- |
+| Supplier company | Company name; Email domain suffix; Product type (≥1 multi-select: woven label, wash care label, hang tag, heat transfer, elastic, drawcord, metal, button, PU patch, embroidery patch, silicon patch, thread, polybag) | Dummy input; Save and add employees |
+| Supplier employee | Same as customer employees | Same as customer employees |
+| Supplier directory | Search; column filters: company, domain, product types, employees, products | Row checkbox; Delete selected (N); Delete (row); Product image browser; Edit; Add product |
+
+**Product (+)** create form:
+
+| Field | Required | Notes |
+| ----- | -------- | ----- |
+| Supplier | Yes when owner is supplier (standalone product tab) | Searchable supplier list |
+| Product type | Yes | Customer garment categories or supplier trim types |
+| Internal code | Yes | Subject / internal product code |
+| Product details | Yes | Specs, construction, packaging, quality notes |
+| Material | Yes (per active variant) | |
+| Color notes | Yes (per active variant) | Pantone, finish, contrast… |
+| Type-specific parameters | Optional | Depends on product type (Width, Height, Fold, Weave…) |
+| Unit price | Yes (per active variant) | Price unit auto-set by type |
+| Product image | Yes (≥1 per variant) | Paste, drop, or choose files; each image → numbered variant |
+
+Product buttons: Dummy input; Dummy parameters; Save product / Update product; variant number chips; image grid select; Choose images; Remove image (X); Remove current variant. Directory actions: Search; View; Edit.
+
+**Project**:
+
+| Form / area | Input fields | Buttons / actions |
+| ----------- | ------------ | ----------------- |
+| Project list | Fuzzy search projects | New project; Open; Send supplier purchase; Delete |
+| New project dialog | Customer company; Employer / contact; Name; Currency; Delivery destination | Cancel; Create / Creating… |
+| Project detail | — | Projects (back); canvas create/open/send/purchase/delete |
+| Send canvas report dialog | Recipient email(s); select exactly one render | Send report; Cancel |
+| Canvas list row | — | Open; Send; Send supplier purchase (after approval); Delete |
+
+**Sample Status**:
+
+| Area | Controls |
+| ---- | -------- |
+| Summary cards | Supplier orders; Needs attention; Awaiting approval; Sample approved |
+| Filters | Search CA/project/canvas/supplier; Stage select; Approval select; Sort |
+| Row / detail | Expand/collapse; Retry purchase email; Retry approval email; Open approved canvas report; Generate 10 demo orders (local mode only) |
+
+**Settings**:
+
+| Panel | Input fields | Buttons / actions |
+| ----- | ------------ | ----------------- |
+| SMTP Setting | Recipient email | Send test email; provider status cards (env names only, no secrets) |
+| Currency | Code; Name; Symbol | Search; Add; Edit; Delete; Reorder; Favorite; Cancel; Save changes |
+| Destination country | Code; Name | Same ordered-option controls |
+| Address book | Email address; Display name | Same ordered-option controls |
+| Generic node | Node name; Node images (≥1) | Search; Add generic node; Edit; Delete; Reorder; Cancel; Save changes |
+
+#### 6.1.4 How to use this web page (operator guide)
+
+Recommended order:
+
+1. **Settings once**: Currency → Destination country → optional Address book / Generic node → SMTP test if email is required.
+2. **Master data**: Customer → New (company → employees → optional product); Supplier → New (company + product types → employees → optional product); or Product → New against an existing owner.
+3. **Project → canvas**: Project → View / edit → New project → create canvas → Open.
+4. **Concept work**: Add Product/Supplier/Input/Generic/Pantone/Generate/Output nodes; connect references; set aliases; generate; canvas autosaves (~600 ms) and supports explicit Save canvas.
+5. **Approval**: Canvas list → Send → recipient(s) + exactly one render → Send report → status becomes awaiting_approval → customer Approves/Rejects once via tokenized link.
+6. **Sampling handoff**: After approved → Send supplier purchase → monitor Sample Status → Retry failed emails when needed.
+
+Status glossary:
+
+| Canvas / send status | Meaning |
+| -------------------- | ------- |
+| draft | Work in progress; not sent |
+| awaiting_approval | Report emailed; waiting for customer decision |
+| approved | Customer approved; purchase send unlocked |
+| rejected | Customer rejected |
+
+Key safety rules:
+
+1. Company must validate before Employee / Product mini-tabs unlock.
+2. At least one valid employee is required to fully save a customer/supplier.
+3. Product variants need image + material + color notes + unit price.
+4. Project create requires customer, contact, name, currency, and destination.
+5. Report send requires a valid email and exactly one selected render.
+6. Supplier purchase is available only after approval.
+7. Approval links are single-use.
+8. Destructive deletes always ask for confirmation.
+9. Leaving during active AI generation shows a warning.
+10. Secrets (SMTP, AI keys) never appear in browser forms—only env configuration.
+
+For the full operator-facing PRD with the same inventory, see [docs/user-prd.md](./user-prd.md).
 
 ### 6.2 Direct routes
 

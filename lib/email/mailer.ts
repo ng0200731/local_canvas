@@ -1,6 +1,7 @@
 import "server-only";
 
 import nodemailer, { type SendMailOptions } from "nodemailer";
+import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { env } from "@/lib/env";
@@ -191,6 +192,43 @@ function extensionForMimeType(mimeType: z.infer<typeof dataImageSchema>["mimeTyp
   return mimeType.slice("image/".length);
 }
 
+async function renderPurchaseOrderQrPdf(input: SendPurchaseSamplingEmailRequest): Promise<Buffer> {
+  const doc = new PDFDocument({ size: "A4", margin: 48 });
+  const chunks: Buffer[] = [];
+  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+  const done = new Promise<Buffer>((resolve, reject) => {
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+  });
+
+  doc.fontSize(18).text(`${input.sequence} purchase order`, { continued: false });
+  doc.moveDown(0.7);
+  doc.fontSize(11).fillColor("#444");
+  doc.text(`Supplier: ${input.supplierName}`);
+  doc.text(`Project: ${input.projectName}`);
+  doc.text(`Canvas: ${input.canvasName}`);
+  doc.text(`Purchase date: ${input.purchaseDate}`);
+  doc.moveDown();
+  doc.fillColor("#111").fontSize(12).text("Scan this QR code to update Sample Status.");
+  doc.moveDown(0.5);
+
+  const qrImage = parseDataImage(input.qrCodeDataUrl);
+  if (qrImage) {
+    doc.image(Buffer.from(qrImage.base64, "base64"), { width: 180, height: 180 });
+    doc.moveDown();
+  }
+
+  doc.fillColor("#111").fontSize(10).text(input.updateUrl, { width: 440 });
+  doc.moveDown();
+  doc.fontSize(11).text("Supplier details");
+  doc.fontSize(10).fillColor("#444");
+  for (const detail of input.supplierDetails) {
+    doc.text(`- ${detail}`);
+  }
+  doc.end();
+  return await done;
+}
+
 export interface PreparedMail {
   subject: string;
   text: string;
@@ -252,7 +290,9 @@ export function prepareTestMail(): PreparedMail {
   };
 }
 
-export function preparePurchaseSamplingMail(input: SendPurchaseSamplingEmailRequest): PreparedMail {
+export async function preparePurchaseSamplingMail(
+  input: SendPurchaseSamplingEmailRequest,
+): Promise<PreparedMail> {
   const subject = `${input.sequence} purchase order - ${input.supplierName}`;
   const details = input.supplierDetails.length
     ? input.supplierDetails.map((detail) => `- ${detail}`).join("\n")
@@ -288,7 +328,18 @@ export function preparePurchaseSamplingMail(input: SendPurchaseSamplingEmailRequ
   )}" alt="QR code for ${escapeHtml(input.sequence)} ${escapeHtml(
     input.supplierName,
   )}" width="160" height="160"></p><p>Please start sampling and keep the order status current using the secure link.</p>`;
-  return { subject, text, html, attachments: [] };
+  return {
+    subject,
+    text,
+    html,
+    attachments: [
+      {
+        filename: `${input.sequence}-sample-status-qr.pdf`,
+        content: await renderPurchaseOrderQrPdf(input),
+        contentType: "application/pdf",
+      },
+    ],
+  };
 }
 
 export function preparePhysicalSampleApprovalMail(
@@ -299,12 +350,12 @@ export function preparePhysicalSampleApprovalMail(
     `${input.sequence} has been shipped by ${input.supplierName}.`,
     `Project: ${input.projectName}`,
     `Canvas: ${input.canvasName}`,
-    `Tracking: ${input.trackingNumber}`,
+    `AWB: ${input.awb}`,
     "",
     `Approve: ${input.approvalUrl}`,
     `Reject: ${input.rejectionUrl}`,
   ].join("\n");
-  const html = `<p><strong>${escapeHtml(input.sequence)} physical sample approval</strong></p><p>${escapeHtml(input.supplierName)} has submitted shipment details.</p><p>Project: ${escapeHtml(input.projectName)}<br>Canvas: ${escapeHtml(input.canvasName)}<br>Tracking: ${escapeHtml(input.trackingNumber)}</p><p><a href="${escapeHtml(input.approvalUrl)}" style="display:inline-block;padding:12px 18px;background:#166534;color:#fff;text-decoration:none;border-radius:6px">Approve physical sample</a> <a href="${escapeHtml(input.rejectionUrl)}" style="display:inline-block;padding:12px 18px;background:#991b1b;color:#fff;text-decoration:none;border-radius:6px">Reject</a></p>`;
+  const html = `<p><strong>${escapeHtml(input.sequence)} physical sample approval</strong></p><p>${escapeHtml(input.supplierName)} has submitted shipment details.</p><p>Project: ${escapeHtml(input.projectName)}<br>Canvas: ${escapeHtml(input.canvasName)}<br>AWB: ${escapeHtml(input.awb)}</p><p><a href="${escapeHtml(input.approvalUrl)}" style="display:inline-block;padding:12px 18px;background:#166534;color:#fff;text-decoration:none;border-radius:6px">Approve physical sample</a> <a href="${escapeHtml(input.rejectionUrl)}" style="display:inline-block;padding:12px 18px;background:#991b1b;color:#fff;text-decoration:none;border-radius:6px">Reject</a></p>`;
   return { subject, text, html, attachments: [] };
 }
 
@@ -435,7 +486,7 @@ export async function deliverTestEmail(input: SendTestEmailRequest) {
 
 export async function deliverPurchaseSamplingEmail(input: SendPurchaseSamplingEmailRequest) {
   const parsed = sendPurchaseSamplingEmailRequestSchema.parse(input);
-  return delivery()(parsed.to, preparePurchaseSamplingMail(parsed));
+  return delivery()(parsed.to, await preparePurchaseSamplingMail(parsed));
 }
 
 export async function deliverPhysicalSampleApprovalEmail(

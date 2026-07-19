@@ -3,19 +3,18 @@ import { describe, expect, it } from "vitest";
 import { payloadSummary, sampleUpdatePayloadSchema } from "@/lib/sample-orders";
 
 describe("sampleUpdatePayloadSchema", () => {
-  it("coerces and validates stage-specific numeric fields", () => {
+  it("validates AWB-based shipment updates", () => {
     const parsed = sampleUpdatePayloadSchema.parse({
       stage: "shipment",
       carrier: "DHL",
-      shippingMethod: "Express",
-      trackingNumber: "TRACK-1",
-      shippedQuantity: "500",
+      awb: "AWB-1",
       shipDate: "2026-07-14",
       eta: "2026-07-18",
       documentUrl: "",
     });
-    expect(parsed.shippedQuantity).toBe(500);
-    expect(payloadSummary(parsed)).toBe("DHL · TRACK-1");
+    if (parsed.stage !== "shipment") throw new Error("Expected shipment payload");
+    expect(parsed.awb).toBe("AWB-1");
+    expect(payloadSummary(parsed)).toBe("DHL · AWB AWB-1");
   });
 
   it("rejects fields belonging to another stage", () => {
@@ -27,16 +26,14 @@ describe("sampleUpdatePayloadSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects percentages outside zero to one hundred", () => {
+  it("rejects defective percentages outside zero to one hundred", () => {
     expect(
       sampleUpdatePayloadSchema.safeParse({
-        stage: "production",
-        startDate: "2026-07-14",
-        plannedQuantity: 10,
-        completedQuantity: 2,
-        progressPercent: 130,
-        expectedFinishDate: "2026-07-20",
-        notes: "",
+        stage: "quality_control",
+        qcStartDate: "2026-07-14",
+        defectivePercent: 130,
+        inspectedQuantity: 10,
+        evidenceUrl: "",
       }).success,
     ).toBe(false);
   });

@@ -247,10 +247,9 @@ function demoPayload(stage: SampleStage, index: number): SampleUpdatePayload {
     case "pmc":
       return {
         stage,
-        owner: `PMC owner ${index + 1}`,
-        plannedCompletionDate: date,
-        materialReadinessPercent: Math.min(100, 20 + index * 7),
-        notes: "Demo material review",
+        receivedBy: `PMC owner ${index + 1}`,
+        pmcDate: date,
+        notes: "Purchase order received.",
       };
     case "purchase":
       return {
@@ -266,41 +265,30 @@ function demoPayload(stage: SampleStage, index: number): SampleUpdatePayload {
       return {
         stage,
         startDate: date,
-        plannedQuantity: 1_000,
-        completedQuantity: index * 80,
-        progressPercent: Math.min(100, 15 + index * 9),
-        expectedFinishDate: date,
-        notes: "Demo production run",
+        plannedFinishDate: date,
+        notes: "Production started.",
       };
     case "quality_control":
       return {
         stage,
-        inspectionDate: date,
-        inspector: `Inspector ${index + 1}`,
-        sampleSize: 50,
-        passedQuantity: 47,
-        rejectedQuantity: 3,
-        result: index % 3 === 0 ? "failed" : "passed",
+        qcStartDate: date,
+        defectivePercent: index % 4,
+        inspectedQuantity: 50,
         evidenceUrl: "",
       };
     case "package":
       return {
         stage,
-        packagingType: "Export carton",
+        packagingStartDate: date,
         cartonCount: 20 + index,
         unitsPerCarton: 50,
-        netWeight: 12.5,
-        grossWeight: 13.8,
-        dimensions: "50 x 40 x 35 cm",
-        readyDate: date,
+        notes: "Packaging started.",
       };
     case "shipment":
       return {
         stage,
         carrier: index % 2 ? "DHL" : "FedEx",
-        shippingMethod: "Express",
-        trackingNumber: `TRACK${100000 + index}`,
-        shippedQuantity: 1_000,
+        awb: `AWB${100000 + index}`,
         shipDate: date,
         eta: date,
         documentUrl: "",
@@ -312,8 +300,7 @@ function demoPayload(stage: SampleStage, index: number): SampleUpdatePayload {
         invoiceDate: date,
         currency: "USD",
         amount: 1200 + index * 175,
-        dueDate: date,
-        invoiceUrl: "",
+        documentUrl: "",
       };
   }
 }
@@ -565,6 +552,8 @@ export const localCanvasStore: CanvasStore = {
         emailStatus: "pending",
         emailError: null,
         deliveryCount: records[index].deliveryCount + 1,
+        currentStage: "purchase",
+        currentPayload: null,
         updatedAt: now,
       };
       write(KEYS.sampleOrders, records);
@@ -584,7 +573,7 @@ export const localCanvasStore: CanvasStore = {
       emailError: null,
       deliveryCount: 1,
       purchaseSentAt: null,
-      currentStage: null,
+      currentStage: "purchase",
       currentPayload: null,
       latestUpdateAt: null,
       approvalStatus: "not_requested",

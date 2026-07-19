@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { isLocalPostgresConfigured, isSupabaseConfigured } from "@/lib/env";
+import { respondLocalSampleOrderApproval } from "@/lib/sample-order-postgres";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 
 export const runtime = "nodejs";
@@ -21,8 +23,22 @@ export async function GET(request: Request) {
   if (token.length < 32 || !decision.success)
     return NextResponse.json({ error: "Invalid approval link." }, { status: 400 });
   try {
-    const supabase = getSupabaseServiceClient();
     const hash = createHash("sha256").update(token).digest("hex");
+    if (isLocalPostgresConfigured) {
+      const result = await respondLocalSampleOrderApproval(hash, decision.data);
+      return new NextResponse(page(result.sequence, result.status, result.alreadyResponded), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (!isSupabaseConfigured) {
+      return NextResponse.json(
+        { error: "Sample-order approval storage is not configured." },
+        { status: 503 },
+      );
+    }
+
+    const supabase = getSupabaseServiceClient();
     const found = await supabase
       .from("sample_orders")
       .select("id, sequence, approval_status")
