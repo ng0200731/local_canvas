@@ -43,3 +43,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python sidecar
+services/picture-sherlock/.venv/
+services/picture-sherlock/**/__pycache__/
+services/picture-sherlock/.pytest_cache/
+**/__pycache__/
+.pytest_cache/
+*.pyc

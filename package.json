@@ -13,7 +13,8 @@
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "db:migrate": "node scripts/db-migrate.mjs"
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "match:sidecar": "cd services/picture-sherlock && .venv/Scripts/uvicorn app.main:app --host 127.0.0.1 --port 8091"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

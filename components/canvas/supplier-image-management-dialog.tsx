@@ -11,7 +11,6 @@ import {
 } from "react";
 import {
   AlertCircle,
-  ArrowRight,
   Check,
   Eye,
   Images,
@@ -20,6 +19,7 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +40,8 @@ import {
 } from "@/lib/product-image-gallery";
 import {
   MAX_SUPPLIER_MATCH_CATALOG_IMAGES,
+  SUPPLIER_MATCH_LOCAL_MODEL,
+  SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
   supplierMatchUploadMetadataSchema,
   type SupplierImageMatchCandidate,
   type SupplierMatchCatalogItem,
@@ -71,6 +73,57 @@ interface RankedMatch {
   supplier: SupplierRecord;
 }
 
+interface ComparisonField {
+  label: string;
+  value: string;
+}
+
+function normalizeComparisonValue(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length ? trimmed : "Not specified";
+}
+
+function lookupComparisonValue(
+  parameters: Readonly<Record<string, string>>,
+  patterns: readonly RegExp[],
+  fallback: string,
+): string {
+  for (const [key, value] of Object.entries(parameters)) {
+    if (!value.trim()) continue;
+    if (patterns.some((pattern) => pattern.test(key))) return value.trim();
+  }
+  return fallback;
+}
+
+function buildComparisonFields(item: ProductImageGalleryItem): ComparisonField[] {
+  return [
+    {
+      label: "Shape",
+      value: getWorkspaceProductTypeLabel(item.product.productType),
+    },
+    {
+      label: "Color",
+      value: normalizeComparisonValue(item.variant.colorNotes),
+    },
+    {
+      label: "Pattern",
+      value: lookupComparisonValue(
+        item.variant.parameters,
+        [/pattern/i, /print/i, /texture/i, /weave/i, /knit/i],
+        normalizeComparisonValue(item.variant.material),
+      ),
+    },
+    {
+      label: "Design",
+      value: lookupComparisonValue(
+        item.variant.parameters,
+        [/design/i, /style/i, /layout/i, /finish/i, /artwork/i],
+        normalizeComparisonValue(item.product.detail),
+      ),
+    },
+  ];
+}
+
 function SimilarityMeter({ value }: { value: number }) {
   const filledSegments = Math.max(0, Math.min(5, Math.round(value / 20)));
   return (
@@ -89,6 +142,35 @@ function SimilarityMeter({ value }: { value: number }) {
       ))}
     </div>
   );
+}
+
+function matchEngineLabel(model: string): string {
+  if (model === SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL) {
+    return "CLIP + color (Picture Sherlock)";
+  }
+  if (model === SUPPLIER_MATCH_LOCAL_MODEL) {
+    return "Local histogram fallback";
+  }
+  return model;
+}
+
+function confidenceLabel(cosine: number): { label: string; className: string } {
+  if (cosine >= 0.72) {
+    return {
+      label: "Strong",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+    };
+  }
+  if (cosine >= 0.5) {
+    return {
+      label: "Moderate",
+      className: "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+    };
+  }
+  return {
+    label: "Weak",
+    className: "border-border bg-muted text-muted-foreground",
+  };
 }
 
 function SearchLoading({ imageCount }: { imageCount: number }) {
@@ -159,14 +241,15 @@ function RankedMatchCard({
   rankedMatch,
   rank,
   selected,
-  onApply,
+  onCompare,
 }: {
   rankedMatch: RankedMatch;
   rank: number;
   selected: boolean;
-  onApply: () => void;
+  onCompare: () => void;
 }) {
   const { item, match, supplier } = rankedMatch;
+  const confidence = confidenceLabel(match.cosine);
   return (
     <article
       className={cn(
@@ -193,13 +276,19 @@ function RankedMatchCard({
               <Sparkles /> Best match
             </Badge>
           ) : null}
+          <Badge variant="outline" className={confidence.className}>
+            {confidence.label}
+          </Badge>
           <Badge variant="secondary">{supplier.company.companyName}</Badge>
           <Badge variant="outline">{getWorkspaceProductTypeLabel(item.product.productType)}</Badge>
         </div>
         <div>
           <p className="truncate font-semibold">{item.product.subject}</p>
           <p className="text-muted-foreground line-clamp-2 text-sm leading-5">
-            Cosine {match.cosine.toFixed(3)} · ranked #{rank} for this supplier
+            Score {match.cosine.toFixed(3)} · ranked #{rank} for this supplier
+            {match.cosine < 0.5
+              ? " · weak overall — top rank may still not be a true match"
+              : ""}
           </p>
         </div>
         <div className="text-muted-foreground flex flex-wrap gap-1 text-[0.68rem]">
@@ -221,9 +310,9 @@ function RankedMatchCard({
           </p>
           <SimilarityMeter value={match.similarity} />
         </div>
-        <Button type="button" variant={rank === 1 ? "default" : "outline"} onClick={onApply}>
-          {selected ? <Check /> : <ArrowRight />}
-          {selected ? "Selected" : "Use match"}
+        <Button type="button" variant={rank === 1 ? "default" : "outline"} onClick={onCompare}>
+          {selected ? <Check /> : <Eye />}
+          {selected ? "Selected" : "Compare"}
         </Button>
       </div>
     </article>
@@ -247,6 +336,7 @@ export function SupplierImageManagementDialog({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [queryImage, setQueryImage] = useState<SupplierMatchQueryImage | null>(null);
+  const [comparisonMatchId, setComparisonMatchId] = useState<string | null>(null);
   const matchMutation = useSupplierImageMatch();
 
   const supplierById = useMemo(
@@ -310,6 +400,10 @@ export function SupplierImageManagementDialog({
       return item && supplier ? [{ match, item, supplier }] : [];
     });
   }, [galleryById, matchMutation.data, supplierById]);
+  const comparisonMatch = useMemo(
+    () => rankedMatches.find((match) => match.item.id === comparisonMatchId) ?? null,
+    [comparisonMatchId, rankedMatches],
+  );
 
   async function runMatch(nextQueryImage: SupplierMatchQueryImage) {
     setUploadError(null);
@@ -349,6 +443,7 @@ export function SupplierImageManagementDialog({
     setIsUploading(true);
     setUploadError(null);
     matchMutation.reset();
+    setComparisonMatchId(null);
     try {
       const uploaded = await uploadImage(file);
       const nextQueryImage = { name: metadata.data.name, url: uploaded.url };
@@ -392,12 +487,22 @@ export function SupplierImageManagementDialog({
     setOpen(false);
   }
 
+  function openComparison(rankedMatch: RankedMatch) {
+    setComparisonMatchId(rankedMatch.item.id);
+  }
+
   const searchError =
     uploadError ?? (matchMutation.error instanceof Error ? matchMutation.error.message : null);
   const busy = isUploading || matchMutation.isPending;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setComparisonMatchId(null);
+      }}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent
         className="h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_1fr] overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)]"
@@ -414,7 +519,7 @@ export function SupplierImageManagementDialog({
             {catalog.length ? (
               <span className="text-muted-foreground text-xs">
                 {catalog.length} image{catalog.length === 1 ? "" : "s"}
-                {selectedSupplierName ? ` · ${selectedSupplierName}` : ""}
+                {selectedSupplierName ? ` - ${selectedSupplierName}` : ""}
               </span>
             ) : null}
           </div>
@@ -425,7 +530,7 @@ export function SupplierImageManagementDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid min-h-0 lg:grid-cols-[minmax(19rem,0.34fr)_minmax(0,1fr)]">
+        <div className="relative grid min-h-0 lg:grid-cols-[minmax(19rem,0.34fr)_minmax(0,1fr)]">
           <aside className="bg-muted/25 flex min-h-0 flex-col gap-4 overflow-y-auto border-b p-5 lg:border-r lg:border-b-0">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -558,8 +663,9 @@ export function SupplierImageManagementDialog({
             <div className="text-muted-foreground mt-auto flex gap-2 border-t pt-4 text-xs leading-5">
               <ShieldCheck className="mt-0.5 size-4 shrink-0" />
               <p>
-                Search is limited to the selected supplier&apos;s images. Features are embedded
-                server-side and ranked with cosine similarity (no external LLM analysis).
+                Search is limited to the selected supplier&apos;s images. When the CLIP sidecar is
+                running, matches use multi-view visual embeddings plus color ranking; otherwise the
+                local histogram fallback is used. No external LLM analysis.
               </p>
             </div>
           </aside>
@@ -581,15 +687,25 @@ export function SupplierImageManagementDialog({
             ) : matchMutation.data && rankedMatches.length ? (
               <>
                 <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-amber-800 dark:text-amber-200">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-amber-800 dark:text-amber-200">
                     <Eye className="size-4" />
                     <p className="font-heading text-sm font-semibold">Vector search complete</p>
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/30 bg-background/70 text-amber-900 dark:text-amber-100"
+                    >
+                      {matchEngineLabel(matchMutation.data.model)}
+                    </Badge>
                   </div>
                   <p className="text-sm leading-6">
                     Compared your reference against {matchMutation.data.searchedCount} image
                     {matchMutation.data.searchedCount === 1 ? "" : "s"} from{" "}
-                    {selectedSupplierName ?? "the selected supplier"}. Results are ranked by
-                    cosine similarity from highest to lowest.
+                    {selectedSupplierName ?? "the selected supplier"}. Results are ranked by fused
+                    visual + color score (higher is closer). Weak top scores mean no catalog photo
+                    is a close match — inspect more than #1.
+                  </p>
+                  <p className="text-muted-foreground mt-2 font-mono text-[0.68rem]">
+                    model: {matchMutation.data.model}
                   </p>
                 </div>
 
@@ -598,10 +714,10 @@ export function SupplierImageManagementDialog({
                     <p className="font-heading font-semibold">Most similar images</p>
                     <p className="text-muted-foreground text-xs">
                       {matchMutation.data.searchedCount} images searched · ranked highest to lowest
-                      similarity
+                      score
                     </p>
                   </div>
-                  <Badge variant="outline">Cosine similarity ranking</Badge>
+                  <Badge variant="outline">{matchEngineLabel(matchMutation.data.model)}</Badge>
                 </div>
 
                 <div className="grid gap-3">
@@ -611,7 +727,7 @@ export function SupplierImageManagementDialog({
                       rankedMatch={rankedMatch}
                       rank={index + 1}
                       selected={selectedItemId === rankedMatch.item.id}
-                      onApply={() => applyMatch(rankedMatch)}
+                      onCompare={() => openComparison(rankedMatch)}
                     />
                   ))}
                 </div>
@@ -652,6 +768,137 @@ export function SupplierImageManagementDialog({
               </div>
             )}
           </section>
+
+          {comparisonMatch ? (
+            <div
+              className="absolute inset-0 z-30 bg-black/60 p-4 backdrop-blur-sm"
+              role="presentation"
+              onClick={() => setComparisonMatchId(null)}
+            >
+              <div
+                className="bg-background mx-auto flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border shadow-2xl"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Image comparison"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="border-b px-5 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs uppercase tracking-[0.18em]">
+                        Compare preview
+                      </p>
+                      <h3 className="font-heading text-lg font-semibold">
+                        Target image and selected similar image
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">
+                        {Math.round(comparisonMatch.match.similarity)}% similarity
+                      </Badge>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="Close comparison"
+                        title="Close comparison"
+                        onClick={() => setComparisonMatchId(null)}
+                      >
+                        <X />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5 lg:grid-cols-2">
+                  {[
+                    {
+                      title: "Target image",
+                      subtitle: queryImage?.name ?? "Uploaded reference",
+                      src: queryImage?.url ?? comparisonMatch.item.variant.image.url,
+                      alt: queryImage?.name ?? "Target image",
+                      fields: [
+                        { label: "Source", value: queryImage?.name ?? "Uploaded reference" },
+                        ...buildComparisonFields(comparisonMatch.item).slice(1),
+                      ],
+                    },
+                    {
+                      title: "Compared image",
+                      subtitle: comparisonMatch.item.variant.image.name,
+                      src: comparisonMatch.item.variant.image.url,
+                      alt: comparisonMatch.item.variant.image.name,
+                      fields: buildComparisonFields(comparisonMatch.item),
+                    },
+                  ].map((panel) => (
+                    <section
+                      key={panel.title}
+                      className="bg-muted/20 flex min-h-0 flex-col overflow-hidden rounded-xl border"
+                    >
+                      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="text-muted-foreground text-xs uppercase tracking-[0.16em]">
+                            {panel.title}
+                          </p>
+                          <p className="truncate text-sm font-medium">{panel.subtitle}</p>
+                        </div>
+                        {panel.title === "Compared image" ? (
+                          <Badge variant="secondary">
+                            {comparisonMatch.supplier.company.companyName}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <div className="grid min-h-0 flex-1 gap-4 p-4">
+                        <div className="bg-background min-h-[18rem] overflow-hidden rounded-lg border">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={panel.src}
+                            alt={panel.alt}
+                            className="h-full w-full object-contain"
+                          />
+                        </div>
+                        <dl className="grid grid-cols-2 gap-2">
+                          {panel.fields.map((field) => (
+                            <div
+                              key={field.label}
+                              className="rounded-lg border bg-background px-3 py-2"
+                            >
+                              <dt className="text-muted-foreground text-[0.65rem] uppercase tracking-[0.14em]">
+                                {field.label}
+                              </dt>
+                              <dd className="truncate text-sm font-medium">{field.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+
+                <div className="bg-muted/30 flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4">
+                  <p className="text-muted-foreground text-sm">
+                    Review the pair, then apply the selected image.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" onClick={() => setComparisonMatchId(null)}>
+                      Keep browsing
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        applyMatch(comparisonMatch);
+                        setComparisonMatchId(null);
+                      }}
+                      disabled={selectedItemId === comparisonMatch.item.id}
+                    >
+                      {selectedItemId === comparisonMatch.item.id
+                        ? "Already selected"
+                        : "Use this image"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

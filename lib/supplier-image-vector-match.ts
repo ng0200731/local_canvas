@@ -4,9 +4,10 @@ import sharp from "sharp";
 
 import { env } from "@/lib/env";
 import {
-  createInMemoryVectorCollection,
+  cosineSimilarity,
   embedRgbRaw,
   IMAGE_VECTOR_EMBED_SIZE,
+  similarityPercentFromCosine,
   type ImageVector,
 } from "@/lib/image-vector-search";
 import {
@@ -29,9 +30,28 @@ export type ImageEmbedder = (
   signal?: AbortSignal,
 ) => Promise<ImageVector>;
 
+interface ImageRegionVector {
+  label: string;
+  vector: ImageVector;
+}
+
+export type ImageRegionEmbedder = (
+  source: string,
+  signal?: AbortSignal,
+) => Promise<readonly ImageRegionVector[]>;
+
 interface SupplierImageVectorMatcherOptions {
   embedImage?: ImageEmbedder;
+  embedImageRegions?: ImageRegionEmbedder;
   fetcher?: typeof fetch;
+}
+
+interface ImageCropRegion {
+  label: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 function isPrivateHostname(hostname: string): boolean {
@@ -140,6 +160,91 @@ export async function embedImageSource(
   return embedRgbRaw(data, IMAGE_VECTOR_EMBED_SIZE);
 }
 
+function boundedCrop(
+  label: string,
+  leftRatio: number,
+  topRatio: number,
+  widthRatio: number,
+  heightRatio: number,
+  imageWidth: number,
+  imageHeight: number,
+): ImageCropRegion {
+  const width = Math.max(1, Math.round(imageWidth * widthRatio));
+  const height = Math.max(1, Math.round(imageHeight * heightRatio));
+  const maxLeft = Math.max(0, imageWidth - width);
+  const maxTop = Math.max(0, imageHeight - height);
+  return {
+    label,
+    left: Math.min(maxLeft, Math.max(0, Math.round(imageWidth * leftRatio))),
+    top: Math.min(maxTop, Math.max(0, Math.round(imageHeight * topRatio))),
+    width,
+    height,
+  };
+}
+
+function buildImageCropRegions(imageWidth: number, imageHeight: number): ImageCropRegion[] {
+  return [
+    boundedCrop("full", 0, 0, 1, 1, imageWidth, imageHeight),
+    boundedCrop("center", 0.15, 0.15, 0.7, 0.7, imageWidth, imageHeight),
+    boundedCrop("horizontal-top", 0, 0, 1, 0.45, imageWidth, imageHeight),
+    boundedCrop("horizontal-middle", 0, 0.275, 1, 0.45, imageWidth, imageHeight),
+    boundedCrop("horizontal-bottom", 0, 0.55, 1, 0.45, imageWidth, imageHeight),
+    boundedCrop("vertical-left", 0, 0, 0.45, 1, imageWidth, imageHeight),
+    boundedCrop("vertical-middle", 0.275, 0, 0.45, 1, imageWidth, imageHeight),
+    boundedCrop("vertical-right", 0.55, 0, 0.45, 1, imageWidth, imageHeight),
+  ];
+}
+
+async function embedImageBufferRegion(
+  sourceBuffer: Buffer,
+  region: ImageCropRegion,
+  signal: AbortSignal | undefined,
+): Promise<ImageRegionVector> {
+  const { data, info } = await sharp(sourceBuffer, { animated: false })
+    .rotate()
+    .extract({
+      left: region.left,
+      top: region.top,
+      width: region.width,
+      height: region.height,
+    })
+    .resize(IMAGE_VECTOR_EMBED_SIZE, IMAGE_VECTOR_EMBED_SIZE, {
+      fit: "fill",
+      withoutEnlargement: false,
+    })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  signal?.throwIfAborted();
+  if (info.channels < 3) {
+    throw new Error("Image embedding requires an RGB image.");
+  }
+  return { label: region.label, vector: embedRgbRaw(data, IMAGE_VECTOR_EMBED_SIZE) };
+}
+
+export async function embedImageSourceRegions(
+  source: string,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<readonly ImageRegionVector[]> {
+  signal?.throwIfAborted();
+  const sourceBuffer = source.startsWith("data:")
+    ? bufferFromDataUrl(source)
+    : await fetchRemoteImage(source, fetcher, signal);
+  const metadata = await sharp(sourceBuffer, { animated: false }).rotate().metadata();
+  const imageWidth = metadata.width;
+  const imageHeight = metadata.height;
+  if (!imageWidth || !imageHeight) throw new Error("Image dimensions could not be read.");
+
+  const regions = buildImageCropRegions(imageWidth, imageHeight);
+  const embedded = await Promise.all(
+    regions.map((region) => embedImageBufferRegion(sourceBuffer, region, signal)),
+  );
+  signal?.throwIfAborted();
+  return embedded;
+}
+
 async function mapWithConcurrency<T, Result>(
   values: readonly T[],
   concurrency: number,
@@ -167,29 +272,50 @@ export async function runSupplierImageVectorSearch(
   input: SupplierImageMatchRequest,
   embedImage: ImageEmbedder,
   signal?: AbortSignal,
+  embedImageRegions?: ImageRegionEmbedder,
 ): Promise<SupplierImageMatchResponse> {
   const queryVector = await embedImage(input.queryImage.url, signal);
   const catalogVectors = await mapWithConcurrency(
     input.catalog,
     MAX_PARALLEL_EMBEDS,
     async (item) => {
-      const vector = await embedImage(item.imageUrl, signal);
-      return { item, vector };
+      const regions = embedImageRegions
+        ? await embedImageRegions(item.imageUrl, signal)
+        : [{ label: "full", vector: await embedImage(item.imageUrl, signal) }];
+      return { item, regions };
     },
   );
 
-  const collection = createInMemoryVectorCollection(queryVector.length);
-  for (const entry of catalogVectors) {
-    collection.insert(entry.item.catalogItemId, entry.vector);
-  }
-
-  const hits = collection.search(queryVector);
-  if (hits.length === 0) {
+  if (catalogVectors.length === 0) {
     throw new Error("No supplier catalog images could be indexed for search.");
   }
+  const hits = catalogVectors.map((entry) => {
+    const bestRegion = entry.regions.reduce<ImageRegionVector | null>((best, region) => {
+      if (region.vector.length !== queryVector.length) {
+        throw new Error("Embedding dimensions do not match.");
+      }
+      if (!best) return region;
+      return cosineSimilarity(queryVector, region.vector) >
+        cosineSimilarity(queryVector, best.vector)
+        ? region
+        : best;
+    }, null);
+    if (!bestRegion) throw new Error("A supplier catalog image could not be embedded.");
+    const cosine = cosineSimilarity(queryVector, bestRegion.vector);
+    return {
+      id: entry.item.catalogItemId,
+      cosine,
+      similarity: similarityPercentFromCosine(cosine),
+    };
+  });
 
   return {
-    matches: hits.map((hit) => ({
+    matches: hits
+      .sort((left, right) => {
+        if (right.cosine !== left.cosine) return right.cosine - left.cosine;
+        return left.id.localeCompare(right.id);
+      })
+      .map((hit) => ({
       catalogItemId: hit.id,
       similarity: hit.similarity,
       cosine: hit.cosine,
@@ -201,14 +327,18 @@ export async function runSupplierImageVectorSearch(
 
 export function createSupplierImageVectorMatcher({
   embedImage,
+  embedImageRegions,
   fetcher = fetch,
 }: SupplierImageVectorMatcherOptions = {}): SupplierImageMatcher {
   const resolveEmbed: ImageEmbedder =
     embedImage ?? ((source, signal) => embedImageSource(source, fetcher, signal));
+  const resolveRegionEmbed: ImageRegionEmbedder | undefined =
+    embedImageRegions ??
+    (embedImage ? undefined : (source, signal) => embedImageSourceRegions(source, fetcher, signal));
 
   return async function matchSupplierImages(rawInput, signal) {
     const input = supplierImageMatchRequestSchema.parse(rawInput);
-    return runSupplierImageVectorSearch(input, resolveEmbed, signal);
+    return runSupplierImageVectorSearch(input, resolveEmbed, signal, resolveRegionEmbed);
   };
 }
 

@@ -1,0 +1,19 @@
+# Picture Sherlock FastAPI sidecar (CLIP reverse-image search)
+#
+# Windows CPU install:
+#   python -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# Then: uvicorn app.main:app --host 127.0.0.1 --port 8091
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+transformers>=4.40.0
+Pillow>=10.0.0
+numpy>=1.24.0
+httpx>=0.27.0
+# Install torch/torchvision separately for CPU wheels on Windows:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu

@@ -36,6 +36,19 @@ const optionalBoolean = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
+const optionalInt = z.preprocess((value) => {
+  if (value === "" || value === undefined) return undefined;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : value;
+  }
+  return value;
+}, z.number().int().optional());
+
+function optionalIntDefault(defaultValue: number) {
+  return optionalInt.transform((value) => value ?? defaultValue);
+}
+
 const DEFAULT_LOCAL_USER_ID = "00000000-0000-4000-8000-000000000001";
 
 const envSchema = z
@@ -57,6 +70,13 @@ const envSchema = z
 
     // ── Xiangsu AI (optional, server-only) ──────────────────────────────
     XIANGSU_API_KEY: optionalString,
+
+    // ── Picture Sherlock CLIP sidecar (optional, server-only) ────────
+    PICTURE_SHERLOCK_URL: optionalUrl,
+    PICTURE_SHERLOCK_TIMEOUT_MS: optionalIntDefault(90_000).pipe(
+      z.number().int().min(1_000).max(300_000),
+    ),
+    PICTURE_SHERLOCK_FALLBACK_TO_LOCAL: optionalBoolean.default(true),
 
     // SMTP (optional, server-only). An optional local catcher overrides 163.com, then Gmail.
     SMTP_LOCAL_HOST: optionalString,
@@ -118,6 +138,9 @@ function loadEnv(): Env {
     LOCAL_USER_ID: process.env.LOCAL_USER_ID,
     NEXT_PUBLIC_LOCAL_POSTGRES: process.env.NEXT_PUBLIC_LOCAL_POSTGRES,
     XIANGSU_API_KEY: process.env.XIANGSU_API_KEY,
+    PICTURE_SHERLOCK_URL: process.env.PICTURE_SHERLOCK_URL,
+    PICTURE_SHERLOCK_TIMEOUT_MS: process.env.PICTURE_SHERLOCK_TIMEOUT_MS,
+    PICTURE_SHERLOCK_FALLBACK_TO_LOCAL: process.env.PICTURE_SHERLOCK_FALLBACK_TO_LOCAL,
     SMTP_163_USERNAME: process.env.SMTP_163_USERNAME,
     SMTP_163_PASSWORD: process.env.SMTP_163_PASSWORD,
     SMTP_LOCAL_HOST: process.env.SMTP_LOCAL_HOST,
@@ -158,6 +181,9 @@ export const localUserId = env.LOCAL_USER_ID ?? DEFAULT_LOCAL_USER_ID;
 
 /** True when a Xiangsu API key is present (AI image generation active). */
 export const isXiangsuConfigured = Boolean(env.XIANGSU_API_KEY);
+
+/** True when the Picture Sherlock CLIP sidecar is configured. */
+export const isPictureSherlockConfigured = Boolean(env.PICTURE_SHERLOCK_URL);
 
 /**
  * Server-only: returns DATABASE_URL when local Postgres mode is active.

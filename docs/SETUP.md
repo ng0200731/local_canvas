@@ -29,6 +29,9 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 | `DATABASE_URL` + `NEXT_PUBLIC_LOCAL_POSTGRES=true`                  | Local Docker Postgres (no auth; ignored if Supabase is set) |
 | `LOCAL_USER_ID`                                                     | Fixed owner UUID for local Postgres rows (optional)         |
 | `XIANGSU_API_KEY`                                                   | Enables server-side image generation via Xiangsu AI         |
+| `PICTURE_SHERLOCK_URL`                                              | Enables CLIP reverse-image search via local FastAPI sidecar |
+| `PICTURE_SHERLOCK_TIMEOUT_MS`                                       | Sidecar client timeout (default `90000`)                    |
+| `PICTURE_SHERLOCK_FALLBACK_TO_LOCAL`                                | On sidecar failure, use local histogram matcher (default true) |
 | `NEXT_PUBLIC_APP_URL`                                               | Public app URL (defaults to `http://localhost:3000`)        |
 
 ## Local Postgres (dev, no auth)
@@ -119,15 +122,45 @@ Customer, supplier, and product records also use structured database tables:
 2. Add `XIANGSU_API_KEY=...` to `.env.local`.
 3. Restart. Generate nodes now produce images.
 
+## Supplier reverse-image search (Picture Sherlock CLIP sidecar)
+
+Supplier product image matching can use a local CLIP sidecar inspired by
+[Picture Sherlock](https://github.com/CN-Scars/picture_sherlock). Without the
+sidecar, the app falls back to a local histogram embedding matcher.
+
+1. Install Python 3.10+ and create a venv under `services/picture-sherlock`
+   (see that folder’s `README.md` for Windows CPU torch install notes).
+2. Start the sidecar:
+
+   ```powershell
+   cd services\picture-sherlock
+   .\.venv\Scripts\Activate.ps1
+   uvicorn app.main:app --host 127.0.0.1 --port 8091
+   ```
+
+   Or, after the venv exists: `pnpm match:sidecar`.
+
+3. In `.env.local`:
+
+   ```env
+   PICTURE_SHERLOCK_URL=http://127.0.0.1:8091
+   PICTURE_SHERLOCK_TIMEOUT_MS=90000
+   PICTURE_SHERLOCK_FALLBACK_TO_LOCAL=true
+   ```
+
+4. Restart `pnpm dev`. Supplier image search uses CLIP when the sidecar is up;
+   with fallback enabled it still works if the sidecar is down.
+
 ## Scripts
 
 ```bash
-pnpm dev         # dev server
-pnpm build       # production build
-pnpm lint        # eslint
-pnpm format      # prettier --write .
-pnpm test        # vitest (pure-logic unit tests)
-pnpm db:up       # docker compose up -d (local Postgres)
-pnpm db:down     # docker compose down
-pnpm db:migrate  # apply db/local-init.sql + seed LOCAL_USER_ID profile
+pnpm dev            # dev server
+pnpm build          # production build
+pnpm lint           # eslint
+pnpm format         # prettier --write .
+pnpm test           # vitest (pure-logic unit tests)
+pnpm db:up          # docker compose up -d (local Postgres)
+pnpm db:down        # docker compose down
+pnpm db:migrate     # apply db/local-init.sql + seed LOCAL_USER_ID profile
+pnpm match:sidecar  # start Picture Sherlock CLIP FastAPI sidecar (Windows venv)
 ```

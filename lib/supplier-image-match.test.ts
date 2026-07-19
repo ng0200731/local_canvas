@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_SUPPLIER_MATCH_CATALOG_IMAGES,
+  SUPPLIER_MATCH_LOCAL_MODEL,
   SUPPLIER_MATCH_MODEL,
+  SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
   supplierImageMatchRequestSchema,
   supplierImageMatchResponseSchema,
   supplierMatchUploadMetadataSchema,
@@ -51,7 +53,16 @@ describe("supplier image match contracts", () => {
 
     expect(request.catalog).toHaveLength(1);
     expect(response.matches[0]?.similarity).toBe(88.25);
-    expect(response.model).toBe(SUPPLIER_MATCH_MODEL);
+    expect(response.model).toBe(SUPPLIER_MATCH_LOCAL_MODEL);
+    expect(SUPPLIER_MATCH_MODEL).toBe(SUPPLIER_MATCH_LOCAL_MODEL);
+
+    const clipResponse = supplierImageMatchResponseSchema.parse({
+      matches: response.matches,
+      searchedCount: 1,
+      model: SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
+    });
+    expect(clipResponse.model).toBe(SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL);
+    expect(SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL).toContain("picture-sherlock");
   });
 
   it("rejects images owned by a supplier other than the selected supplier", () => {

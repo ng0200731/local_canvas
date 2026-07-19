@@ -84,4 +84,27 @@ describe("POST /api/supplier-image-match", () => {
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toEqual({ error: "Embedding failed" });
   });
+
+  it("still accepts a Picture Sherlock-backed matcher payload", async () => {
+    const handler = createSupplierImageMatchPostHandler({
+      match: vi.fn<SupplierImageMatcher>().mockResolvedValue({
+        matches: [
+          {
+            catalogItemId: "product-1:variant-1",
+            similarity: 91.5,
+            cosine: 0.83,
+          },
+        ],
+        searchedCount: 1,
+        model: "picture-sherlock-clip-vit-base-patch32",
+      }),
+    });
+    const response = await handler(post(validBody));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      searchedCount: 1,
+      model: "picture-sherlock-clip-vit-base-patch32",
+    });
+  });
 });

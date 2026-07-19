@@ -96,7 +96,7 @@ export function similarityPercentFromCosine(cosine: number): number {
  * Build a compact visual embedding from raw RGB bytes of a square image.
  * Expected layout: length = size * size * 3, channels RGB, values 0-255.
  */
-export function embedRgbRaw(data: Uint8Array | Buffer, size: number): ImageVector {
+export function embedRgbRaw(data: Uint8Array | Buffer, size = IMAGE_VECTOR_EMBED_SIZE): ImageVector {
   if (size <= 0) throw new Error("Embedding size must be positive.");
   const pixelCount = size * size;
   if (data.length < pixelCount * 3) {

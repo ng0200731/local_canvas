@@ -38,7 +38,7 @@ function catalogItem(index: number, color: [number, number, number]): SupplierMa
     productType: "woven-label",
     variantId: `variant-${index}`,
     imageName: `image-${index}.png`,
-    imageUrl: `vector://${color.join(",")}`,
+    imageUrl: `https://vector.test/${color.join(",")}.png`,
     detail: "Woven product",
     material: "Polyester",
     colorNotes: "Black",
@@ -51,14 +51,14 @@ function requestFromColors(
   catalogColors: Array<[number, number, number]>,
 ): SupplierImageMatchRequest {
   return {
-    queryImage: { name: "reference.png", url: `vector://${query.join(",")}` },
+    queryImage: { name: "reference.png", url: `https://vector.test/${query.join(",")}.png` },
     catalog: catalogColors.map((color, index) => catalogItem(index, color)),
     currentSupplierId: "supplier-1",
   };
 }
 
 function embedFromVectorUrl(source: string): ImageVector {
-  const match = /^vector:\/\/(\d+),(\d+),(\d+)$/.exec(source);
+  const match = /^https:\/\/vector\.test\/(\d+),(\d+),(\d+)\.png$/.exec(source);
   if (!match) throw new Error(`Unexpected test image source: ${source}`);
   const r = Number(match[1]);
   const g = Number(match[2]);
@@ -71,9 +71,9 @@ describe("supplier image vector matcher", () => {
     const input = requestFromColors(
       [230, 30, 30],
       [
-        [200, 40, 40],
+        [225, 32, 32],
         [20, 30, 220],
-        [210, 50, 45],
+        [170, 75, 70],
       ],
     );
 

@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { supplierImageMatchRequestSchema } from "@/lib/supplier-image-match";
-import {
-  matchSupplierImages,
-  type SupplierImageMatcher,
-} from "@/lib/supplier-image-vector-match";
+import { matchSupplierImagesWithPictureSherlock } from "@/lib/supplier-image-picture-sherlock";
+import { type SupplierImageMatcher } from "@/lib/supplier-image-vector-match";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -42,5 +40,5 @@ export function createSupplierImageMatchPostHandler({
 }
 
 export const POST = createSupplierImageMatchPostHandler({
-  match: matchSupplierImages,
+  match: matchSupplierImagesWithPictureSherlock,
 });

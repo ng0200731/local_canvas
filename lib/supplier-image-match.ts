@@ -4,8 +4,17 @@ import { IMAGE_VECTOR_EMBEDDING_MODEL } from "@/lib/image-vector-search";
 import { supplierProductTypes } from "@/lib/workspace-records";
 
 export const MAX_SUPPLIER_MATCH_CATALOG_IMAGES = 100;
-/** Local visual embedding model used for reverse image search. */
-export const SUPPLIER_MATCH_MODEL = IMAGE_VECTOR_EMBEDDING_MODEL;
+/** Local histogram/structure embedding used as the offline fallback. */
+export const SUPPLIER_MATCH_LOCAL_MODEL = IMAGE_VECTOR_EMBEDDING_MODEL;
+/** CLIP vision model used by the Picture Sherlock sidecar. */
+export const SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL =
+  "picture-sherlock-clip-vit-base-patch32" as const;
+export const SUPPLIER_MATCH_MODELS = [
+  SUPPLIER_MATCH_LOCAL_MODEL,
+  SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
+] as const;
+/** @deprecated Prefer SUPPLIER_MATCH_LOCAL_MODEL / SUPPLIER_MATCH_MODELS. */
+export const SUPPLIER_MATCH_MODEL = SUPPLIER_MATCH_LOCAL_MODEL;
 
 const MAX_IMAGE_SOURCE_LENGTH = 8_000_000;
 
@@ -111,7 +120,7 @@ export const supplierImageMatchResponseSchema = z
       .min(1)
       .max(MAX_SUPPLIER_MATCH_CATALOG_IMAGES),
     searchedCount: z.number().int().min(1).max(MAX_SUPPLIER_MATCH_CATALOG_IMAGES),
-    model: z.literal(SUPPLIER_MATCH_MODEL),
+    model: z.enum(SUPPLIER_MATCH_MODELS),
   })
   .strict();
 
