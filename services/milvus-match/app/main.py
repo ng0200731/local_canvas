@@ -1,10 +1,12 @@
-"""FastAPI entrypoint for Picture Sherlock reverse-image match."""
+"""FastAPI entrypoint for CLIP + vector reverse-image match (Milvus Lite or numpy)."""
 
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -15,13 +17,7 @@ from PIL import Image
 from .config import Settings, get_settings
 from .feature_extractor import FeatureExtractor
 from .image_loader import ImageLoadError, describe_sources, open_rgb_image
-from .local_match import best_local_score
-from .ranking import (
-    color_histogram,
-    fuse_scores,
-    max_pairwise_cosine,
-    rank_catalog,
-)
+from .milvus_index import VectorIndexClient, open_vector_index, search_catalog
 from .schemas import (
     ErrorResponse,
     HealthResponse,
@@ -30,31 +26,62 @@ from .schemas import (
     MatchResponse,
 )
 
-logger = logging.getLogger("picture_sherlock")
+logger = logging.getLogger("milvus_match")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 _extractor: Optional[FeatureExtractor] = None
+_index: Optional[VectorIndexClient] = None
+_active_backend: str = "unloaded"
 _settings: Settings = get_settings()
+
+
+def _ensure_milvus_parent(uri: str) -> None:
+    if uri.startswith("http://") or uri.startswith("https://"):
+        return
+    path = Path(uri)
+    if path.suffix:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path.mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _extractor, _settings
+    global _extractor, _index, _active_backend, _settings
     _settings = get_settings()
     logger.info(
-        "Loading CLIP model %s on device=%s",
+        "Loading CLIP model %s on device=%s; backend=%s uri=%s",
         _settings.model_id,
         _settings.device or "auto",
+        _settings.backend,
+        _settings.milvus_uri,
     )
     _extractor = FeatureExtractor(model_id=_settings.model_id, device=_settings.device)
-    logger.info("Model ready on %s", _extractor.device)
+    if _extractor.vector_dim:
+        _settings.vector_dim = int(_extractor.vector_dim)
+
+    if _settings.backend in {"auto", "milvus"}:
+        _ensure_milvus_parent(_settings.milvus_uri)
+
+    _index, _active_backend = open_vector_index(
+        backend=_settings.backend,
+        milvus_uri=_settings.milvus_uri,
+    )
+    logger.info(
+        "Model ready on %s (dim=%s); vector backend=%s",
+        _extractor.device,
+        _settings.vector_dim,
+        _active_backend,
+    )
     yield
     _extractor = None
+    _index = None
+    _active_backend = "unloaded"
 
 
 app = FastAPI(
-    title="Picture Sherlock Match Sidecar",
-    version="1.4.0",
+    title="Milvus Match Sidecar",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -72,46 +99,28 @@ async def value_error_handler(_request: Request, exc: ValueError):
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     device = _extractor.device if _extractor is not None else "unloaded"
-    # model string includes a version tag so the UI/logs prove the new binary is loaded.
+    backend_tag = _active_backend if _active_backend != "unloaded" else _settings.backend
     return HealthResponse(
         status="ok",
-        model=f"{_settings.model_name}+local-v14",
+        model=f"{_settings.model_name}+{backend_tag}",
         device=device,
     )
-
-
-def _clip_views(image: Image.Image, *, dense: bool) -> List[np.ndarray]:
-    if _extractor is None:
-        raise RuntimeError("Feature extractor is not loaded.")
-    return _extractor.extract_views(image, dense=dense)
-
-
-def _color_vec(image: Image.Image) -> np.ndarray:
-    thumb = image.copy()
-    thumb.thumbnail((128, 128))
-    return color_histogram(np.asarray(thumb.convert("RGB"), dtype=np.uint8))
 
 
 def _load_image(source: str) -> Image.Image:
     return open_rgb_image(source, _settings)
 
 
-def _embed_catalog_item(
-    item_id: str,
-    source: str,
-) -> Tuple[str, Image.Image, List[np.ndarray], np.ndarray]:
+def _embed_catalog_item(item_id: str, source: str) -> Tuple[str, np.ndarray]:
+    if _extractor is None:
+        raise RuntimeError("Feature extractor is not loaded.")
     image = _load_image(source)
-    views = _clip_views(image, dense=True)
-    color = _color_vec(image)
-    return item_id, image, views, color
+    vector = _extractor.extract_best_view(image)
+    return item_id, vector
 
 
-def _embed_many(
-    sources: Sequence[Tuple[str, str]],
-) -> List[Tuple[str, Image.Image, List[np.ndarray], np.ndarray]]:
-    results: List[Optional[Tuple[str, Image.Image, List[np.ndarray], np.ndarray]]] = [
-        None
-    ] * len(sources)
+def _embed_many(sources: Sequence[Tuple[str, str]]) -> List[Tuple[str, np.ndarray]]:
+    results: List[Optional[Tuple[str, np.ndarray]]] = [None] * len(sources)
     workers = max(1, min(_settings.embed_workers, len(sources)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         future_map = {
@@ -135,22 +144,29 @@ def _embed_many(
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 def match_images(payload: MatchRequest) -> MatchResponse:
-    if _extractor is None:
-        raise RuntimeError("Feature extractor is not loaded.")
+    if _extractor is None or _index is None:
+        raise RuntimeError("Milvus match service is not loaded.")
 
     logger.info(
-        "match request catalog=%s query=%s",
+        "match request catalog=%s query=%s backend=%s",
         len(payload.catalog),
         describe_sources([payload.queryImage.url]),
+        _active_backend,
     )
 
     try:
         query_image = _load_image(payload.queryImage.url)
-        # Query: light multi-view (focused crop in many workflows).
-        query_views = _clip_views(query_image, dense=False)
-        query_color = _color_vec(query_image)
+        query_vector = _extractor.extract_best_view(query_image)
         catalog_vectors = _embed_many(
             [(item.catalogItemId, item.imageUrl) for item in payload.catalog]
+        )
+        ranked = search_catalog(
+            client=_index,
+            query_vector=query_vector,
+            catalog_ids=[item_id for item_id, _ in catalog_vectors],
+            catalog_vectors=[vector for _, vector in catalog_vectors],
+            top_k=payload.topK or len(catalog_vectors),
+            vector_dim=_settings.vector_dim,
         )
     except ImageLoadError:
         raise
@@ -158,31 +174,18 @@ def match_images(payload: MatchRequest) -> MatchResponse:
         logger.exception("match failed")
         raise RuntimeError(str(exc)) from exc
 
-    ids: List[str] = []
-    fused_scores: List[float] = []
-    for item_id, catalog_image, views, color in catalog_vectors:
-        clip_score = max_pairwise_cosine(query_views, views)
-        color_score = float(
-            np.clip(np.dot(query_color.reshape(-1), color.reshape(-1)), -1.0, 1.0)
-        )
-        _raw_local, local_score = best_local_score(query_image, catalog_image)
-        fused = fuse_scores(clip_score, local_score, color_score)
-        ids.append(item_id)
-        fused_scores.append(fused)
-
-    scores = np.asarray(fused_scores, dtype=np.float64)
-    ranked = rank_catalog(ids, scores, top_k=payload.topK or len(ids))
-
     if not ranked:
         raise RuntimeError("No matches could be produced.")
 
     logger.info(
-        "match complete top=%s score=%.3f catalog=%s",
+        "match complete top=%s score=%.3f catalog=%s backend=%s",
         ranked[0][0],
         ranked[0][1],
         len(payload.catalog),
+        _active_backend,
     )
 
+    # Keep response model id stable for the Next.js schema; backend is in /health.
     return MatchResponse(
         matches=[MatchHit(catalogItemId=item_id, cosine=score) for item_id, score in ranked],
         searchedCount=len(payload.catalog),
@@ -193,3 +196,19 @@ def match_images(payload: MatchRequest) -> MatchResponse:
 @app.exception_handler(RuntimeError)
 async def runtime_error_handler(_request: Request, exc: RuntimeError):
     return JSONResponse(status_code=500, content=ErrorResponse(error=str(exc)).model_dump())
+
+
+def main() -> None:
+    import uvicorn
+
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=os.getenv("MILVUS_MATCH_RELOAD", "").lower() in {"1", "true", "yes"},
+    )
+
+
+if __name__ == "__main__":
+    main()

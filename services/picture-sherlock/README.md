@@ -1,12 +1,12 @@
 # Picture Sherlock Match Sidecar
 
-Thin FastAPI service that reuses the Picture Sherlock approach for reverse image search:
+Thin FastAPI service for reverse image search (Picture Sherlock–style):
 
-1. Embed the query image with CLIP vision (`openai/clip-vit-base-patch32`)
-2. Also embed center crops (multi-view) so packaging/background is less dominant
-3. Embed each supplier catalog image the same way
-4. Fuse best multi-view CLIP cosine with an RGB color-histogram cosine
-5. Rank catalog items by the fused score
+1. Embed query + catalog with CLIP image features (`openai/clip-vit-base-patch32`)
+2. Catalog uses **dense multi-scale tiles** so detail crops can hit a region
+3. Run **ORB local-feature matching** (crop → parent geometry) — critical when the
+   target is a crop of a product photo and whole-image CLIP ranks the wrong item
+4. Fuse CLIP + local (+ very light color) and rank
 
 This is **not** the Streamlit desktop app. It only exposes the match API used by the Next.js app.
 

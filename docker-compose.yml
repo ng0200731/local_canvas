@@ -16,5 +16,37 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional CLIP + Milvus Lite sidecar. Requires Docker Hub (python base image).
+  # Prefer host run on Windows when Hub is blocked: pnpm match:milvus
+  # Docker path: pnpm match:milvus:docker
+  milvus-match:
+    profiles: ["milvus"]
+    build: ./services/milvus-match
+    ports:
+      - "8092:8092"
+    volumes:
+      - milvus_match_data:/data
+    environment:
+      MILVUS_MATCH_HOST: "0.0.0.0"
+      MILVUS_MATCH_PORT: "8092"
+      MILVUS_MATCH_URI: "/data/milvus.db"
+      MILVUS_MATCH_BACKEND: "milvus"
+      HF_HOME: "/data/hf-cache"
+      TRANSFORMERS_CACHE: "/data/hf-cache"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      # First boot downloads CLIP weights.
+      start_period: 180s
+      retries: 5
+
 volumes:
   postgres_data:
+  milvus_match_data:

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { supplierImageMatchRequestSchema } from "@/lib/supplier-image-match";
+import { matchSupplierImagesWithMilvus } from "@/lib/supplier-image-milvus";
 import { matchSupplierImagesWithPictureSherlock } from "@/lib/supplier-image-picture-sherlock";
 import { type SupplierImageMatcher } from "@/lib/supplier-image-vector-match";
 
@@ -8,11 +9,13 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 interface SupplierImageMatchRouteDependencies {
-  match: SupplierImageMatcher;
+  matchPictureSherlock: SupplierImageMatcher;
+  matchMilvus: SupplierImageMatcher;
 }
 
 export function createSupplierImageMatchPostHandler({
-  match,
+  matchPictureSherlock,
+  matchMilvus,
 }: SupplierImageMatchRouteDependencies) {
   return async function POST(request: Request) {
     let payload: unknown;
@@ -29,6 +32,9 @@ export function createSupplierImageMatchPostHandler({
       );
     }
 
+    const match =
+      parsed.data.engine === "milvus" ? matchMilvus : matchPictureSherlock;
+
     try {
       return NextResponse.json(await match(parsed.data, request.signal));
     } catch (error) {
@@ -40,5 +46,6 @@ export function createSupplierImageMatchPostHandler({
 }
 
 export const POST = createSupplierImageMatchPostHandler({
-  match: matchSupplierImagesWithPictureSherlock,
+  matchPictureSherlock: matchSupplierImagesWithPictureSherlock,
+  matchMilvus: matchSupplierImagesWithMilvus,
 });

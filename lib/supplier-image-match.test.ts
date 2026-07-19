@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_SUPPLIER_MATCH_CATALOG_IMAGES,
   SUPPLIER_MATCH_LOCAL_MODEL,
+  SUPPLIER_MATCH_MILVUS_MODEL,
   SUPPLIER_MATCH_MODEL,
   SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
   supplierImageMatchRequestSchema,
@@ -63,6 +64,24 @@ describe("supplier image match contracts", () => {
     });
     expect(clipResponse.model).toBe(SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL);
     expect(SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL).toContain("picture-sherlock");
+
+    const milvusResponse = supplierImageMatchResponseSchema.parse({
+      matches: response.matches,
+      searchedCount: 1,
+      model: SUPPLIER_MATCH_MILVUS_MODEL,
+    });
+    expect(milvusResponse.model).toBe(SUPPLIER_MATCH_MILVUS_MODEL);
+
+    const milvusRequest = supplierImageMatchRequestSchema.parse({
+      queryImage: {
+        name: "reference.png",
+        url: "data:image/png;base64,aW1hZ2U=",
+      },
+      catalog: [catalogItem(1)],
+      currentSupplierId: "supplier-1",
+      engine: "milvus",
+    });
+    expect(milvusRequest.engine).toBe("milvus");
   });
 
   it("rejects images owned by a supplier other than the selected supplier", () => {

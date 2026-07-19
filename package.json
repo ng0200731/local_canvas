@@ -14,7 +14,9 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "node scripts/db-migrate.mjs",
-    "match:sidecar": "cd services/picture-sherlock && .venv/Scripts/uvicorn app.main:app --host 127.0.0.1 --port 8091"
+    "match:sidecar": "cd services/picture-sherlock && .venv/Scripts/uvicorn app.main:app --host 127.0.0.1 --port 8091",
+    "match:milvus": "cd services/milvus-match && .venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8092",
+    "match:milvus:docker": "docker compose --profile milvus up -d --build milvus-match"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

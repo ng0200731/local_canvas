@@ -78,6 +78,14 @@ const envSchema = z
     ),
     PICTURE_SHERLOCK_FALLBACK_TO_LOCAL: optionalBoolean.default(true),
 
+    // ── Milvus Lite CLIP sidecar (optional, server-only) ─────────────
+    // Prefer Docker on Windows (Milvus Lite is unreliable on the host).
+    MILVUS_MATCH_URL: optionalUrl,
+    MILVUS_MATCH_TIMEOUT_MS: optionalIntDefault(90_000).pipe(
+      z.number().int().min(1_000).max(300_000),
+    ),
+    MILVUS_MATCH_FALLBACK_TO_LOCAL: optionalBoolean.default(true),
+
     // SMTP (optional, server-only). An optional local catcher overrides 163.com, then Gmail.
     SMTP_LOCAL_HOST: optionalString,
     SMTP_LOCAL_PORT: optionalPort,
@@ -141,6 +149,9 @@ function loadEnv(): Env {
     PICTURE_SHERLOCK_URL: process.env.PICTURE_SHERLOCK_URL,
     PICTURE_SHERLOCK_TIMEOUT_MS: process.env.PICTURE_SHERLOCK_TIMEOUT_MS,
     PICTURE_SHERLOCK_FALLBACK_TO_LOCAL: process.env.PICTURE_SHERLOCK_FALLBACK_TO_LOCAL,
+    MILVUS_MATCH_URL: process.env.MILVUS_MATCH_URL,
+    MILVUS_MATCH_TIMEOUT_MS: process.env.MILVUS_MATCH_TIMEOUT_MS,
+    MILVUS_MATCH_FALLBACK_TO_LOCAL: process.env.MILVUS_MATCH_FALLBACK_TO_LOCAL,
     SMTP_163_USERNAME: process.env.SMTP_163_USERNAME,
     SMTP_163_PASSWORD: process.env.SMTP_163_PASSWORD,
     SMTP_LOCAL_HOST: process.env.SMTP_LOCAL_HOST,
@@ -184,6 +195,9 @@ export const isXiangsuConfigured = Boolean(env.XIANGSU_API_KEY);
 
 /** True when the Picture Sherlock CLIP sidecar is configured. */
 export const isPictureSherlockConfigured = Boolean(env.PICTURE_SHERLOCK_URL);
+
+/** True when the Milvus Lite CLIP match sidecar is configured. */
+export const isMilvusMatchConfigured = Boolean(env.MILVUS_MATCH_URL);
 
 /**
  * Server-only: returns DATABASE_URL when local Postgres mode is active.

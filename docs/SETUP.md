@@ -32,6 +32,9 @@ Copy `.env.example` → `.env.local` and fill in what you need (all optional):
 | `PICTURE_SHERLOCK_URL`                                              | Enables CLIP reverse-image search via local FastAPI sidecar |
 | `PICTURE_SHERLOCK_TIMEOUT_MS`                                       | Sidecar client timeout (default `90000`)                    |
 | `PICTURE_SHERLOCK_FALLBACK_TO_LOCAL`                                | On sidecar failure, use local histogram matcher (default true) |
+| `MILVUS_MATCH_URL`                                                  | Enables CLIP + Milvus Lite reverse-image search (Docker sidecar) |
+| `MILVUS_MATCH_TIMEOUT_MS`                                           | Milvus sidecar client timeout (default `90000`)             |
+| `MILVUS_MATCH_FALLBACK_TO_LOCAL`                                    | On Milvus sidecar failure, use local histogram matcher (default true) |
 | `NEXT_PUBLIC_APP_URL`                                               | Public app URL (defaults to `http://localhost:3000`)        |
 
 ## Local Postgres (dev, no auth)
@@ -151,6 +154,49 @@ sidecar, the app falls back to a local histogram embedding matcher.
 4. Restart `pnpm dev`. Supplier image search uses CLIP when the sidecar is up;
    with fallback enabled it still works if the sidecar is down.
 
+## Supplier reverse-image search (Milvus path — Database icon)
+
+The supplier node **Database** icon uses a CLIP vector sidecar under
+`services/milvus-match`. API model id: `milvus-clip-vit-base-patch32`.
+
+**Windows (no new Docker image):** run the sidecar on the host with the
+**numpy** vector backend (same request/response contract; no Milvus Lite binary).
+Only Postgres stays in Docker.
+
+1. One-time setup:
+
+   ```powershell
+   cd services\milvus-match
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+   pip install -r requirements.txt
+   ```
+
+2. Start (or `pnpm match:milvus` after the venv exists):
+
+   ```powershell
+   $env:MILVUS_MATCH_BACKEND = "numpy"
+   uvicorn app.main:app --host 127.0.0.1 --port 8092
+   curl http://127.0.0.1:8092/health
+   ```
+
+3. In `.env.local`:
+
+   ```env
+   MILVUS_MATCH_URL=http://127.0.0.1:8092
+   MILVUS_MATCH_TIMEOUT_MS=90000
+   MILVUS_MATCH_FALLBACK_TO_LOCAL=true
+   ```
+
+4. Restart `pnpm dev`. **Database** icon → this sidecar; **Eye** → Picture Sherlock.
+
+**Optional Docker** (only if Docker Hub works): `pnpm match:milvus:docker` builds
+`milvus-match` with Milvus Lite. Skip if you cannot pull new images — host numpy
+mode is enough for local use.
+
+See `services/milvus-match/README.md`.
+
 ## Scripts
 
 ```bash
@@ -159,8 +205,10 @@ pnpm build          # production build
 pnpm lint           # eslint
 pnpm format         # prettier --write .
 pnpm test           # vitest (pure-logic unit tests)
-pnpm db:up          # docker compose up -d (local Postgres)
+pnpm db:up          # docker compose up -d (local Postgres only)
 pnpm db:down        # docker compose down
 pnpm db:migrate     # apply db/local-init.sql + seed LOCAL_USER_ID profile
-pnpm match:sidecar  # start Picture Sherlock CLIP FastAPI sidecar (Windows venv)
+pnpm match:sidecar  # Picture Sherlock CLIP FastAPI sidecar (Windows venv)
+pnpm match:milvus   # Milvus-path CLIP sidecar on host :8092 (numpy backend on Windows)
+pnpm match:milvus:docker  # optional: build/start milvus-match container (needs Docker Hub)
 ```

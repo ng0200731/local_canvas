@@ -18,7 +18,15 @@ import {
 } from "@/lib/supplier-image-match";
 
 const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
-const MAX_PARALLEL_EMBEDS = 6;
+/** Keep catalog embeds serial-ish: multi-region sharp work is memory-heavy on Windows. */
+const MAX_PARALLEL_EMBEDS = 2;
+/** Cap decoded working size before region crops (final embed is only 48×48). */
+const MAX_WORKING_IMAGE_SIDE = 384;
+
+// libvips can OOM under concurrent decode/extract on large catalogs.
+// Disable cache and keep a single worker so memory stays bounded.
+sharp.cache(false);
+sharp.concurrency(1);
 
 export type SupplierImageMatcher = (
   input: SupplierImageMatchRequest,
@@ -133,6 +141,15 @@ async function fetchRemoteImage(
   throw new Error("Image redirect limit exceeded.");
 }
 
+function createSharp(sourceBuffer: Buffer) {
+  return sharp(sourceBuffer, {
+    animated: false,
+    // Guard against pathological inputs; catalog images are product photos.
+    limitInputPixels: 64_000_000,
+    sequentialRead: true,
+  });
+}
+
 export async function embedImageSource(
   source: string,
   fetcher: typeof fetch = fetch,
@@ -143,7 +160,7 @@ export async function embedImageSource(
     ? bufferFromDataUrl(source)
     : await fetchRemoteImage(source, fetcher, signal);
 
-  const { data, info } = await sharp(sourceBuffer, { animated: false })
+  const { data, info } = await createSharp(sourceBuffer)
     .rotate()
     .resize(IMAGE_VECTOR_EMBED_SIZE, IMAGE_VECTOR_EMBED_SIZE, {
       fit: "fill",
@@ -196,12 +213,11 @@ function buildImageCropRegions(imageWidth: number, imageHeight: number): ImageCr
 }
 
 async function embedImageBufferRegion(
-  sourceBuffer: Buffer,
+  workingBuffer: Buffer,
   region: ImageCropRegion,
   signal: AbortSignal | undefined,
 ): Promise<ImageRegionVector> {
-  const { data, info } = await sharp(sourceBuffer, { animated: false })
-    .rotate()
+  const { data, info } = await createSharp(workingBuffer)
     .extract({
       left: region.left,
       top: region.top,
@@ -223,6 +239,10 @@ async function embedImageBufferRegion(
   return { label: region.label, vector: embedRgbRaw(data, IMAGE_VECTOR_EMBED_SIZE) };
 }
 
+/**
+ * Decode once, downscale to a working size, then crop regions sequentially.
+ * Avoids re-decoding the full original for every region (libvips OOM trigger).
+ */
 export async function embedImageSourceRegions(
   source: string,
   fetcher: typeof fetch = fetch,
@@ -232,16 +252,37 @@ export async function embedImageSourceRegions(
   const sourceBuffer = source.startsWith("data:")
     ? bufferFromDataUrl(source)
     : await fetchRemoteImage(source, fetcher, signal);
-  const metadata = await sharp(sourceBuffer, { animated: false }).rotate().metadata();
-  const imageWidth = metadata.width;
-  const imageHeight = metadata.height;
-  if (!imageWidth || !imageHeight) throw new Error("Image dimensions could not be read.");
 
-  const regions = buildImageCropRegions(imageWidth, imageHeight);
-  const embedded = await Promise.all(
-    regions.map((region) => embedImageBufferRegion(sourceBuffer, region, signal)),
-  );
+  const rotated = createSharp(sourceBuffer).rotate();
+  const metadata = await rotated.metadata();
+  const originalWidth = metadata.width;
+  const originalHeight = metadata.height;
+  if (!originalWidth || !originalHeight) throw new Error("Image dimensions could not be read.");
+
+  const longest = Math.max(originalWidth, originalHeight);
+  const scale = longest > MAX_WORKING_IMAGE_SIDE ? MAX_WORKING_IMAGE_SIDE / longest : 1;
+  const workWidth = Math.max(1, Math.round(originalWidth * scale));
+  const workHeight = Math.max(1, Math.round(originalHeight * scale));
+
+  // Single decode + optional downscale; regions extract from this smaller buffer.
+  const workingBuffer = await createSharp(sourceBuffer)
+    .rotate()
+    .resize(workWidth, workHeight, {
+      fit: "fill",
+      withoutEnlargement: true,
+    })
+    .removeAlpha()
+    .png()
+    .toBuffer();
+
   signal?.throwIfAborted();
+  const regions = buildImageCropRegions(workWidth, workHeight);
+  // Sequential: peak memory stays near one decode + one crop, not 8× concurrent.
+  const embedded: ImageRegionVector[] = [];
+  for (const region of regions) {
+    signal?.throwIfAborted();
+    embedded.push(await embedImageBufferRegion(workingBuffer, region, signal));
+  }
   return embedded;
 }
 

@@ -41,10 +41,12 @@ import {
 import {
   MAX_SUPPLIER_MATCH_CATALOG_IMAGES,
   SUPPLIER_MATCH_LOCAL_MODEL,
+  SUPPLIER_MATCH_MILVUS_MODEL,
   SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
   supplierMatchUploadMetadataSchema,
   type SupplierImageMatchCandidate,
   type SupplierMatchCatalogItem,
+  type SupplierMatchEngine,
   type SupplierMatchQueryImage,
 } from "@/lib/supplier-image-match";
 import { uploadImage } from "@/lib/upload";
@@ -63,6 +65,8 @@ interface SupplierImageManagementDialogProps {
   catalogError?: string | null;
   currentSupplierId?: string | null;
   selectedItemId?: string | null;
+  /** Reverse-image engine: Picture Sherlock (Eye) or Milvus vector search (Database). */
+  engine?: SupplierMatchEngine;
   trigger: ReactElement;
   onSelect: (item: ProductImageGalleryItem) => void;
 }
@@ -146,7 +150,10 @@ function SimilarityMeter({ value }: { value: number }) {
 
 function matchEngineLabel(model: string): string {
   if (model === SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL) {
-    return "CLIP + color (Picture Sherlock)";
+    return "CLIP + local features (Picture Sherlock)";
+  }
+  if (model === SUPPLIER_MATCH_MILVUS_MODEL) {
+    return "CLIP + Milvus vector search";
   }
   if (model === SUPPLIER_MATCH_LOCAL_MODEL) {
     return "Local histogram fallback";
@@ -326,6 +333,7 @@ export function SupplierImageManagementDialog({
   catalogError = null,
   currentSupplierId = null,
   selectedItemId = null,
+  engine = "picture-sherlock",
   trigger,
   onSelect,
 }: SupplierImageManagementDialogProps) {
@@ -422,6 +430,7 @@ export function SupplierImageManagementDialog({
       queryImage: nextQueryImage,
       catalog,
       currentSupplierId,
+      engine,
     });
   }
 
@@ -511,10 +520,14 @@ export function SupplierImageManagementDialog({
         <DialogHeader className="border-b px-5 py-4 pr-14">
           <div className="flex flex-wrap items-center gap-2">
             <Badge
-              className="border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+              className={
+                engine === "milvus"
+                  ? "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-200"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+              }
               variant="outline"
             >
-              <Eye /> Image search
+              <Eye /> {engine === "milvus" ? "Milvus vector search" : "Image search"}
             </Badge>
             {catalog.length ? (
               <span className="text-muted-foreground text-xs">
@@ -523,10 +536,15 @@ export function SupplierImageManagementDialog({
               </span>
             ) : null}
           </div>
-          <DialogTitle className="text-xl">Search similar supplier images</DialogTitle>
+          <DialogTitle className="text-xl">
+            {engine === "milvus"
+              ? "Search similar images with Milvus"
+              : "Search similar supplier images"}
+          </DialogTitle>
           <DialogDescription>
-            Upload a reference image. Search only the selected supplier&apos;s product images and
-            rank matches from highest to lowest similarity.
+            {engine === "milvus"
+              ? "Upload a reference image. CLIP embeddings are indexed in Milvus Lite and ranked by cosine similarity within this supplier's catalog."
+              : "Upload a reference image. Search only the selected supplier's product images and rank matches from highest to lowest similarity."}
           </DialogDescription>
         </DialogHeader>
 
@@ -663,9 +681,9 @@ export function SupplierImageManagementDialog({
             <div className="text-muted-foreground mt-auto flex gap-2 border-t pt-4 text-xs leading-5">
               <ShieldCheck className="mt-0.5 size-4 shrink-0" />
               <p>
-                Search is limited to the selected supplier&apos;s images. When the CLIP sidecar is
-                running, matches use multi-view visual embeddings plus color ranking; otherwise the
-                local histogram fallback is used. No external LLM analysis.
+                {engine === "milvus"
+                  ? "Search is limited to the selected supplier's images. When the Milvus sidecar is running, CLIP embeddings are indexed in Milvus Lite and ranked by cosine similarity; otherwise the local histogram fallback is used. No external LLM analysis."
+                  : "Search is limited to the selected supplier's images. When the CLIP sidecar is running, matches use multi-view visual embeddings plus local feature matching for crop-from-product cases; otherwise the local histogram fallback is used. No external LLM analysis."}
               </p>
             </div>
           </aside>
@@ -817,10 +835,9 @@ export function SupplierImageManagementDialog({
                       subtitle: queryImage?.name ?? "Uploaded reference",
                       src: queryImage?.url ?? comparisonMatch.item.variant.image.url,
                       alt: queryImage?.name ?? "Target image",
-                      fields: [
-                        { label: "Source", value: queryImage?.name ?? "Uploaded reference" },
-                        ...buildComparisonFields(comparisonMatch.item).slice(1),
-                      ],
+                      // Target is an uploaded reference only — do not copy product
+                      // metadata from the compared catalog item.
+                      fields: [] as ComparisonField[],
                     },
                     {
                       title: "Compared image",
@@ -856,19 +873,21 @@ export function SupplierImageManagementDialog({
                             className="h-full w-full object-contain"
                           />
                         </div>
-                        <dl className="grid grid-cols-2 gap-2">
-                          {panel.fields.map((field) => (
-                            <div
-                              key={field.label}
-                              className="rounded-lg border bg-background px-3 py-2"
-                            >
-                              <dt className="text-muted-foreground text-[0.65rem] uppercase tracking-[0.14em]">
-                                {field.label}
-                              </dt>
-                              <dd className="truncate text-sm font-medium">{field.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
+                        {panel.fields.length ? (
+                          <dl className="grid grid-cols-2 gap-2">
+                            {panel.fields.map((field) => (
+                              <div
+                                key={field.label}
+                                className="rounded-lg border bg-background px-3 py-2"
+                              >
+                                <dt className="text-muted-foreground text-[0.65rem] uppercase tracking-[0.14em]">
+                                  {field.label}
+                                </dt>
+                                <dd className="truncate text-sm font-medium">{field.value}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        ) : null}
                       </div>
                     </section>
                   ))}

@@ -1,4 +1,4 @@
-"""Cosine similarity ranking helpers with optional color fusion."""
+"""Cosine similarity ranking helpers with optional color / local fusion."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ def cosine_similarities(query: np.ndarray, matrix: np.ndarray) -> np.ndarray:
         query_vec = query_vec[:1]
     if matrix.ndim == 1:
         matrix = matrix.reshape(1, -1)
-    # Features are L2-normalized, so cosine == dot product.
     scores = (matrix @ query_vec.T).reshape(-1)
     return np.clip(scores.astype(np.float64), -1.0, 1.0)
 
@@ -36,14 +35,11 @@ def max_pairwise_cosine(
 
 
 def color_histogram(rgb: np.ndarray, bins: int = 16) -> np.ndarray:
-    """
-    Build an L2-normalized RGB histogram from an HxWx3 uint8 array.
-    """
+    """Build an L2-normalized RGB histogram from an HxWx3 uint8 array."""
     if rgb.ndim != 3 or rgb.shape[2] < 3:
         raise ValueError("Expected HxWx3 RGB array.")
     hist = np.zeros(bins * 3, dtype=np.float64)
     flat = rgb.reshape(-1, 3).astype(np.float64)
-    # Scale 0-255 into bin indices.
     scaled = np.clip((flat / 256.0) * bins, 0, bins - 1).astype(np.int32)
     for channel in range(3):
         counts = np.bincount(scaled[:, channel], minlength=bins).astype(np.float64)
@@ -59,22 +55,57 @@ def color_histogram(rgb: np.ndarray, bins: int = 16) -> np.ndarray:
     return hist.astype(np.float32)
 
 
+def fuse_scores(
+    clip_score: float,
+    local_score: float,
+    color_score: float = 0.0,
+    *,
+    clip_weight: float = 0.35,
+    local_weight: float = 0.60,
+    color_weight: float = 0.05,
+) -> float:
+    """
+    Fuse CLIP, local-feature, and light color scores.
+
+    Local (template/ORB) is weighted highest for crop-from-parent workflows.
+    When local evidence is strong, it fully dominates moderate CLIP false positives.
+    """
+    clip_s = float(np.clip(clip_score, -1.0, 1.0))
+    local_s = float(np.clip(local_score, -1.0, 1.0))
+    color_s = float(np.clip(color_score, -1.0, 1.0))
+
+    weight_sum = clip_weight + local_weight + color_weight
+    if weight_sum <= 0:
+        return clip_s
+
+    blended = (
+        clip_weight * clip_s + local_weight * local_s + color_weight * color_s
+    ) / weight_sum
+
+    # Strong local geometry/template match wins outright.
+    if local_s >= 0.72:
+        return float(np.clip(max(blended, local_s, clip_s), -1.0, 1.0))
+    # Moderate local still can lift true parents above ~0.55 CLIP impostors.
+    if local_s >= 0.55:
+        return float(np.clip(max(blended, 0.55 * local_s + 0.45 * clip_s), -1.0, 1.0))
+    return float(np.clip(max(blended, clip_s * 0.98), -1.0, 1.0))
+
+
 def fuse_clip_and_color(
     clip_score: float,
     color_score: float,
     *,
-    clip_weight: float = 0.72,
-    color_weight: float = 0.28,
+    clip_weight: float = 0.90,
+    color_weight: float = 0.10,
 ) -> float:
-    """
-    Fuse CLIP cosine and color-hist cosine into a single ranking score in [-1, 1].
-    Weights should sum to ~1; defaults emphasize structure/texture over pure color.
-    """
-    weight_sum = clip_weight + color_weight
-    if weight_sum <= 0:
-        return float(np.clip(clip_score, -1.0, 1.0))
-    fused = (clip_weight * clip_score + color_weight * color_score) / weight_sum
-    return float(np.clip(fused, -1.0, 1.0))
+    return fuse_scores(
+        clip_score,
+        local_score=0.0,
+        color_score=color_score,
+        clip_weight=clip_weight,
+        local_weight=0.0,
+        color_weight=color_weight,
+    )
 
 
 def rank_catalog(
@@ -90,6 +121,5 @@ def rank_catalog(
         ranked.append((catalog_id, score))
         if len(ranked) >= top_k:
             break
-    # Deterministic ties: higher score first, then catalog id.
     ranked.sort(key=lambda item: (-item[1], item[0]))
     return ranked

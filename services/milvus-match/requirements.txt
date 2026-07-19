@@ -1,0 +1,23 @@
+# CLIP reverse-image match sidecar (Milvus Lite optional; numpy backend on Windows)
+#
+# Windows host (no new Docker image required):
+#   python -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#   set MILVUS_MATCH_BACKEND=numpy
+#   uvicorn app.main:app --host 127.0.0.1 --port 8092
+#
+# Docker (when Docker Hub is reachable): see Dockerfile / pnpm match:milvus:docker
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+transformers>=4.40.0
+Pillow>=10.0.0
+numpy>=1.24.0
+httpx>=0.27.0
+# Optional — only needed for MILVUS_MATCH_BACKEND=milvus (prefer Linux/Docker):
+# pymilvus>=2.4.0
+# Install torch/torchvision separately for CPU wheels:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu

@@ -9,9 +9,14 @@ export const SUPPLIER_MATCH_LOCAL_MODEL = IMAGE_VECTOR_EMBEDDING_MODEL;
 /** CLIP vision model used by the Picture Sherlock sidecar. */
 export const SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL =
   "picture-sherlock-clip-vit-base-patch32" as const;
+/** CLIP + Milvus Lite vector search used by the Milvus match sidecar. */
+export const SUPPLIER_MATCH_MILVUS_MODEL = "milvus-clip-vit-base-patch32" as const;
+export const SUPPLIER_MATCH_ENGINES = ["picture-sherlock", "milvus"] as const;
+export type SupplierMatchEngine = (typeof SUPPLIER_MATCH_ENGINES)[number];
 export const SUPPLIER_MATCH_MODELS = [
   SUPPLIER_MATCH_LOCAL_MODEL,
   SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL,
+  SUPPLIER_MATCH_MILVUS_MODEL,
 ] as const;
 /** @deprecated Prefer SUPPLIER_MATCH_LOCAL_MODEL / SUPPLIER_MATCH_MODELS. */
 export const SUPPLIER_MATCH_MODEL = SUPPLIER_MATCH_LOCAL_MODEL;
@@ -80,6 +85,8 @@ export const supplierImageMatchRequestSchema = z
         `Image search supports up to ${MAX_SUPPLIER_MATCH_CATALOG_IMAGES} supplier images at once.`,
       ),
     currentSupplierId: z.string().trim().min(1).max(120),
+    /** Which reverse-image engine to use. Defaults to Picture Sherlock. */
+    engine: z.enum(SUPPLIER_MATCH_ENGINES).default("picture-sherlock"),
   })
   .strict()
   .superRefine((value, context) => {

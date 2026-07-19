@@ -36,8 +36,12 @@ const validBody = {
 
 describe("POST /api/supplier-image-match", () => {
   it("rejects cross-supplier catalogs before searching", async () => {
-    const match = vi.fn<SupplierImageMatcher>();
-    const handler = createSupplierImageMatchPostHandler({ match });
+    const matchPictureSherlock = vi.fn<SupplierImageMatcher>();
+    const matchMilvus = vi.fn<SupplierImageMatcher>();
+    const handler = createSupplierImageMatchPostHandler({
+      matchPictureSherlock,
+      matchMilvus,
+    });
     const response = await handler(
       post({
         ...validBody,
@@ -46,11 +50,12 @@ describe("POST /api/supplier-image-match", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(match).not.toHaveBeenCalled();
+    expect(matchPictureSherlock).not.toHaveBeenCalled();
+    expect(matchMilvus).not.toHaveBeenCalled();
   });
 
-  it("forwards the validated selected-supplier catalog", async () => {
-    const match = vi.fn<SupplierImageMatcher>().mockResolvedValue({
+  it("forwards the validated selected-supplier catalog to Picture Sherlock by default", async () => {
+    const matchPictureSherlock = vi.fn<SupplierImageMatcher>().mockResolvedValue({
       matches: [
         {
           catalogItemId: "product-1:variant-1",
@@ -61,23 +66,64 @@ describe("POST /api/supplier-image-match", () => {
       searchedCount: 1,
       model: SUPPLIER_MATCH_MODEL,
     });
-    const handler = createSupplierImageMatchPostHandler({ match });
+    const matchMilvus = vi.fn<SupplierImageMatcher>();
+    const handler = createSupplierImageMatchPostHandler({
+      matchPictureSherlock,
+      matchMilvus,
+    });
     const response = await handler(post(validBody));
 
     expect(response.status).toBe(200);
-    expect(match).toHaveBeenCalledWith(
-      expect.objectContaining({ currentSupplierId: "supplier-1" }),
+    expect(matchPictureSherlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentSupplierId: "supplier-1",
+        engine: "picture-sherlock",
+      }),
       expect.any(AbortSignal),
     );
+    expect(matchMilvus).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       searchedCount: 1,
       model: SUPPLIER_MATCH_MODEL,
     });
   });
 
+  it("dispatches milvus engine to the Milvus matcher", async () => {
+    const matchPictureSherlock = vi.fn<SupplierImageMatcher>();
+    const matchMilvus = vi.fn<SupplierImageMatcher>().mockResolvedValue({
+      matches: [
+        {
+          catalogItemId: "product-1:variant-1",
+          similarity: 88,
+          cosine: 0.76,
+        },
+      ],
+      searchedCount: 1,
+      model: "milvus-clip-vit-base-patch32",
+    });
+    const handler = createSupplierImageMatchPostHandler({
+      matchPictureSherlock,
+      matchMilvus,
+    });
+    const response = await handler(post({ ...validBody, engine: "milvus" }));
+
+    expect(response.status).toBe(200);
+    expect(matchMilvus).toHaveBeenCalledWith(
+      expect.objectContaining({ engine: "milvus" }),
+      expect.any(AbortSignal),
+    );
+    expect(matchPictureSherlock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      model: "milvus-clip-vit-base-patch32",
+    });
+  });
+
   it("maps provider failures to a 502 response", async () => {
     const handler = createSupplierImageMatchPostHandler({
-      match: vi.fn<SupplierImageMatcher>().mockRejectedValue(new Error("Embedding failed")),
+      matchPictureSherlock: vi
+        .fn<SupplierImageMatcher>()
+        .mockRejectedValue(new Error("Embedding failed")),
+      matchMilvus: vi.fn<SupplierImageMatcher>(),
     });
     const response = await handler(post(validBody));
 
@@ -87,7 +133,7 @@ describe("POST /api/supplier-image-match", () => {
 
   it("still accepts a Picture Sherlock-backed matcher payload", async () => {
     const handler = createSupplierImageMatchPostHandler({
-      match: vi.fn<SupplierImageMatcher>().mockResolvedValue({
+      matchPictureSherlock: vi.fn<SupplierImageMatcher>().mockResolvedValue({
         matches: [
           {
             catalogItemId: "product-1:variant-1",
@@ -98,6 +144,7 @@ describe("POST /api/supplier-image-match", () => {
         searchedCount: 1,
         model: "picture-sherlock-clip-vit-base-patch32",
       }),
+      matchMilvus: vi.fn<SupplierImageMatcher>(),
     });
     const response = await handler(post(validBody));
 
