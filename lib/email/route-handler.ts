@@ -79,9 +79,13 @@ export function createEmailPostHandler<Input>({
       }
       console.error("Email route failed before provider delivery completed.", {
         errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+        errorStack: error instanceof Error ? error.stack?.slice(0, 2000) : undefined,
       });
       return NextResponse.json(
-        { error: "Email delivery failed. Check the server configuration and try again." },
+        {
+          error: `Email delivery failed: ${error instanceof Error ? error.message : "Check the server configuration and try again."}`,
+        },
         { status: 502 },
       );
     }

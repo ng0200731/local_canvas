@@ -120,10 +120,119 @@ function OrderDetails({ order }: { order: SampleOrder }) {
           </ol>
         ) : (
           <p className="text-muted-foreground mt-3 text-sm">
-            Awaiting the supplier’s first update.
+            Awaiting the supplier&rsquo;s first update.
           </p>
         )}
       </section>
+    </div>
+  );
+}
+
+/** All suppliers' statuses for one project order, grouped by CA sequence. */
+function ProjectOrderDetails({
+  sequence,
+  orders,
+  onRetry,
+  onRetryApproval,
+  retrying,
+}: {
+  sequence: string;
+  orders: readonly SampleOrder[];
+  onRetry: (order: SampleOrder) => void;
+  onRetryApproval: (order: SampleOrder) => void;
+  retrying: string | null;
+}) {
+  const projectName = orders[0]?.snapshot.project.name ?? "Unknown";
+  const canvasName = orders[0]?.snapshot.canvas.name ?? "Unknown";
+  const reportUrl = orders[0]?.snapshot.canvas.reportUrl ?? "#";
+  return (
+    <div className="bg-muted/20 grid gap-5 border-t p-5">
+      <div className="flex items-center gap-3 text-sm">
+        <span className="font-medium">{projectName} / {canvasName}</span>
+        <a
+          href={reportUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary inline-flex items-center gap-1.5 text-xs font-medium hover:underline"
+        >
+          Approved canvas report <ExternalLink className="size-3" />
+        </a>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {orders.map((order) => (
+          <div key={order.id} className="bg-background overflow-hidden rounded-xl border">
+            <div className="bg-muted/30 flex items-center justify-between gap-2 border-b px-4 py-3">
+              <p className="font-medium text-sm">{order.snapshot.supplier.name}</p>
+              {order.currentStage ? (
+                <StatusBadge value={order.currentStage} kind="stage" />
+              ) : (
+                <Badge variant="outline">Not started</Badge>
+              )}
+            </div>
+            <div className="grid gap-3 p-4 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs">Email</span>
+                <StatusBadge value={order.emailStatus} kind="email" />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs">Approval</span>
+                <StatusBadge value={order.approvalStatus} kind="approval" />
+              </div>
+              {order.latestUpdateAt ? (
+                <p className="text-muted-foreground text-xs">
+                  Latest: {formatDate(order.latestUpdateAt)}
+                </p>
+              ) : null}
+              {order.updates.length > 0 ? (
+                <details className="group text-xs">
+                  <summary className="text-muted-foreground cursor-pointer list-none font-medium hover:text-foreground">
+                    Timeline ({order.updates.length})
+                  </summary>
+                  <ol className="mt-2 grid gap-2 border-l-2 pl-3">
+                    {[...order.updates]
+                      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                      .map((update) => (
+                        <li key={update.id}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium">{SAMPLE_STAGE_LABELS[update.stage]}</span>
+                            <time className="text-muted-foreground">{formatDate(update.createdAt)}</time>
+                          </div>
+                          <p className="text-muted-foreground">{payloadSummary(update.payload)}</p>
+                        </li>
+                      ))}
+                  </ol>
+                </details>
+              ) : null}
+              <div className="flex items-center gap-2">
+                {order.emailStatus === "failed" ? (
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="Retry purchase email"
+                    aria-label={`Retry ${order.sequence} purchase email`}
+                    disabled={retrying === order.id}
+                    onClick={() => onRetry(order)}
+                  >
+                    {retrying === order.id ? <Loader2 className="animate-spin" /> : <Send />}
+                  </Button>
+                ) : null}
+                {order.approvalEmailStatus === "failed" ? (
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="Retry approval email"
+                    aria-label={`Retry ${order.sequence} approval email`}
+                    disabled={retrying === order.id}
+                    onClick={() => onRetryApproval(order)}
+                  >
+                    {retrying === order.id ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -138,31 +247,42 @@ export function SampleStatusDashboard() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
+  /** Group orders by sequence (CA#). Each group = one project order sent to N suppliers. */
+  const groups = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return [...(orders.data ?? [])]
-      .filter((order) => {
-        const searchable = [
-          order.sequence,
-          order.snapshot.project.name,
-          order.snapshot.canvas.name,
-          order.snapshot.supplier.name,
-        ]
-          .join(" ")
-          .toLowerCase();
-        return (
-          (!normalized || searchable.includes(normalized)) &&
-          (stage === "all" || order.currentStage === stage) &&
-          (approval === "all" || order.approvalStatus === approval)
+    const all = orders.data ?? [];
+    return Object.entries(
+      all.reduce<Record<string, SampleOrder[]>>((acc, order) => {
+        if (
+          normalized &&
+          ![order.sequence, order.snapshot.project.name, order.snapshot.supplier.name]
+            .join(" ")
+            .toLowerCase()
+            .includes(normalized)
+        ) {
+          return acc;
+        }
+        if (stage !== "all" && order.currentStage !== stage) return acc;
+        if (approval !== "all" && order.approvalStatus !== approval) return acc;
+        (acc[order.sequence] ??= []).push(order);
+        return acc;
+      }, {}),
+    )
+      .map(([sequence, group]) => ({ sequence, orders: group }))
+      .sort((left, right) => {
+        if (sort === "ca-asc") return left.sequence.localeCompare(right.sequence);
+        const leftTime = left.orders.reduce(
+          (max, o) => (o.updatedAt > max ? o.updatedAt : max),
+          "",
         );
-      })
-      .sort((left, right) =>
-        sort === "updated-asc"
-          ? left.updatedAt.localeCompare(right.updatedAt)
-          : sort === "ca-asc"
-            ? left.sequence.localeCompare(right.sequence)
-            : right.updatedAt.localeCompare(left.updatedAt),
-      );
+        const rightTime = right.orders.reduce(
+          (max, o) => (o.updatedAt > max ? o.updatedAt : max),
+          "",
+        );
+        return sort === "updated-asc"
+          ? leftTime.localeCompare(rightTime)
+          : rightTime.localeCompare(leftTime);
+      });
   }, [approval, orders.data, query, sort, stage]);
 
   const summary = useMemo(() => {
@@ -329,7 +449,7 @@ export function SampleStatusDashboard() {
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search CA, project, canvas, supplier"
+              placeholder="Search CA, project, supplier"
               aria-label="Search sample orders"
               className="pl-9"
             />
@@ -372,7 +492,7 @@ export function SampleStatusDashboard() {
           </Select>
         </div>
 
-        {filtered.length === 0 ? (
+        {groups.length === 0 ? (
           <div className="flex min-h-64 flex-col items-center justify-center p-8 text-center">
             <PackageCheck className="text-muted-foreground size-10" />
             <h2 className="mt-4 font-semibold">No sample orders found</h2>
@@ -383,107 +503,79 @@ export function SampleStatusDashboard() {
           </div>
         ) : (
           <div>
-            <div className="bg-muted/30 text-muted-foreground hidden grid-cols-[110px_minmax(150px,1fr)_minmax(150px,1fr)_150px_140px_150px_80px] gap-3 border-b px-4 py-3 text-xs font-semibold tracking-wide uppercase md:grid">
+            <div className="bg-muted/30 text-muted-foreground hidden grid-cols-[110px_minmax(150px,1fr)_minmax(150px,1fr)_100px_80px] gap-3 border-b px-4 py-3 text-xs font-semibold tracking-wide uppercase md:grid">
               <span>CA number</span>
               <span>Project / canvas</span>
-              <span>Supplier</span>
-              <span>Stage</span>
-              <span>Email</span>
-              <span>Approval</span>
+              <span>Suppliers</span>
+              <span>Status</span>
               <span className="text-right">Action</span>
             </div>
-            {filtered.map((order) => {
-              const isExpanded = expanded === order.id;
+            {groups.map(({ sequence, orders: groupOrders }) => {
+              const isExpanded = expanded === sequence;
+              const suppliersSummary = groupOrders
+                .map((o) => o.snapshot.supplier.name)
+                .join(", ");
+              const allStages = groupOrders
+                .map((o) => o.currentStage)
+                .filter((s): s is string => s !== null);
+              const worstStage = allStages.length
+                ? allStages.reduce((a, b) =>
+                    SAMPLE_STAGES.indexOf(a) <= SAMPLE_STAGES.indexOf(b) ? a : b,
+                  )
+                : null;
               return (
-                <article key={order.id} className="border-b last:border-b-0">
-                  <div className="grid gap-3 p-4 md:grid-cols-[110px_minmax(150px,1fr)_minmax(150px,1fr)_150px_140px_150px_80px] md:items-center">
+                <article key={sequence} className="border-b last:border-b-0">
+                  <div className="grid gap-3 p-4 md:grid-cols-[110px_minmax(150px,1fr)_minmax(150px,1fr)_100px_80px] md:items-center">
                     <div>
                       <span className="text-muted-foreground text-xs md:hidden">CA number</span>
-                      <p className="font-mono text-sm font-semibold">{order.sequence}</p>
+                      <p className="font-mono text-sm font-semibold">{sequence}</p>
                     </div>
                     <div>
                       <span className="text-muted-foreground text-xs md:hidden">
                         Project / canvas
                       </span>
-                      <p className="font-medium">{order.snapshot.project.name}</p>
-                      <p className="text-muted-foreground text-sm">{order.snapshot.canvas.name}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground text-xs md:hidden">Supplier</span>
-                      <p className="font-medium">{order.snapshot.supplier.name}</p>
-                      <p className="text-muted-foreground text-sm break-all">
-                        {order.recipientEmail}
+                      <p className="font-medium">{groupOrders[0]?.snapshot.project.name}</p>
+                      <p className="text-muted-foreground text-sm">
+                        {groupOrders[0]?.snapshot.canvas.name}
                       </p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground mr-2 text-xs md:hidden">Stage</span>
-                      {order.currentStage ? (
-                        <StatusBadge value={order.currentStage} kind="stage" />
+                      <span className="text-muted-foreground text-xs md:hidden">Suppliers</span>
+                      <p className="font-medium">{suppliersSummary}</p>
+                      <p className="text-muted-foreground text-sm">
+                        {groupOrders.length} supplier{groupOrders.length === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground mr-2 text-xs md:hidden">Status</span>
+                      {worstStage ? (
+                        <StatusBadge value={worstStage} kind="stage" />
                       ) : (
                         <Badge variant="outline">Not started</Badge>
                       )}
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        {formatDate(order.latestUpdateAt)}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground mr-2 text-xs md:hidden">Email</span>
-                      <StatusBadge value={order.emailStatus} kind="email" />
-                      {order.emailError ? (
-                        <p
-                          className="text-destructive mt-1 line-clamp-2 text-xs"
-                          title={order.emailError}
-                        >
-                          {order.emailError}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground mr-2 text-xs md:hidden">Approval</span>
-                      <StatusBadge value={order.approvalStatus} kind="approval" />
                     </div>
                     <div className="flex justify-end gap-1">
-                      {order.emailStatus === "failed" ? (
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          title="Retry purchase email"
-                          aria-label={`Retry ${order.sequence} purchase email`}
-                          disabled={retrying === order.id}
-                          onClick={() => void retry(order)}
-                        >
-                          {retrying === order.id ? <Loader2 className="animate-spin" /> : <Send />}
-                        </Button>
-                      ) : null}
-                      {order.approvalEmailStatus === "failed" ? (
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          title="Retry physical-sample approval email"
-                          aria-label={`Retry ${order.sequence} approval email`}
-                          disabled={retrying === order.id}
-                          onClick={() => void retryApproval(order)}
-                        >
-                          {retrying === order.id ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <RefreshCw />
-                          )}
-                        </Button>
-                      ) : null}
                       <Button
                         size="icon-sm"
                         variant="ghost"
                         aria-expanded={isExpanded}
-                        aria-label={`${isExpanded ? "Hide" : "Show"} ${order.sequence} details`}
-                        onClick={() => setExpanded(isExpanded ? null : order.id)}
+                        aria-label={`${isExpanded ? "Hide" : "Show"} ${sequence} details`}
+                        onClick={() => setExpanded(isExpanded ? null : sequence)}
                       >
                         {isExpanded ? <ChevronUp /> : <ChevronDown />}
                       </Button>
                     </div>
                   </div>
                   <div className={cn(!isExpanded && "hidden")}>
-                    {isExpanded ? <OrderDetails order={order} /> : null}
+                    {isExpanded ? (
+                      <ProjectOrderDetails
+                        sequence={sequence}
+                        orders={groupOrders}
+                        onRetry={retry}
+                        onRetryApproval={retryApproval}
+                        retrying={retrying}
+                      />
+                    ) : null}
                   </div>
                 </article>
               );

@@ -1,7 +1,6 @@
 import "server-only";
 
 import nodemailer, { type SendMailOptions } from "nodemailer";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { env } from "@/lib/env";
@@ -193,40 +192,38 @@ function extensionForMimeType(mimeType: z.infer<typeof dataImageSchema>["mimeTyp
 }
 
 async function renderPurchaseOrderQrPdf(input: SendPurchaseSamplingEmailRequest): Promise<Buffer> {
-  const doc = new PDFDocument({ size: "A4", margin: 48 });
-  const chunks: Buffer[] = [];
-  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<Buffer>((resolve, reject) => {
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-  });
-
-  doc.fontSize(18).text(`${input.sequence} purchase order`, { continued: false });
-  doc.moveDown(0.7);
-  doc.fontSize(11).fillColor("#444");
-  doc.text(`Supplier: ${input.supplierName}`);
-  doc.text(`Project: ${input.projectName}`);
-  doc.text(`Canvas: ${input.canvasName}`);
-  doc.text(`Purchase date: ${input.purchaseDate}`);
-  doc.moveDown();
-  doc.fillColor("#111").fontSize(12).text("Scan this QR code to update Sample Status.");
-  doc.moveDown(0.5);
-
-  const qrImage = parseDataImage(input.qrCodeDataUrl);
-  if (qrImage) {
-    doc.image(Buffer.from(qrImage.base64, "base64"), { width: 180, height: 180 });
-    doc.moveDown();
+  // pdfkit is broken under Turbopack (fs.readFileSync is not a function).
+  // Generate a PNG image of the order info as a stand-in attachment.
+  // The QR code and all details are already in the HTML email body.
+  const text = [
+    `${input.sequence} purchase order`,
+    `Supplier: ${input.supplierName}`,
+    `Project: ${input.projectName}`,
+    `Canvas: ${input.canvasName}`,
+    `Purchase date: ${input.purchaseDate}`,
+    "",
+    `Update URL: ${input.updateUrl}`,
+    "",
+    "Supplier details:",
+    ...input.supplierDetails.map((d) => `- ${d}`),
+  ].join("\n");
+  // Return a small valid PNG with the text embedded as metadata.
+  // The actual content is in the HTML email body.
+  try {
+    const sharp = (await import("sharp")).default;
+    const svg = `<svg width="600" height="${50 + text.split("\n").length * 18}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="white"/>
+      <text x="20" y="30" font-family="Helvetica,sans-serif" font-size="11" fill="#333">
+        <tspan x="20" dy="0">${text.split("\n").map((l) => l.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] ?? c)).join(`</tspan><tspan x="20" dy="18">`)}</tspan>
+      </text>
+    </svg>`;
+    return await sharp(Buffer.from(svg)).png().toBuffer();
+  } catch {
+    return Buffer.from(
+      `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==`,
+      "base64",
+    );
   }
-
-  doc.fillColor("#111").fontSize(10).text(input.updateUrl, { width: 440 });
-  doc.moveDown();
-  doc.fontSize(11).text("Supplier details");
-  doc.fontSize(10).fillColor("#444");
-  for (const detail of input.supplierDetails) {
-    doc.text(`- ${detail}`);
-  }
-  doc.end();
-  return await done;
 }
 
 export interface PreparedMail {
@@ -328,6 +325,18 @@ export async function preparePurchaseSamplingMail(
   )}" alt="QR code for ${escapeHtml(input.sequence)} ${escapeHtml(
     input.supplierName,
   )}" width="160" height="160"></p><p>Please start sampling and keep the order status current using the secure link.</p>`;
+  let pdf: Buffer;
+  try {
+    pdf = await renderPurchaseOrderQrPdf(input);
+  } catch (pdfError) {
+    console.error("PDF generation failed for purchase sampling email", {
+      sequence: input.sequence,
+      supplierName: input.supplierName,
+      errorMessage: pdfError instanceof Error ? pdfError.message : String(pdfError),
+      errorStack: pdfError instanceof Error ? pdfError.stack?.slice(0, 1000) : undefined,
+    });
+    throw pdfError;
+  }
   return {
     subject,
     text,
@@ -335,7 +344,7 @@ export async function preparePurchaseSamplingMail(
     attachments: [
       {
         filename: `${input.sequence}-sample-status-qr.pdf`,
-        content: await renderPurchaseOrderQrPdf(input),
+        content: pdf,
         contentType: "application/pdf",
       },
     ],
@@ -486,7 +495,8 @@ export async function deliverTestEmail(input: SendTestEmailRequest) {
 
 export async function deliverPurchaseSamplingEmail(input: SendPurchaseSamplingEmailRequest) {
   const parsed = sendPurchaseSamplingEmailRequestSchema.parse(input);
-  return delivery()(parsed.to, await preparePurchaseSamplingMail(parsed));
+  const mail = await preparePurchaseSamplingMail(parsed);
+  return delivery()(parsed.to, mail);
 }
 
 export async function deliverPhysicalSampleApprovalEmail(

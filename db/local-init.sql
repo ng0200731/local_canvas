@@ -146,6 +146,7 @@ CREATE INDEX IF NOT EXISTS canvas_sends_user_id_idx ON public.canvas_sends(user_
 CREATE INDEX IF NOT EXISTS canvas_sends_canvas_id_idx ON public.canvas_sends(canvas_id);
 
 -- ── Customers / suppliers / products ────────────────────────────────────────
+-- Ensure migration-safe: add columns that may not exist on older tables.
 CREATE TABLE IF NOT EXISTS public.sample_orders (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id               uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -373,6 +374,55 @@ BEGIN
     ALTER TABLE public.projects
       ADD CONSTRAINT projects_customer_id_fkey
       FOREIGN KEY (customer_id) REFERENCES public.customers(id) ON DELETE SET NULL;
+  END IF;
+END;
+$$;
+
+-- ── Late migration: add columns that may be missing on older tables ──────
+-- These are safe to re-run.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sample_orders' AND column_name = 'supplier_token_hash'
+  ) THEN
+    ALTER TABLE public.sample_orders ADD COLUMN supplier_token_hash text UNIQUE;
+    ALTER TABLE public.sample_orders ALTER COLUMN supplier_token_hash SET NOT NULL;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sample_orders' AND column_name = 'approval_token_hash'
+  ) THEN
+    ALTER TABLE public.sample_orders ADD COLUMN approval_token_hash text UNIQUE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sample_orders' AND column_name = 'approval_email_status'
+  ) THEN
+    ALTER TABLE public.sample_orders ADD COLUMN approval_email_status text CHECK (approval_email_status IN ('pending', 'sent', 'failed'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sample_orders' AND column_name = 'approval_error'
+  ) THEN
+    ALTER TABLE public.sample_orders ADD COLUMN approval_error text;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sample_orders' AND column_name = 'approval_sent_at'
+  ) THEN
+    ALTER TABLE public.sample_orders ADD COLUMN approval_sent_at timestamptz;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sample_orders' AND column_name = 'approval_responded_at'
+  ) THEN
+    ALTER TABLE public.sample_orders ADD COLUMN approval_responded_at timestamptz;
   END IF;
 END;
 $$;
