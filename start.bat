@@ -67,6 +67,32 @@ echo Starting the dev server at http://localhost:3000
 echo ^(Press Ctrl+C in this window to stop.^)
 echo.
 
+REM Ensure port 3000 is free: kill active listener or release Windows reservation.
+echo Checking port 3000...
+set NEED_ELEVATION=0
+netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    REM Port is actively used by another process - kill it.
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do (
+        echo Port 3000 is occupied by PID %%a - killing it...
+        taskkill /F /PID %%a 2>nul
+        timeout /t 2 /nobreak >nul
+    )
+) else (
+    REM No listener. Check if port 3000 is in a Windows excluded range.
+    for /f "tokens=1,2" %%a in ('netsh interface ipv4 show excludedportrange protocol^=tcp ^| findstr /r "^[ ]*[0-9]"') do (
+        if %%a leq 3000 if %%b geq 3000 set NEED_ELEVATION=1
+    )
+)
+
+if %NEED_ELEVATION% equ 1 (
+    echo Port 3000 is reserved by Windows - requesting admin to release it...
+    powershell -Command "Start-Process -FilePath 'net' -ArgumentList 'stop','winnat' -Verb RunAs -Wait -WindowStyle Hidden" 2>nul
+    powershell -Command "Start-Process -FilePath 'net' -ArgumentList 'start','winnat' -Verb RunAs -Wait -WindowStyle Hidden" 2>nul
+    echo Reservation released. Waiting 3 seconds...
+    timeout /t 3 /nobreak >nul
+)
+
 REM Open the browser a few seconds after the server starts (runs in parallel).
 REM `ping` is used as the delay because it works in any console context (timeout does not).
 start "" /min cmd /c "ping -n 5 127.0.0.1 >nul & start "" http://localhost:3000"

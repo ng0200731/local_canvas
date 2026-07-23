@@ -601,6 +601,7 @@ function CanvasActions({
 }) {
   const del = useDeleteCanvas(projectId);
   const queryClient = useQueryClient();
+  const customers = useCustomers();
   const suppliers = useSuppliers();
   const products = useProducts();
   const [purchasing, setPurchasing] = useState(false);
@@ -613,8 +614,9 @@ function CanvasActions({
   async function sendPurchase() {
     setPurchasing(true);
     try {
-      const [fullCanvas, sends] = await Promise.all([
+      const [fullCanvas, renderImages, sends] = await Promise.all([
         getCanvasStore().getCanvas(canvas.id),
+        getCanvasStore().listImages(canvas.id),
         getCanvasStore().listCanvasSends(canvas.id),
       ]);
       const approvedSend =
@@ -636,12 +638,12 @@ function CanvasActions({
       }
 
       const result = await sendSamplePurchases({
-        canvas,
-        project: {
-          id: canvas.projectId,
-          name: project?.name ?? "Project",
-          customerName: project?.customerName ?? null,
-        },
+        canvas: targetCanvas,
+        project,
+        customers: customers.data ?? [],
+        suppliers: suppliers.data ?? [],
+        products: products.data ?? [],
+        images: renderImages,
         approvedSend,
         targets,
         origin: window.location.origin,
@@ -665,7 +667,11 @@ function CanvasActions({
   }
 
   const purchaseDisabled =
-    purchasing || suppliers.isLoading || products.isLoading || canvas.status !== "approved";
+    purchasing ||
+    customers.isLoading ||
+    suppliers.isLoading ||
+    products.isLoading ||
+    canvas.status !== "approved";
 
   return (
     <div className="flex justify-end gap-2">

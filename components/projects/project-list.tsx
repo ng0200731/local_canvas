@@ -24,7 +24,7 @@ import { CreateProjectDialog } from "@/components/projects/create-project-dialog
 import { canvasPurchaseTargets } from "@/lib/canvas-purchase";
 import { useDeleteProject, useProjects } from "@/lib/hooks/use-projects";
 import { SAMPLE_ORDERS_KEY } from "@/lib/hooks/use-sample-orders";
-import { useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
+import { useCustomers, useProducts, useSuppliers } from "@/lib/hooks/use-workspace-records";
 import { formatDate } from "@/lib/format";
 import { sendSamplePurchases } from "@/lib/sample-purchase-client";
 import { getCanvasStore, type Canvas, type CanvasSendRecord, type Project } from "@/lib/store";
@@ -151,12 +151,14 @@ function ProjectCanvasDetailRow({
 }) {
   const suppliers = useSuppliers();
   const products = useProducts();
+  const customers = useCustomers();
   const queryClient = useQueryClient();
 
   async function sendCanvasPurchase(canvas: Canvas) {
     try {
-      const [fullCanvas, storedSends] = await Promise.all([
+      const [fullCanvas, renderImages, storedSends] = await Promise.all([
         getCanvasStore().getCanvas(canvas.id),
+        getCanvasStore().listImages(canvas.id),
         getCanvasStore().listCanvasSends(canvas.id),
       ]);
       const sends = storedSends.length ? storedSends : (sendsByCanvasId.get(canvas.id) ?? []);
@@ -167,8 +169,9 @@ function ProjectCanvasDetailRow({
         toast.error("Approve this canvas before sending supplier purchase orders.");
         return;
       }
+      const targetCanvas = fullCanvas ?? canvas;
       const targets = canvasPurchaseTargets({
-        canvas: fullCanvas ?? canvas,
+        canvas: targetCanvas,
         suppliers: suppliers.data ?? [],
         products: products.data ?? [],
       });
@@ -177,8 +180,12 @@ function ProjectCanvasDetailRow({
         return;
       }
       const result = await sendSamplePurchases({
-        canvas,
+        canvas: targetCanvas,
         project,
+        customers: customers.data ?? [],
+        suppliers: suppliers.data ?? [],
+        products: products.data ?? [],
+        images: renderImages,
         approvedSend,
         targets,
         origin: window.location.origin,
@@ -213,7 +220,12 @@ function ProjectCanvasDetailRow({
             title={
               canvas.status === "approved" ? "Send supplier purchase" : "Available after approval"
             }
-            disabled={canvas.status !== "approved" || suppliers.isLoading || products.isLoading}
+            disabled={
+              canvas.status !== "approved" ||
+              customers.isLoading ||
+              suppliers.isLoading ||
+              products.isLoading
+            }
             onClick={(event) => event.stopPropagation()}
           >
             <ShoppingCart />
