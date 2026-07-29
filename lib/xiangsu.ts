@@ -13,6 +13,8 @@ import type {
 import {
   aspectRatioForImageGenerationSize,
   geminiImageSizeForResolution,
+  gptImageQualityForResolution,
+  gptImageSizeForResolution,
   xiangsuImageModelIdSchema,
 } from "@/lib/image-generation-models";
 import { compileReferencePrompt } from "@/lib/reference-prompt";
@@ -25,14 +27,23 @@ const providerImageSchema = z
   .object({
     b64_json: z.string().min(1).optional(),
     url: z.string().url().optional(),
+    image_url: z
+      .union([z.string().url(), z.object({ url: z.string().url() })])
+      .optional(),
+    result_url: z.string().url().optional(),
+    output_url: z.string().url().optional(),
   })
-  .refine((image) => Boolean(image.b64_json || image.url), {
-    message: "Image payload is missing.",
-  });
+  .passthrough();
 
-const providerSuccessSchema = z.object({
-  data: z.array(providerImageSchema).min(1),
-});
+const providerSuccessSchema = z
+  .object({
+    data: z.array(providerImageSchema).optional(),
+    result: z.array(providerImageSchema).optional(),
+    output: z.array(providerImageSchema).optional(),
+    images: z.array(providerImageSchema).optional(),
+    image: z.array(providerImageSchema).optional(),
+  })
+  .passthrough();
 
 const geminiSuccessSchema = z.object({
   candidates: z
@@ -70,6 +81,7 @@ const providerErrorSchema = z.object({
 export interface XiangsuGenerateInput {
   model: ImageGenerationModelId;
   prompt: string;
+  systemPrompt?: string;
   size: ImageGenerationSize;
   outputFormat: ImageGenerationOutputFormat;
   resolution: ImageGenerationResolution;
@@ -235,7 +247,22 @@ export function createXiangsuImageGenerator({
         );
       }
 
-      const response = isGeminiImageModel(input.model)
+      const isGptModel = isGptImageModel(input.model);
+      const isGemini = isGeminiImageModel(input.model);
+      const gptQuality = gptImageQualityForResolution(input.resolution);
+      const gptSize = gptImageSizeForResolution(input.size, input.resolution);
+      const gptOutputFormat: ImageGenerationOutputFormat = isGptModel ? "png" : input.outputFormat;
+
+      const systemPrompt = input.systemPrompt?.trim();
+      const basePrompt = systemPrompt ? `${systemPrompt}\n\n${compiled.prompt}` : compiled.prompt;
+      const specSuffix = isGptModel
+        ? `\n\n图像输出规格：必须严格按 ${aspectRatioForImageGenerationSize(
+            input.size,
+          )} 宽高比生成，输出分辨率必须为 ${gptSize}。不要因为参考图尺寸改变最终画幅。`
+        : "";
+      const promptWithSpec = `${basePrompt}${specSuffix}`;
+
+      const response = isGemini
         ? await fetcher(`${XIANGSU_GEMINI_BASE_URL}/${input.model}:generateContent`, {
             method: "POST",
             headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -243,7 +270,7 @@ export function createXiangsuImageGenerator({
               contents: [
                 {
                   parts: await geminiParts(
-                    compiled.prompt,
+                    basePrompt,
                     compiled.imageUrls,
                     fetcher,
                     controller.signal,
@@ -259,16 +286,16 @@ export function createXiangsuImageGenerator({
             }),
             signal: controller.signal,
           })
-        : compiled.imageUrls.length > 0 && isGptImageModel(input.model)
+        : compiled.imageUrls.length > 0 && isGptModel
           ? await (async () => {
               const form = new FormData();
               form.append("model", input.model);
-              form.append("prompt", compiled.prompt);
+              form.append("prompt", promptWithSpec);
               form.append("n", "1");
-              form.append("size", input.size);
-              form.append("background", "auto");
-              form.append("quality", "auto");
-              form.append("output_format", input.outputFormat);
+              form.append("size", gptSize);
+              form.append("quality", gptQuality);
+              form.append("response_format", "b64_json");
+              form.append("output_format", gptOutputFormat);
               await appendEditImages(form, compiled.imageUrls, fetcher, controller.signal);
 
               return fetcher(XIANGSU_EDIT_URL, {
@@ -288,16 +315,16 @@ export function createXiangsuImageGenerator({
               },
               body: JSON.stringify({
                 model: input.model,
-                prompt: compiled.prompt,
+                prompt: promptWithSpec,
                 n: 1,
-                size: input.size,
-                background: "auto",
-                quality: "auto",
-                output_format: input.outputFormat,
+                size: gptSize,
+                quality: gptQuality,
+                response_format: "b64_json",
+                output_format: gptOutputFormat,
                 ...(compiled.imageUrls.length > 0
                   ? {
                       image_urls: compiled.imageUrls,
-                      content: promptContent(compiled.prompt, compiled.imageUrls),
+                      content: promptContent(promptWithSpec, compiled.imageUrls),
                     }
                   : {}),
               }),
@@ -336,8 +363,23 @@ export function createXiangsuImageGenerator({
         throw new Error("The image provider did not return an image.");
       }
 
-      const image = parsed.data.data[0];
-      const url = image.url ?? `data:image/png;base64,${image.b64_json}`;
+      const list =
+        parsed.data.data ??
+        parsed.data.result ??
+        parsed.data.output ??
+        parsed.data.images ??
+        parsed.data.image ??
+        [];
+      const image = list[0];
+      if (!image) throw new Error("The image provider did not return an image.");
+
+      const imageUrl =
+        (typeof image.image_url === "string" ? image.image_url : image.image_url?.url) ??
+        image.url ??
+        image.result_url ??
+        image.output_url;
+      const url = imageUrl ?? (image.b64_json ? `data:image/png;base64,${image.b64_json}` : null);
+      if (!url) throw new Error("The image provider did not return an image.");
       return { url, model: input.model };
     } catch (error) {
       if (isAbortError(error)) {

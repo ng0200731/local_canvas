@@ -173,9 +173,15 @@ const GEMINI_VERSION_OPTIONS: readonly {
 ];
 
 const SIZE_LABELS: Record<ImageGenerationSize, string> = {
-  "1024x1024": "Square",
-  "1536x1024": "Wide",
-  "1024x1536": "Tall",
+  "1024x1024": "Square · 1:1",
+  "1536x1024": "Wide · 3:2",
+  "1024x1536": "Tall · 2:3",
+  "1792x1024": "16:9",
+  "1024x1792": "9:16",
+  "1280x960": "4:3",
+  "960x1280": "3:4",
+  "1792x768": "21:9",
+  "768x1792": "9:21",
 };
 
 const FORMAT_LABELS: Record<ImageGenerationOutputFormat, string> = {
@@ -735,6 +741,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       resolutionForImageGenerationModel(model) ??
       DEFAULT_IMAGE_GENERATION_RESOLUTION,
   );
+  const systemPrompt = typeof data.systemPrompt === "string" ? data.systemPrompt : "";
   const geminiVersion = geminiVersionForModel(model);
   const selectedModel = getModelCatalogEntry(model);
   const isGenerating = data.status === "loading";
@@ -958,6 +965,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       size,
       outputFormat,
       resolution,
+      systemPrompt,
     });
     const generationStartedAt = nowMs();
     try {
@@ -968,6 +976,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
         body: JSON.stringify({
           model,
           prompt,
+          systemPrompt: systemPrompt || undefined,
           size,
           outputFormat,
           resolution,
@@ -1193,7 +1202,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             <span className="text-muted-foreground text-xs">Resolution</span>
             <Select
               value={resolution}
-              disabled={isGenerating || provider === "gpt" || geminiVersion === "1"}
+              disabled={isGenerating || geminiVersion === "1"}
               onValueChange={(value) => {
                 const nextResolution = normalizeImageGenerationResolution(value);
                 updateNodeData(id, {
@@ -1247,7 +1256,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             <span className="text-muted-foreground text-xs">Format</span>
             <Select
               value={outputFormat}
-              disabled={isGenerating}
+              disabled={isGenerating || provider === "gpt"}
               onValueChange={(value) => {
                 updateNodeData(id, {
                   outputFormat: normalizeImageGenerationOutputFormat(value),
@@ -1270,7 +1279,21 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
 
         <p className="text-muted-foreground truncate font-mono text-[0.65rem]">
           {selectedModel.officialName}
+          {provider === "gpt" ? " · output pinned to PNG" : null}
         </p>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-muted-foreground text-xs">System prompt</label>
+          <textarea
+            value={systemPrompt}
+            disabled={isGenerating}
+            placeholder="Optional system prompt prepended to every request (e.g. brand voice, style guardrails)"
+            onChange={(event) =>
+              updateNodeData(id, { systemPrompt: event.target.value })
+            }
+            className="nodrag nopan caret-foreground placeholder:text-muted-foreground min-h-16 w-full resize-y rounded-md border bg-background/60 p-2 text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        </div>
 
         <div className="flex flex-col gap-1">
           <div className="flex min-h-7 items-center justify-between gap-2">

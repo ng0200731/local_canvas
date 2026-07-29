@@ -401,13 +401,32 @@ export function SupplierImageManagementDialog({
 
   const rankedMatches = useMemo<RankedMatch[]>(() => {
     if (!matchMutation.data) return [];
-    return matchMutation.data.matches.flatMap((match) => {
+    const raw = matchMutation.data.matches.flatMap((match) => {
       const item = galleryById.get(match.catalogItemId);
       const supplierId = item?.product.supplierId;
       const supplier = supplierId ? supplierById.get(supplierId) : undefined;
       return item && supplier ? [{ match, item, supplier }] : [];
     });
-  }, [galleryById, matchMutation.data, supplierById]);
+    if (engine !== "local" || raw.length < 2) return raw;
+
+    // The local embedding's cosine sits in a narrow band near 1.0 for any two
+    // natural photos, so the raw percentage reads as ~99% for everything. For
+    // the local engine only, rescale each search's cosines onto a [50, 98]%
+    // band so the best match surfaces at the top and weak matches read weak.
+    // The footer still shows the raw cosine so the underlying score is honest.
+    const cosines = raw.map((entry) => entry.match.cosine);
+    const min = Math.min(...cosines);
+    const max = Math.max(...cosines);
+    const span = max - min;
+    if (span <= 1e-6) return raw;
+    const TARGET_TOP = 98;
+    const TARGET_BOTTOM = 50;
+    return raw.map((entry) => {
+      const t = (entry.match.cosine - min) / span;
+      const rescaled = TARGET_BOTTOM + t * (TARGET_TOP - TARGET_BOTTOM);
+      return { ...entry, match: { ...entry.match, similarity: Math.round(rescaled * 100) / 100 } };
+    });
+  }, [galleryById, matchMutation.data, supplierById, engine]);
   const comparisonMatch = useMemo(
     () => rankedMatches.find((match) => match.item.id === comparisonMatchId) ?? null,
     [comparisonMatchId, rankedMatches],
@@ -523,11 +542,18 @@ export function SupplierImageManagementDialog({
               className={
                 engine === "milvus"
                   ? "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-200"
-                  : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                  : engine === "local"
+                    ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-800 dark:text-yellow-200"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200"
               }
               variant="outline"
             >
-              <Eye /> {engine === "milvus" ? "Milvus vector search" : "Image search"}
+              <Eye />{" "}
+              {engine === "milvus"
+                ? "Milvus vector search"
+                : engine === "local"
+                  ? "Local image search"
+                  : "Image search"}
             </Badge>
             {catalog.length ? (
               <span className="text-muted-foreground text-xs">
@@ -539,12 +565,16 @@ export function SupplierImageManagementDialog({
           <DialogTitle className="text-xl">
             {engine === "milvus"
               ? "Search similar images with Milvus"
-              : "Search similar supplier images"}
+              : engine === "local"
+                ? "Search similar supplier product images (local)"
+                : "Search similar supplier images"}
           </DialogTitle>
           <DialogDescription>
             {engine === "milvus"
               ? "Upload a reference image. CLIP embeddings are indexed in Milvus Lite and ranked by cosine similarity within this supplier's catalog."
-              : "Upload a reference image. Search only the selected supplier's product images and rank matches from highest to lowest similarity."}
+              : engine === "local"
+                ? "Upload a reference image. Runs entirely on this server using local embeddings — no Python sidecar required. Matches are ranked best-similarity-first within the selected supplier's catalog."
+                : "Upload a reference image. Search only the selected supplier's product images and rank matches from highest to lowest similarity."}
           </DialogDescription>
         </DialogHeader>
 
@@ -683,7 +713,9 @@ export function SupplierImageManagementDialog({
               <p>
                 {engine === "milvus"
                   ? "Search is limited to the selected supplier's images. When the Milvus sidecar is running, CLIP embeddings are indexed in Milvus Lite and ranked by cosine similarity; otherwise the local histogram fallback is used. No external LLM analysis."
-                  : "Search is limited to the selected supplier's images. When the CLIP sidecar is running, matches use multi-view visual embeddings plus local feature matching for crop-from-product cases; otherwise the local histogram fallback is used. No external LLM analysis."}
+                  : engine === "local"
+                    ? "Search is limited to the selected supplier's images. Matches run entirely on this server using local embeddings — no Python sidecar required. No external LLM analysis."
+                    : "Search is limited to the selected supplier's images. When the CLIP sidecar is running, matches use multi-view visual embeddings plus local feature matching for crop-from-product cases; otherwise the local histogram fallback is used. No external LLM analysis."}
               </p>
             </div>
           </aside>

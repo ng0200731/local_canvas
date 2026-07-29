@@ -63,6 +63,7 @@ describe("POST /api/generate", () => {
       {
         model: "gpt-image-2",
         prompt: "A clean studio photograph",
+        systemPrompt: undefined,
         size: "1024x1024",
         outputFormat: "webp",
         resolution: "preview",
@@ -96,6 +97,7 @@ describe("POST /api/generate", () => {
       {
         model: "gemini-3.1-flash-image-preview",
         prompt: "Keep @product and apply @texture",
+        systemPrompt: undefined,
         size: "1024x1024",
         outputFormat: "webp",
         resolution: "preview",
@@ -116,6 +118,7 @@ describe("POST /api/generate", () => {
       request({
         model: "gpt-image-1.5",
         prompt: "A campaign image",
+        systemPrompt: "Stay on-brand.",
         size: "1536x1024",
         outputFormat: "png",
         resolution: "4K",
@@ -127,6 +130,7 @@ describe("POST /api/generate", () => {
       {
         model: "gpt-image-1.5",
         prompt: "A campaign image",
+        systemPrompt: "Stay on-brand.",
         size: "1536x1024",
         outputFormat: "png",
         resolution: "4K",

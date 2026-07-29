@@ -8,6 +8,8 @@ import {
   aspectRatioForImageGenerationSize,
   geminiImageSizeForResolution,
   getModelDisplayName,
+  gptImageQualityForResolution,
+  gptImageSizeForResolution,
   normalizeImageGenerationOutputFormat,
   normalizeImageGenerationResolution,
   normalizeImageGenerationSize,
@@ -88,5 +90,19 @@ describe("image generation model catalog", () => {
     expect(resolutionForImageGenerationModel("gemini-3-pro-image-preview-2K")).toBe("2K");
     expect(geminiImageSizeForResolution("preview")).toBe("1K");
     expect(aspectRatioForImageGenerationSize("1024x1536")).toBe("2:3");
+    expect(aspectRatioForImageGenerationSize("1792x1024")).toBe("16:9");
+    expect(aspectRatioForImageGenerationSize("768x1792")).toBe("9:21");
+  });
+
+  it("maps GPT Image resolution + aspect ratio to the documented fixed pixel sizes", () => {
+    expect(gptImageSizeForResolution("1024x1024", "preview")).toBe("1024x1024");
+    expect(gptImageSizeForResolution("1536x1024", "2K")).toBe("2160x1440");
+    expect(gptImageSizeForResolution("1024x1536", "4K")).toBe("2304x3456");
+    expect(gptImageSizeForResolution("1792x1024", "2K")).toBe("2560x1440");
+    expect(gptImageSizeForResolution("1280x960", "4K")).toBe("3200x2400");
+    expect(gptImageSizeForResolution("1792x768", "2K")).toBe("3120x1344");
+    expect(gptImageQualityForResolution("preview")).toBe("low");
+    expect(gptImageQualityForResolution("2K")).toBe("medium");
+    expect(gptImageQualityForResolution("4K")).toBe("high");
   });
 });

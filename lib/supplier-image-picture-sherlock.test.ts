@@ -36,6 +36,7 @@ function queryRequest(): SupplierImageMatchRequest {
     queryImage: { name: "reference.png", url: "https://vector.test/query.png" },
     catalog: [catalogItem(1), catalogItem(2)],
     currentSupplierId: "supplier-1",
+    engine: "picture-sherlock",
   };
 }
 

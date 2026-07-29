@@ -119,6 +119,7 @@ export interface GenerateNodeData {
   size?: ImageGenerationSize;
   outputFormat?: ImageGenerationOutputFormat;
   resolution?: ImageGenerationResolution;
+  systemPrompt?: string;
   references: string[];
   status: "idle" | "loading" | "error" | "done";
   resultUrl: string | null;

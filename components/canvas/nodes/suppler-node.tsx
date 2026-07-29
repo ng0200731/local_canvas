@@ -1,7 +1,7 @@
 "use client";
 
 import { type NodeProps } from "@xyflow/react";
-import { BookOpen, Database, Eye, ImageIcon, Package, Search, X } from "lucide-react";
+import { BookOpen, Database, Eye, ImageIcon, Package, Search, X, Zap } from "lucide-react";
 
 import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { ProductImageBrowserDialog } from "@/components/product-image-browser-dialog";
@@ -354,6 +354,36 @@ export function SupplerNode({ id, data, parentId, selected }: NodeProps<SupplerC
                   className="nodrag"
                 >
                   <Database />
+                </Button>
+              }
+            />
+            <SupplierImageManagementDialog
+              products={selectedSupplierCatalogProducts}
+              suppliers={selectedSupplier ? [selectedSupplier] : []}
+              isCatalogLoading={suppliers.isLoading || products.isLoading}
+              catalogError={
+                !data.supplierId
+                  ? "Select a supplier before searching its product images."
+                  : suppliers.error instanceof Error
+                    ? suppliers.error.message
+                    : products.error instanceof Error
+                      ? products.error.message
+                      : null
+              }
+              currentSupplierId={data.supplierId}
+              selectedItemId={selectedGalleryItemId}
+              engine="local"
+              onSelect={selectProductImage}
+              trigger={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="outline"
+                  aria-label="Search similar supplier product images (local)"
+                  title="Search similar supplier product images (local)"
+                  className="nodrag"
+                >
+                  <Zap />
                 </Button>
               }
             />

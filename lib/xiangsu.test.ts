@@ -47,16 +47,50 @@ describe("Xiangsu image generator", () => {
     });
     expect(JSON.parse(String(request?.body))).toEqual({
       model: "gpt-image-2",
-      prompt: input.prompt,
+      prompt: expect.stringContaining(input.prompt),
       n: 1,
       size: "1024x1024",
-      background: "auto",
-      quality: "auto",
-      output_format: "webp",
+      quality: "low",
+      response_format: "b64_json",
+      output_format: "png",
     });
   });
 
-  it("sends GPT image reference edits as ordered multipart image files", async () => {
+  it("appends the GPT Image spec suffix and maps size+quality from resolution", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ data: [{ b64_json: "aW1hZ2U=" }] }),
+    );
+    const generate = createXiangsuImageGenerator({ apiKey: "secret", fetcher });
+
+    await generate({
+      ...input,
+      size: "1536x1024",
+      resolution: "2K",
+    });
+
+    const [, request] = fetcher.mock.calls[0];
+    const body = JSON.parse(String(request?.body));
+    expect(body.size).toBe("2160x1440");
+    expect(body.quality).toBe("medium");
+    expect(body.output_format).toBe("png");
+    expect(body.response_format).toBe("b64_json");
+    expect(body.prompt).toContain("必须严格按 3:2 宽高比生成");
+    expect(body.prompt).toContain("输出分辨率必须为 2160x1440");
+  });
+
+  it("prefixes an optional system prompt", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ data: [{ b64_json: "aW1hZ2U=" }] }),
+    );
+    const generate = createXiangsuImageGenerator({ apiKey: "secret", fetcher });
+
+    await generate({ ...input, systemPrompt: "You are a brand photographer." });
+
+    const body = JSON.parse(String(fetcher.mock.calls[0][1]?.body as string));
+    expect(body.prompt.startsWith("You are a brand photographer.\n\n")).toBe(true);
+  });
+
+  it("sends GPT image reference edits as ordered multipart image files with doc-compliant fields", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(Response.json({ data: [{ b64_json: "aW1hZ2U=" }] }));
@@ -79,9 +113,10 @@ describe("Xiangsu image generator", () => {
     expect(stringFormValue(form, "model")).toBe("gpt-image-2");
     expect(stringFormValue(form, "n")).toBe("1");
     expect(stringFormValue(form, "size")).toBe("1024x1024");
-    expect(stringFormValue(form, "background")).toBe("auto");
-    expect(stringFormValue(form, "quality")).toBe("auto");
-    expect(stringFormValue(form, "output_format")).toBe("webp");
+    expect(stringFormValue(form, "quality")).toBe("low");
+    expect(stringFormValue(form, "response_format")).toBe("b64_json");
+    expect(stringFormValue(form, "output_format")).toBe("png");
+    expect(form.get("background")).toBeNull();
     expect(images).toHaveLength(2);
     expect(images[0]).toBeInstanceOf(Blob);
     expect(images[1]).toBeInstanceOf(Blob);
@@ -175,11 +210,38 @@ describe("Xiangsu image generator", () => {
     });
   });
 
+  it("accepts image_url, result_url, and output_url fields", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        data: [{ image_url: { url: "https://images.example/image_url.png" } }],
+      }),
+    );
+    const generate = createXiangsuImageGenerator({ apiKey: "secret", fetcher });
+    await expect(generate(input)).resolves.toEqual({
+      url: "https://images.example/image_url.png",
+      model: "gpt-image-2",
+    });
+
+    const fetcher2 = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ data: [{ result_url: "https://images.example/result.png" }] }),
+    );
+    await expect(
+      createXiangsuImageGenerator({ apiKey: "secret", fetcher: fetcher2 })(input),
+    ).resolves.toEqual({ url: "https://images.example/result.png", model: "gpt-image-2" });
+
+    const fetcher3 = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({ output: [{ output_url: "https://images.example/output.png" }] }),
+    );
+    await expect(
+      createXiangsuImageGenerator({ apiKey: "secret", fetcher: fetcher3 })(input),
+    ).resolves.toEqual({ url: "https://images.example/output.png", model: "gpt-image-2" });
+  });
+
   it("rejects malformed JSON and missing image payloads", async () => {
     const invalidJson = vi
       .fn<typeof fetch>()
       .mockResolvedValue(new Response("not-json", { status: 200 }));
-    const noImage = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [{}] }));
+    const noImage = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [] }));
 
     await expect(
       createXiangsuImageGenerator({ apiKey: "secret", fetcher: invalidJson })(input),

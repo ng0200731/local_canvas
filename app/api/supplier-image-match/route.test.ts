@@ -38,9 +38,11 @@ describe("POST /api/supplier-image-match", () => {
   it("rejects cross-supplier catalogs before searching", async () => {
     const matchPictureSherlock = vi.fn<SupplierImageMatcher>();
     const matchMilvus = vi.fn<SupplierImageMatcher>();
+    const matchLocal = vi.fn<SupplierImageMatcher>();
     const handler = createSupplierImageMatchPostHandler({
       matchPictureSherlock,
       matchMilvus,
+      matchLocal,
     });
     const response = await handler(
       post({
@@ -52,6 +54,7 @@ describe("POST /api/supplier-image-match", () => {
     expect(response.status).toBe(400);
     expect(matchPictureSherlock).not.toHaveBeenCalled();
     expect(matchMilvus).not.toHaveBeenCalled();
+    expect(matchLocal).not.toHaveBeenCalled();
   });
 
   it("forwards the validated selected-supplier catalog to Picture Sherlock by default", async () => {
@@ -67,9 +70,11 @@ describe("POST /api/supplier-image-match", () => {
       model: SUPPLIER_MATCH_MODEL,
     });
     const matchMilvus = vi.fn<SupplierImageMatcher>();
+    const matchLocal = vi.fn<SupplierImageMatcher>();
     const handler = createSupplierImageMatchPostHandler({
       matchPictureSherlock,
       matchMilvus,
+      matchLocal,
     });
     const response = await handler(post(validBody));
 
@@ -82,6 +87,7 @@ describe("POST /api/supplier-image-match", () => {
       expect.any(AbortSignal),
     );
     expect(matchMilvus).not.toHaveBeenCalled();
+    expect(matchLocal).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       searchedCount: 1,
       model: SUPPLIER_MATCH_MODEL,
@@ -101,9 +107,11 @@ describe("POST /api/supplier-image-match", () => {
       searchedCount: 1,
       model: "milvus-clip-vit-base-patch32",
     });
+    const matchLocal = vi.fn<SupplierImageMatcher>();
     const handler = createSupplierImageMatchPostHandler({
       matchPictureSherlock,
       matchMilvus,
+      matchLocal,
     });
     const response = await handler(post({ ...validBody, engine: "milvus" }));
 
@@ -113,8 +121,43 @@ describe("POST /api/supplier-image-match", () => {
       expect.any(AbortSignal),
     );
     expect(matchPictureSherlock).not.toHaveBeenCalled();
+    expect(matchLocal).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       model: "milvus-clip-vit-base-patch32",
+    });
+  });
+
+  it("dispatches local engine to the in-process matcher", async () => {
+    const matchPictureSherlock = vi.fn<SupplierImageMatcher>();
+    const matchMilvus = vi.fn<SupplierImageMatcher>();
+    const matchLocal = vi.fn<SupplierImageMatcher>().mockResolvedValue({
+      matches: [
+        {
+          catalogItemId: "product-1:variant-1",
+          similarity: 79.4,
+          cosine: 0.59,
+        },
+      ],
+      searchedCount: 1,
+      model: SUPPLIER_MATCH_MODEL,
+    });
+    const handler = createSupplierImageMatchPostHandler({
+      matchPictureSherlock,
+      matchMilvus,
+      matchLocal,
+    });
+    const response = await handler(post({ ...validBody, engine: "local" }));
+
+    expect(response.status).toBe(200);
+    expect(matchLocal).toHaveBeenCalledWith(
+      expect.objectContaining({ engine: "local" }),
+      expect.any(AbortSignal),
+    );
+    expect(matchPictureSherlock).not.toHaveBeenCalled();
+    expect(matchMilvus).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      searchedCount: 1,
+      model: SUPPLIER_MATCH_MODEL,
     });
   });
 
@@ -124,6 +167,7 @@ describe("POST /api/supplier-image-match", () => {
         .fn<SupplierImageMatcher>()
         .mockRejectedValue(new Error("Embedding failed")),
       matchMilvus: vi.fn<SupplierImageMatcher>(),
+      matchLocal: vi.fn<SupplierImageMatcher>(),
     });
     const response = await handler(post(validBody));
 
@@ -145,6 +189,7 @@ describe("POST /api/supplier-image-match", () => {
         model: "picture-sherlock-clip-vit-base-patch32",
       }),
       matchMilvus: vi.fn<SupplierImageMatcher>(),
+      matchLocal: vi.fn<SupplierImageMatcher>(),
     });
     const response = await handler(post(validBody));
 

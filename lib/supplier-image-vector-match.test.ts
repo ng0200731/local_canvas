@@ -54,6 +54,7 @@ function requestFromColors(
     queryImage: { name: "reference.png", url: `https://vector.test/${query.join(",")}.png` },
     catalog: catalogColors.map((color, index) => catalogItem(index, color)),
     currentSupplierId: "supplier-1",
+    engine: "local",
   };
 }
 

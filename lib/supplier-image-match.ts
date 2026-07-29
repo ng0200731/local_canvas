@@ -11,7 +11,7 @@ export const SUPPLIER_MATCH_PICTURE_SHERLOCK_MODEL =
   "picture-sherlock-clip-vit-base-patch32" as const;
 /** CLIP + Milvus Lite vector search used by the Milvus match sidecar. */
 export const SUPPLIER_MATCH_MILVUS_MODEL = "milvus-clip-vit-base-patch32" as const;
-export const SUPPLIER_MATCH_ENGINES = ["picture-sherlock", "milvus"] as const;
+export const SUPPLIER_MATCH_ENGINES = ["picture-sherlock", "milvus", "local"] as const;
 export type SupplierMatchEngine = (typeof SUPPLIER_MATCH_ENGINES)[number];
 export const SUPPLIER_MATCH_MODELS = [
   SUPPLIER_MATCH_LOCAL_MODEL,

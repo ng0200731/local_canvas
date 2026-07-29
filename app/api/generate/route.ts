@@ -50,5 +50,17 @@ export function createGeneratePostHandler({ configured, generate }: GenerateRout
 
 export const POST = createGeneratePostHandler({
   configured: isXiangsuConfigured,
-  generate: generateXiangsuImage,
+  generate: (input, signal) =>
+    generateXiangsuImage(
+      {
+        model: input.model,
+        prompt: input.prompt,
+        systemPrompt: input.systemPrompt,
+        size: input.size,
+        outputFormat: input.outputFormat,
+        resolution: input.resolution,
+        references: input.references,
+      },
+      signal,
+    ),
 });
