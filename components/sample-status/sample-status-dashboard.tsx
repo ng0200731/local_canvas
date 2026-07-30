@@ -15,6 +15,8 @@ import {
   RefreshCw,
   Search,
   Send,
+  Trash2,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,21 +32,40 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { sendPurchaseSamplingEmail } from "@/lib/email/client";
-import { useGenerateDemoSampleOrders, useSampleOrders } from "@/lib/hooks/use-sample-orders";
+import { sendPurchaseSamplingEmail, sendReminderEmail } from "@/lib/email/client";
+import {
+  useDeleteSampleOrders,
+  useGenerateDemoSampleOrders,
+  useSampleOrders,
+} from "@/lib/hooks/use-sample-orders";
 import {
   SAMPLE_STAGES,
   SAMPLE_STAGE_LABELS,
+  SUPPLIER_UPDATE_STAGES,
   createPublicToken,
   payloadSummary,
   sha256Token,
   type SampleOrder,
+  type SampleStage,
 } from "@/lib/sample-orders";
 import { getCanvasStore, usingLocalStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "Not set";
+}
+
+function pmcDateFromOrder(order: SampleOrder): string | undefined {
+  if (order.currentPayload?.stage === "pmc") {
+    return (order.currentPayload as { pmcDate?: string }).pmcDate;
+  }
+  const pmcUpdate = [...order.updates]
+    .reverse()
+    .find((update) => update.payload.stage === "pmc");
+  if (pmcUpdate?.payload.stage === "pmc") {
+    return (pmcUpdate.payload as { pmcDate?: string }).pmcDate;
+  }
+  return undefined;
 }
 
 function StatusBadge({ value, kind }: { value: string; kind: "email" | "approval" | "stage" }) {
@@ -62,68 +83,139 @@ function StatusBadge({ value, kind }: { value: string; kind: "email" | "approval
   );
 }
 
-function OrderDetails({ order }: { order: SampleOrder }) {
+function OrderTimeline({ order }: { order: SampleOrder }) {
+  if (!order.updates.length) {
+    return (
+      <p className="text-muted-foreground text-xs">
+        No supplier updates yet — awaiting first stage submission.
+      </p>
+    );
+  }
+  const ordered = [...order.updates].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return (
-    <div className="bg-muted/20 grid gap-5 border-t p-5 lg:grid-cols-3">
-      <section>
-        <h3 className="text-sm font-semibold">Supplier contacts</h3>
-        <div className="mt-3 grid gap-2 text-sm">
-          {order.snapshot.supplier.employees.map((employee) => (
-            <div key={employee.email} className="bg-background rounded-lg border p-3">
-              <p className="font-medium">
-                {employee.name} · {employee.title}
-              </p>
-              <p className="text-muted-foreground mt-1 break-all">{employee.email}</p>
-              <p className="text-muted-foreground">{employee.tel}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section>
-        <h3 className="text-sm font-semibold">Purchase lines</h3>
-        <div className="mt-3 grid gap-2">
-          {order.snapshot.lines.map((line) => (
-            <div key={line.nodeId} className="bg-background rounded-lg border p-3 text-sm">
-              <p className="font-medium">{line.subject}</p>
-              <ul className="text-muted-foreground mt-1 grid gap-0.5 text-xs">
-                {line.details.map((detail) => (
-                  <li key={detail}>{detail}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-        <a
-          href={order.snapshot.canvas.reportUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="text-primary mt-3 inline-flex min-h-10 items-center gap-2 text-sm font-medium hover:underline"
-        >
-          Approved canvas report <ExternalLink className="size-4" />
-        </a>
-      </section>
-      <section>
-        <h3 className="text-sm font-semibold">Status timeline</h3>
-        {order.updates.length ? (
-          <ol className="mt-3 grid gap-3">
-            {order.updates.map((update) => (
-              <li key={update.id} className="border-primary/25 border-l-2 pl-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{SAMPLE_STAGE_LABELS[update.stage]}</span>
-                  <time className="text-muted-foreground text-xs">
-                    {formatDate(update.createdAt)}
-                  </time>
-                </div>
-                <p className="text-muted-foreground mt-1">{payloadSummary(update.payload)}</p>
-              </li>
-            ))}
-          </ol>
+    <ol className="grid gap-2">
+      {ordered.map((update) => (
+        <li key={update.id} className="border-primary/25 border-l-2 pl-3 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">{SAMPLE_STAGE_LABELS[update.stage]}</span>
+            <time className="text-muted-foreground">{formatDate(update.createdAt)}</time>
+          </div>
+          <p className="text-muted-foreground mt-0.5">{payloadSummary(update.payload)}</p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function SupplierCard({
+  order,
+  onRetry,
+  onRetryApproval,
+  onDelete,
+  onSendReminder,
+  onShipOut,
+  retrying,
+  actioning,
+}: {
+  order: SampleOrder;
+  onRetry: (order: SampleOrder) => void;
+  onRetryApproval: (order: SampleOrder) => void;
+  onDelete: (order: SampleOrder) => void;
+  onSendReminder: (order: SampleOrder) => void;
+  onShipOut: (order: SampleOrder) => void;
+  retrying: string | null;
+  actioning: string | null;
+}) {
+  const pmcDate = pmcDateFromOrder(order);
+  return (
+    <div className="bg-background overflow-hidden rounded-xl border">
+      <div className="bg-muted/30 flex items-center justify-between gap-2 border-b px-4 py-3">
+        <p className="font-medium text-sm">{order.snapshot.supplier.name}</p>
+        {order.currentStage ? (
+          <StatusBadge value={order.currentStage} kind="stage" />
         ) : (
-          <p className="text-muted-foreground mt-3 text-sm">
-            Awaiting the supplier&rsquo;s first update.
-          </p>
+          <Badge variant="outline">Not started</Badge>
         )}
-      </section>
+      </div>
+      <div className="grid gap-3 p-4 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground text-xs">Email</span>
+          <StatusBadge value={order.emailStatus} kind="email" />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-muted-foreground text-xs">Approval</span>
+          <StatusBadge value={order.approvalStatus} kind="approval" />
+        </div>
+        {order.latestUpdateAt ? (
+          <p className="text-muted-foreground text-xs">Latest: {formatDate(order.latestUpdateAt)}</p>
+        ) : null}
+        {pmcDate ? (
+          <p className="bg-amber-50 border-amber-200 text-amber-800 rounded-md border px-2 py-1 text-xs">
+            PMC delivery date: <strong>{pmcDate}</strong>
+          </p>
+        ) : null}
+        <div className="border-t pt-2">
+          <p className="text-muted-foreground mb-1 text-xs font-semibold">Status timeline</p>
+          <OrderTimeline order={order} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {order.emailStatus === "failed" ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              title="Retry purchase email"
+              aria-label={`Retry ${order.sequence} purchase email`}
+              disabled={retrying === order.id}
+              onClick={() => onRetry(order)}
+            >
+              {retrying === order.id ? <Loader2 className="animate-spin" /> : <Send />}
+            </Button>
+          ) : null}
+          {order.approvalEmailStatus === "failed" ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              title="Retry approval email"
+              aria-label={`Retry ${order.sequence} approval email`}
+              disabled={retrying === order.id}
+              onClick={() => onRetryApproval(order)}
+            >
+              {retrying === order.id ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="outline"
+            title="Send reminder email mentioning PMC delivery date"
+            disabled={actioning === order.id}
+            onClick={() => onSendReminder(order)}
+          >
+            {actioning === order.id ? <Loader2 className="size-3 animate-spin" /> : <Bell className="size-3" />}
+            Remind
+          </Button>
+          {isOrderComplete(order) ? (
+            <Button
+              size="sm"
+              variant="default"
+              title="Mark this completed order as shipped out"
+              disabled={actioning === order.id}
+              onClick={() => onShipOut(order)}
+            >
+              {actioning === order.id ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
+              Ship out
+            </Button>
+          ) : null}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            title="Delete supplier order"
+            aria-label={`Delete ${order.sequence} ${order.snapshot.supplier.name}`}
+            onClick={() => onDelete(order)}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -134,13 +226,21 @@ function ProjectOrderDetails({
   orders,
   onRetry,
   onRetryApproval,
+  onDelete,
+  onSendReminder,
+  onShipOut,
   retrying,
+  actioning,
 }: {
   sequence: string;
   orders: readonly SampleOrder[];
   onRetry: (order: SampleOrder) => void;
   onRetryApproval: (order: SampleOrder) => void;
+  onDelete: (order: SampleOrder) => void;
+  onSendReminder: (order: SampleOrder) => void;
+  onShipOut: (order: SampleOrder) => void;
   retrying: string | null;
+  actioning: string | null;
 }) {
   const projectName = orders[0]?.snapshot.project.name ?? "Unknown";
   const canvasName = orders[0]?.snapshot.canvas.name ?? "Unknown";
@@ -160,92 +260,43 @@ function ProjectOrderDetails({
       </div>
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
         {orders.map((order) => (
-          <div key={order.id} className="bg-background overflow-hidden rounded-xl border">
-            <div className="bg-muted/30 flex items-center justify-between gap-2 border-b px-4 py-3">
-              <p className="font-medium text-sm">{order.snapshot.supplier.name}</p>
-              {order.currentStage ? (
-                <StatusBadge value={order.currentStage} kind="stage" />
-              ) : (
-                <Badge variant="outline">Not started</Badge>
-              )}
-            </div>
-            <div className="grid gap-3 p-4 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground text-xs">Email</span>
-                <StatusBadge value={order.emailStatus} kind="email" />
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground text-xs">Approval</span>
-                <StatusBadge value={order.approvalStatus} kind="approval" />
-              </div>
-              {order.latestUpdateAt ? (
-                <p className="text-muted-foreground text-xs">
-                  Latest: {formatDate(order.latestUpdateAt)}
-                </p>
-              ) : null}
-              {order.updates.length > 0 ? (
-                <details className="group text-xs">
-                  <summary className="text-muted-foreground cursor-pointer list-none font-medium hover:text-foreground">
-                    Timeline ({order.updates.length})
-                  </summary>
-                  <ol className="mt-2 grid gap-2 border-l-2 pl-3">
-                    {[...order.updates]
-                      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                      .map((update) => (
-                        <li key={update.id}>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-medium">{SAMPLE_STAGE_LABELS[update.stage]}</span>
-                            <time className="text-muted-foreground">{formatDate(update.createdAt)}</time>
-                          </div>
-                          <p className="text-muted-foreground">{payloadSummary(update.payload)}</p>
-                        </li>
-                      ))}
-                  </ol>
-                </details>
-              ) : null}
-              <div className="flex items-center gap-2">
-                {order.emailStatus === "failed" ? (
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    title="Retry purchase email"
-                    aria-label={`Retry ${order.sequence} purchase email`}
-                    disabled={retrying === order.id}
-                    onClick={() => onRetry(order)}
-                  >
-                    {retrying === order.id ? <Loader2 className="animate-spin" /> : <Send />}
-                  </Button>
-                ) : null}
-                {order.approvalEmailStatus === "failed" ? (
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    title="Retry approval email"
-                    aria-label={`Retry ${order.sequence} approval email`}
-                    disabled={retrying === order.id}
-                    onClick={() => onRetryApproval(order)}
-                  >
-                    {retrying === order.id ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </div>
+          <SupplierCard
+            key={order.id}
+            order={order}
+            onRetry={onRetry}
+            onRetryApproval={onRetryApproval}
+            onDelete={onDelete}
+            onSendReminder={onSendReminder}
+            onShipOut={onShipOut}
+            retrying={retrying}
+            actioning={actioning}
+          />
         ))}
       </div>
     </div>
   );
 }
 
+function isOrderComplete(order: SampleOrder): boolean {
+  return order.currentStage === "invoice";
+}
+
+function isGroupComplete(orders: readonly SampleOrder[]): boolean {
+  return orders.length > 0 && orders.every(isOrderComplete);
+}
+
 export function SampleStatusDashboard() {
   const orders = useSampleOrders();
   const generate = useGenerateDemoSampleOrders();
+  const deleteMutation = useDeleteSampleOrders();
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState("all");
   const [approval, setApproval] = useState("all");
   const [sort, setSort] = useState("updated-desc");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [actioning, setActioning] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
 
   /** Group orders by sequence (CA#). Each group = one project order sent to N suppliers. */
   const groups = useMemo(() => {
@@ -287,6 +338,12 @@ export function SampleStatusDashboard() {
 
   const summary = useMemo(() => {
     const all = orders.data ?? [];
+    const allGroups = Object.entries(
+      all.reduce<Record<string, SampleOrder[]>>((acc, o) => {
+        (acc[o.sequence] ??= []).push(o);
+        return acc;
+      }, {}),
+    );
     return {
       total: all.length,
       attention: all.filter(
@@ -294,6 +351,7 @@ export function SampleStatusDashboard() {
       ).length,
       approval: all.filter((order) => order.approvalStatus === "pending").length,
       approved: all.filter((order) => order.approvalStatus === "approved").length,
+      completeGroups: allGroups.filter(([, group]) => isGroupComplete(group)).length,
     };
   }, [orders.data]);
 
@@ -369,6 +427,85 @@ export function SampleStatusDashboard() {
     }
   }
 
+  async function sendReminder(order: SampleOrder) {
+    setActioning(order.id);
+    try {
+      const pmcDate = pmcDateFromOrder(order);
+      await sendReminderEmail({
+        to: order.recipientEmail,
+        sequence: order.sequence,
+        supplierName: order.snapshot.supplier.name,
+        projectName: order.snapshot.project.name,
+        canvasName: order.snapshot.canvas.name,
+        currentStage: order.currentStage
+          ? SAMPLE_STAGE_LABELS[order.currentStage]
+          : "Not started",
+        pmcDate,
+        updateUrl: `${window.location.origin}/sample-orders/${createPublicToken()}`,
+      });
+      toast.success(`Reminder sent to ${order.snapshot.supplier.name}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Reminder failed.");
+    } finally {
+      setActioning(null);
+    }
+  }
+
+  async function shipOut(order: SampleOrder) {
+    setActioning(order.id);
+    try {
+      const response = await fetch("/api/sample-orders/social-shipout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: order.id }),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          body && typeof body === "object" && "error" in body && typeof body.error === "string"
+            ? body.error
+            : "Ship-out failed.";
+        throw new Error(message);
+      }
+      toast.success(`${order.sequence} marked as shipped.`);
+      await orders.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Ship-out failed.");
+    } finally {
+      setActioning(null);
+    }
+  }
+
+  async function deleteOrder(order: SampleOrder) {
+    if (!window.confirm(`Delete ${order.snapshot.supplier.name} order ${order.sequence}?`)) return;
+    try {
+      await getCanvasStore().deleteSampleOrder(order.id);
+      setSelected((current) => current.filter((id) => id !== order.id));
+      toast.success(`${order.snapshot.supplier.name} order deleted.`);
+      await orders.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Delete failed.");
+    }
+  }
+
+  async function deleteSelected() {
+    if (selected.length === 0) return;
+    if (!window.confirm(`Delete ${selected.length} selected order(s)?`)) return;
+    try {
+      await deleteMutation.mutateAsync(selected);
+      setSelected([]);
+      toast.success(`${selected.length} order(s) deleted.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Delete failed.");
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelected((current) =>
+      current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
+    );
+  }
+
   if (orders.isLoading)
     return (
       <div className="grid gap-4">
@@ -388,6 +525,8 @@ export function SampleStatusDashboard() {
         </Button>
       </div>
     );
+
+  const allOrders = orders.data ?? [];
 
   const cards = [
     { label: "Supplier orders", value: summary.total, icon: FlaskConical },
@@ -460,7 +599,7 @@ export function SampleStatusDashboard() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All stages</SelectItem>
-              {SAMPLE_STAGES.map((value) => (
+              {SUPPLIER_UPDATE_STAGES.map((value) => (
                 <SelectItem key={value} value={value}>
                   {SAMPLE_STAGE_LABELS[value]}
                 </SelectItem>
@@ -492,6 +631,21 @@ export function SampleStatusDashboard() {
           </Select>
         </div>
 
+        {selected.length > 0 ? (
+          <div className="bg-muted/30 flex items-center justify-between gap-3 border-b px-4 py-2 text-sm">
+            <span>{selected.length} selected</span>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => void deleteSelected()}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              Delete selected
+            </Button>
+          </div>
+        ) : null}
+
         {groups.length === 0 ? (
           <div className="flex min-h-64 flex-col items-center justify-center p-8 text-center">
             <PackageCheck className="text-muted-foreground size-10" />
@@ -503,10 +657,12 @@ export function SampleStatusDashboard() {
           </div>
         ) : (
           <div>
-            <div className="bg-muted/30 text-muted-foreground hidden grid-cols-[110px_minmax(150px,1fr)_minmax(150px,1fr)_100px_80px] gap-3 border-b px-4 py-3 text-xs font-semibold tracking-wide uppercase md:grid">
+            <div className="bg-muted/30 text-muted-foreground hidden grid-cols-[40px_110px_minmax(150px,1fr)_minmax(150px,1fr)_110px_100px_90px] gap-3 border-b px-4 py-3 text-xs font-semibold tracking-wide uppercase md:grid">
+              <span />
               <span>CA number</span>
               <span>Project / canvas</span>
               <span>Suppliers</span>
+              <span>Order status</span>
               <span>Status</span>
               <span className="text-right">Action</span>
             </div>
@@ -517,15 +673,32 @@ export function SampleStatusDashboard() {
                 .join(", ");
               const allStages = groupOrders
                 .map((o) => o.currentStage)
-                .filter((s): s is string => s !== null);
+                .filter((s): s is SampleStage => s !== null);
               const worstStage = allStages.length
                 ? allStages.reduce((a, b) =>
                     SAMPLE_STAGES.indexOf(a) <= SAMPLE_STAGES.indexOf(b) ? a : b,
                   )
                 : null;
+              const groupComplete = isGroupComplete(groupOrders);
+              const allGroupSelected = groupOrders.every((o) => selected.includes(o.id));
+              function toggleGroup() {
+                const ids = groupOrders.map((o) => o.id);
+                if (allGroupSelected) {
+                  setSelected((cur) => cur.filter((id) => !ids.includes(id)));
+                } else {
+                  setSelected((cur) => [...new Set([...cur, ...ids])]);
+                }
+              }
               return (
                 <article key={sequence} className="border-b last:border-b-0">
-                  <div className="grid gap-3 p-4 md:grid-cols-[110px_minmax(150px,1fr)_minmax(150px,1fr)_100px_80px] md:items-center">
+                  <div className="grid gap-3 p-4 md:grid-cols-[40px_110px_minmax(150px,1fr)_minmax(150px,1fr)_110px_100px_90px] md:items-center">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select all ${sequence} orders`}
+                      checked={allGroupSelected}
+                      onChange={toggleGroup}
+                      className="size-4"
+                    />
                     <div>
                       <span className="text-muted-foreground text-xs md:hidden">CA number</span>
                       <p className="font-mono text-sm font-semibold">{sequence}</p>
@@ -545,6 +718,14 @@ export function SampleStatusDashboard() {
                       <p className="text-muted-foreground text-sm">
                         {groupOrders.length} supplier{groupOrders.length === 1 ? "" : "s"}
                       </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground mr-2 text-xs md:hidden">Order status</span>
+                      {groupComplete ? (
+                        <Badge variant="default" className="bg-emerald-600">Complete</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-amber-100 text-amber-800">Pending</Badge>
+                      )}
                     </div>
                     <div>
                       <span className="text-muted-foreground mr-2 text-xs md:hidden">Status</span>
@@ -573,7 +754,11 @@ export function SampleStatusDashboard() {
                         orders={groupOrders}
                         onRetry={retry}
                         onRetryApproval={retryApproval}
+                        onDelete={deleteOrder}
+                        onSendReminder={sendReminder}
+                        onShipOut={shipOut}
                         retrying={retrying}
+                        actioning={actioning}
                       />
                     ) : null}
                   </div>

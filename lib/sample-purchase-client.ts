@@ -119,12 +119,16 @@ export async function sendSamplePurchases({
           suppliers,
           products,
           images,
+          filterSupplierId: target.supplier.id,
           send: {
             sequence: approvedSend.sequence,
             reportUrl,
             approvalUrl: updateUrl,
             rejectionUrl: updateUrl,
             qrCodeDataUrl,
+            selectedImageIds: approvedSend.selectedImageIds
+              ? [...approvedSend.selectedImageIds]
+              : undefined,
           },
         });
         const result = await sendCanvasReportEmail({
@@ -142,7 +146,14 @@ export async function sendSamplePurchases({
             canvas: report.canvas,
             sections: report.sections,
             steps: report.steps,
-            send: report.send,
+            send: report.send
+              ? {
+                  ...report.send,
+                  selectedImageIds: report.send.selectedImageIds
+                    ? [...report.send.selectedImageIds]
+                    : undefined,
+                }
+              : undefined,
           },
         });
         await getCanvasStore().updateSampleOrderEmail(orderId, {

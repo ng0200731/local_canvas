@@ -619,6 +619,11 @@ export const localCanvasStore: CanvasStore = {
     return delay(records[index]);
   },
 
+  async deleteSampleOrder(id) {
+    const records = readSampleOrders();
+    write(KEYS.sampleOrders, records.filter((record) => record.id !== id));
+  },
+
   async generateDemoSampleOrders(count) {
     const records = readSampleOrders();
     const created: SampleOrder[] = [];

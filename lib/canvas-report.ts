@@ -85,6 +85,7 @@ export interface CanvasReportSendInfo {
   approvalUrl: string;
   rejectionUrl: string;
   qrCodeDataUrl: string | null;
+  selectedImageIds?: readonly string[];
 }
 
 export interface BuildCanvasReportInput {
@@ -98,6 +99,7 @@ export interface BuildCanvasReportInput {
   products: readonly ProductRecord[];
   images: readonly ImageRecord[];
   send?: CanvasReportSendInfo;
+  filterSupplierId?: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -379,7 +381,20 @@ function finalOutputImage(outputBlocks: readonly CanvasReportBlock[]): CanvasRep
   return [...outputBlocks].reverse().find((block) => block.image?.url)?.image ?? null;
 }
 
-function selectedRenderImage(images: readonly ImageRecord[]): CanvasReportImage | null {
+function selectedRenderImage(
+  images: readonly ImageRecord[],
+  selectedImageIds?: readonly string[],
+): CanvasReportImage | null {
+  if (selectedImageIds && selectedImageIds.length > 0) {
+    const selected = images.filter((image) => selectedImageIds.includes(image.id));
+    const image = [...selected].reverse().find((candidate) => candidate.url.trim());
+    if (image) {
+      return {
+        url: image.url,
+        alt: imageAlt(image.prompt || "Selected render image", "Selected render image"),
+      };
+    }
+  }
   const image = [...images].reverse().find((candidate) => candidate.url.trim());
   if (!image) return null;
   return {
@@ -706,7 +721,18 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
   const customerProducts = productNodeProducts;
 
   const supplierNodes = nodes.filter((node) => node.type === "suppler");
-  const supplierBlocks = supplierNodes.map((node) => {
+  const connectedNodeIds = new Set<string>();
+  for (const edge of content.edges) {
+    if (!edge.source || !edge.target) continue;
+    connectedNodeIds.add(edge.source);
+    connectedNodeIds.add(edge.target);
+  }
+  const filteredSupplierNodes = input.filterSupplierId
+    ? supplierNodes.filter(
+        (node) => stringValue(asRecord(node.data).supplierId) === input.filterSupplierId,
+      )
+    : supplierNodes.filter((node) => connectedNodeIds.has(node.id));
+  const supplierBlocks = filteredSupplierNodes.map((node) => {
     const data = asRecord(node.data);
     const supplier = nullableString(data.supplierId)
       ? (suppliersById.get(nullableString(data.supplierId) ?? "") ?? null)
@@ -798,7 +824,10 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
     });
 
   const outputBlocks = nodes.filter((node) => node.type === "imageOutput").map(outputBlockForNode);
-  const reportImage = selectedRenderImage(input.images) ?? finalOutputImage(outputBlocks);
+  const reportImage = selectedRenderImage(
+    input.images,
+    input.send?.selectedImageIds,
+  ) ?? finalOutputImage(outputBlocks);
 
   const supplierBreakdowns: CanvasReportBlock[] =
     supplierBlocks.length > 0

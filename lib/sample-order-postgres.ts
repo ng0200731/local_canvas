@@ -414,6 +414,14 @@ export async function getLocalPublicSampleOrder(
   });
 }
 
+export async function deleteLocalSampleOrder(id: string): Promise<void> {
+  await query(`DELETE FROM public.sample_order_updates WHERE order_id = $1`, [id]);
+  await query(`DELETE FROM public.sample_orders WHERE id = $1 AND user_id = $2`, [
+    id,
+    localUserId,
+  ]);
+}
+
 export async function submitLocalSampleOrderUpdate(input: {
   supplierTokenHash: string;
   payload: SampleUpdatePayload;

@@ -389,7 +389,14 @@ export function SendCanvasDialog({ canvas, project }: { canvas: Canvas; project:
           canvas: report.canvas,
           sections: report.sections,
           steps: report.steps,
-          send: report.send,
+          send: report.send
+            ? {
+                ...report.send,
+                selectedImageIds: report.send.selectedImageIds
+                  ? [...report.send.selectedImageIds]
+                  : undefined,
+              }
+            : undefined,
         },
       });
       const filename = canvas.name.replace(/[^a-z0-9-]+/gi, "-").replace(/^-|-$/g, "") || "canvas";
@@ -409,7 +416,14 @@ export function SendCanvasDialog({ canvas, project }: { canvas: Canvas; project:
           canvas: report.canvas,
           sections: report.sections,
           steps: report.steps,
-          send: report.send,
+          send: report.send
+            ? {
+                ...report.send,
+                selectedImageIds: report.send.selectedImageIds
+                  ? [...report.send.selectedImageIds]
+                  : undefined,
+              }
+            : undefined,
         },
       });
       await getCanvasStore().updateCanvasStatus(canvas.id, "awaiting_approval");
@@ -741,8 +755,22 @@ export function CanvasList({
 }) {
   const { data: canvases, isLoading, isError, error } = useCanvases(projectId);
   const project = useProject(projectId);
+  const suppliers = useSuppliers();
+  const products = useProducts();
   const [columnFilters, setColumnFilters] = useState<CanvasColumnFilters>(emptyCanvasColumnFilters);
   const employeeEmail = project.data?.employeeEmail ?? "";
+
+  function canvasSupplierCount(canvas: Canvas): number {
+    const seen = new Set<string>();
+    for (const node of canvas.content.nodes) {
+      if (node.type !== "suppler") continue;
+      const data = node.data as Record<string, unknown>;
+      const id = typeof data.supplierId === "string" ? data.supplierId : "";
+      if (id) seen.add(id);
+    }
+    return Math.min(seen.size, suppliers.data?.length ?? Infinity) || seen.size;
+  }
+  const supplierCountsReady = !suppliers.isLoading && !products.isLoading;
   const visibleCanvases =
     canvases?.filter(
       (canvas) =>
@@ -806,6 +834,7 @@ export function CanvasList({
                   <th className="px-4 py-3">Last update</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Employer email</th>
+                  <th className="px-4 py-3 text-center">Suppliers</th>
                   <th className="px-4 py-3 text-right">Action</th>
                 </tr>
                 <tr className="bg-background/70 border-t">
@@ -814,6 +843,7 @@ export function CanvasList({
                   <th className="px-4 py-2">{filterInput("updated", "last update")}</th>
                   <th className="px-4 py-2">{filterInput("status", "status")}</th>
                   <th className="px-4 py-2">{filterInput("email", "employer email")}</th>
+                  <th className="px-4 py-2" />
                   <th className="px-4 py-2" />
                 </tr>
               </thead>
@@ -852,6 +882,9 @@ export function CanvasList({
                           "Not set"
                         )}
                       </td>
+                      <td className="px-4 py-3 text-center tabular-nums">
+                        {supplierCountsReady ? canvasSupplierCount(canvas) : "..."}
+                      </td>
                       <td className="px-4 py-3">
                         <CanvasActions
                           canvas={canvas}
@@ -864,7 +897,7 @@ export function CanvasList({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="text-muted-foreground px-4 py-10 text-center">
+                    <td colSpan={7} className="text-muted-foreground px-4 py-10 text-center">
                       No matching canvases.
                     </td>
                   </tr>

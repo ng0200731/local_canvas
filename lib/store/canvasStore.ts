@@ -143,6 +143,7 @@ export interface CanvasStore {
   upsertSampleOrder(input: UpsertSampleOrderInput): Promise<SampleOrder>;
   updateSampleOrderEmail(id: string, input: UpdateSampleOrderEmailInput): Promise<SampleOrder>;
   rotateSampleOrderToken(id: string, input: RotateSampleOrderTokenInput): Promise<SampleOrder>;
+  deleteSampleOrder(id: string): Promise<void>;
   generateDemoSampleOrders(count: number): Promise<SampleOrder[]>;
 
   // ── Image metadata ────────────────────────────────────────────────────

@@ -36,8 +36,16 @@ export function canvasPurchaseTargets(input: {
   const productsById = new Map(input.products.map((product) => [product.id, product]));
   const targets = new Map<string, CanvasPurchaseTarget>();
 
+  const connectedNodeIds = new Set<string>();
+  for (const edge of input.canvas.content.edges) {
+    if (!edge.source || !edge.target) continue;
+    connectedNodeIds.add(edge.source);
+    connectedNodeIds.add(edge.target);
+  }
+
   for (const node of input.canvas.content.nodes) {
     if (node.type !== "suppler") continue;
+    if (!connectedNodeIds.has(node.id)) continue;
     const supplierId = typeof node.data.supplierId === "string" ? node.data.supplierId : null;
     const supplier = supplierId ? suppliersById.get(supplierId) : undefined;
     if (!supplier) continue;

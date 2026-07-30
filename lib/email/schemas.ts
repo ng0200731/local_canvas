@@ -122,8 +122,9 @@ export const canvasReportPayloadSchema = z
         approvalUrl: z.url(),
         rejectionUrl: z.url(),
         qrCodeDataUrl: z.string().trim().min(1).max(200_000).nullable(),
+        selectedImageIds: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     project: z
       .object({
@@ -176,7 +177,7 @@ export const sendCanvasReportEmailRequestSchema = z
     pdfFilename: z.string().trim().min(1).max(120),
     report: canvasReportPayloadSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 export type SendCanvasReportEmailRequest = z.infer<typeof sendCanvasReportEmailRequestSchema>;
 
@@ -229,6 +230,24 @@ export const sendPhysicalSampleApprovalEmailRequestSchema = z
 export type SendPhysicalSampleApprovalEmailRequest = z.infer<
   typeof sendPhysicalSampleApprovalEmailRequestSchema
 >;
+
+export const sendReminderEmailRequestSchema = z
+  .object({
+    to: emailRecipientSchema,
+    sequence: z
+      .string()
+      .trim()
+      .regex(/^CA\d{6}$/),
+    supplierName: z.string().trim().min(1).max(300),
+    projectName: z.string().trim().min(1).max(300),
+    canvasName: z.string().trim().min(1).max(300),
+    currentStage: z.string().trim().min(1).max(120),
+    pmcDate: z.string().trim().max(120).optional(),
+    updateUrl: z.url(),
+  })
+  .strict();
+
+export type SendReminderEmailRequest = z.infer<typeof sendReminderEmailRequestSchema>;
 
 export const emailDeliveryResponseSchema = z
   .object({

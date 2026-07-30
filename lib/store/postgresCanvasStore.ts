@@ -11,6 +11,7 @@ import { mergeProjectMetadata, type ProjectMetadata } from "@/lib/project-metada
 import { ensureLocalProfile, query, queryOne, withTransaction } from "@/lib/db/client";
 import { localUserId } from "@/lib/env";
 import {
+  deleteLocalSampleOrder,
   listLocalSampleOrders,
   rotateLocalSampleOrderToken,
   updateLocalSampleOrderEmail,
@@ -649,6 +650,10 @@ export function createPostgresCanvasStore(): CanvasStore {
     async rotateSampleOrderToken(id, input) {
       await ensureLocalProfile();
       return await rotateLocalSampleOrderToken(id, input);
+    },
+    async deleteSampleOrder(id) {
+      await ensureLocalProfile();
+      await deleteLocalSampleOrder(id);
     },
     async generateDemoSampleOrders(): Promise<SampleOrder[]> {
       throw new Error("Demo sample orders are available only in browser local mode.");

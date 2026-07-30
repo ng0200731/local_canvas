@@ -80,6 +80,8 @@ export const remotePostgresCanvasStore: CanvasStore = {
     callLocalCanvasStore<SampleOrder>("updateSampleOrderEmail", [id, input]),
   rotateSampleOrderToken: (id: string, input: RotateSampleOrderTokenInput) =>
     callLocalCanvasStore<SampleOrder>("rotateSampleOrderToken", [id, input]),
+  deleteSampleOrder: (id: string) =>
+    callLocalCanvasStore<void>("deleteSampleOrder", [id]),
   generateDemoSampleOrders: (count: number) =>
     callLocalCanvasStore<SampleOrder[]>("generateDemoSampleOrders", [count]),
 

@@ -11,12 +11,14 @@ import {
   sendCanvasReportEmailRequestSchema,
   sendPurchaseSamplingEmailRequestSchema,
   sendPhysicalSampleApprovalEmailRequestSchema,
+  sendReminderEmailRequestSchema,
   sendTestEmailRequestSchema,
   type EmailDeliveryResponse,
   type SendCanvasEmailRequest,
   type SendCanvasReportEmailRequest,
   type SendPurchaseSamplingEmailRequest,
   type SendPhysicalSampleApprovalEmailRequest,
+  type SendReminderEmailRequest,
   type SendTestEmailRequest,
   type SmtpProviderId,
 } from "@/lib/email/schemas";
@@ -294,16 +296,19 @@ export async function preparePurchaseSamplingMail(
   const details = input.supplierDetails.length
     ? input.supplierDetails.map((detail) => `- ${detail}`).join("\n")
     : "- No supplier details available";
+  const relationship = `${input.projectName} → ${input.canvasName} → ${input.sequence}`;
   const text = [
     `Dear ${input.supplierName},`,
     "",
-    `${input.sequence} purchase order.`,
-    `Purchase date: ${input.purchaseDate}`,
+    `Canvas QR reference`,
+    `Reference: ${input.sequence}`,
     `Project: ${input.projectName}`,
     `Canvas: ${input.canvasName}`,
-    `Canvas link: ${input.reportUrl}`,
-    `Update sample status: ${input.updateUrl}`,
+    `Relationship: ${relationship}`,
+    `Scan: Open this canvas report - ${input.reportUrl}`,
+    `Update: Click to update delivery date - ${input.updateUrl}`,
     "",
+    `Purchase date: ${input.purchaseDate}`,
     "Supplier details:",
     details,
     "",
@@ -312,42 +317,48 @@ export async function preparePurchaseSamplingMail(
   const htmlDetails = input.supplierDetails.length
     ? `<ul>${input.supplierDetails.map((detail) => `<li>${escapeHtml(detail)}</li>`).join("")}</ul>`
     : "<p>No supplier details available.</p>";
-  const html = `<p>Dear ${escapeHtml(input.supplierName)},</p><p><strong>${escapeHtml(
+  const referenceHtml = `<section class="qr-reference" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:20px;margin:16px 0;">
+    <h3 style="margin:0 0 12px;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;color:#475569;">Canvas QR reference</h3>
+    <table style="width:100%;font-size:13px;border-collapse:collapse;">
+      <tr><td style="padding:4px 0;color:#64748b;width:140px;">Reference</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(input.sequence)}</td></tr>
+      <tr><td style="padding:4px 0;color:#64748b;">Project</td><td style="padding:4px 0;">${escapeHtml(input.projectName)}</td></tr>
+      <tr><td style="padding:4px 0;color:#64748b;">Canvas</td><td style="padding:4px 0;">${escapeHtml(input.canvasName)}</td></tr>
+      <tr><td style="padding:4px 0;color:#64748b;">Relationship</td><td style="padding:4px 0;">${escapeHtml(relationship)}</td></tr>
+      <tr><td style="padding:4px 0;color:#64748b;">Scan</td><td style="padding:4px 0;"><a href="${escapeHtml(input.reportUrl)}" style="color:#172554;">Open this canvas report</a></td></tr>
+      <tr><td style="padding:4px 0;color:#64748b;">Update</td><td style="padding:4px 0;"><a href="${escapeHtml(input.updateUrl)}" style="color:#172554;">Click to update delivery date</a></td></tr>
+    </table>
+  </section>`;
+  const html = `<p>Dear ${escapeHtml(input.supplierName)},</p>${referenceHtml}<p><strong>${escapeHtml(
     input.sequence,
   )} purchase order</strong></p><p>Purchase date: ${escapeHtml(
     input.purchaseDate,
-  )}<br>Project: ${escapeHtml(input.projectName)}<br>Canvas: ${escapeHtml(
-    input.canvasName,
-  )}<br>Canvas link: <a href="${escapeHtml(input.reportUrl)}">${escapeHtml(
-    input.reportUrl,
-  )}</a></p><p><a href="${escapeHtml(input.updateUrl)}" style="display:inline-block;padding:12px 18px;background:#172554;color:#fff;text-decoration:none;border-radius:6px">Update sample status</a></p><h3>Supplier details</h3>${htmlDetails}<p><img src="${escapeHtml(
+  )}</p><h3>Supplier details</h3>${htmlDetails}<p><a href="${escapeHtml(input.updateUrl)}" style="display:inline-block;padding:12px 18px;background:#172554;color:#fff;text-decoration:none;border-radius:6px">Click to update delivery date</a></p><p><img src="${escapeHtml(
     input.qrCodeDataUrl,
   )}" alt="QR code for ${escapeHtml(input.sequence)} ${escapeHtml(
     input.supplierName,
-  )}" width="160" height="160"></p><p>Please start sampling and keep the order status current using the secure link.</p>`;
-  let pdf: Buffer;
+  )}" width="160" height="160"></p><p>Please start sampling and keep the order status current using the secure link above.</p>`;
+  let attachments: NonNullable<SendMailOptions["attachments"]> = [];
   try {
-    pdf = await renderPurchaseOrderQrPdf(input);
-  } catch (pdfError) {
-    console.error("PDF generation failed for purchase sampling email", {
-      sequence: input.sequence,
-      supplierName: input.supplierName,
-      errorMessage: pdfError instanceof Error ? pdfError.message : String(pdfError),
-      errorStack: pdfError instanceof Error ? pdfError.stack?.slice(0, 1000) : undefined,
-    });
-    throw pdfError;
-  }
-  return {
-    subject,
-    text,
-    html,
-    attachments: [
+    const pdf = await renderPurchaseOrderQrPdf(input);
+    attachments = [
       {
         filename: `${input.sequence}-sample-status-qr.pdf`,
         content: pdf,
         contentType: "application/pdf",
       },
-    ],
+    ];
+  } catch (pdfError) {
+    console.error("PDF generation failed for purchase sampling email; sending without attachment.", {
+      sequence: input.sequence,
+      supplierName: input.supplierName,
+      errorMessage: pdfError instanceof Error ? pdfError.message : String(pdfError),
+    });
+  }
+  return {
+    subject,
+    text,
+    html,
+    attachments,
   };
 }
 
@@ -483,7 +494,7 @@ export async function deliverCanvasReportEmail(input: SendCanvasReportEmailReque
   const parsed = sendCanvasReportEmailRequestSchema.parse(input);
   return delivery()(
     parsed.to,
-    await prepareCanvasReportMail(parsed, renderCanvasReportPdf, { requirePdf: true }),
+    await prepareCanvasReportMail(parsed, renderCanvasReportPdf, { requirePdf: false }),
     parsed.cc ?? [],
   );
 }
@@ -504,4 +515,31 @@ export async function deliverPhysicalSampleApprovalEmail(
 ) {
   const parsed = sendPhysicalSampleApprovalEmailRequestSchema.parse(input);
   return delivery()(parsed.to, preparePhysicalSampleApprovalMail(parsed));
+}
+
+export function prepareReminderMail(input: SendReminderEmailRequest): PreparedMail {
+  const pmcLine = input.pmcDate ? `\nPMC delivery date: ${input.pmcDate}` : "";
+  const subject = `${input.sequence} status reminder - ${input.supplierName}`;
+  const text = [
+    `Dear ${input.supplierName},`,
+    "",
+    `This is a status reminder for ${input.sequence}.`,
+    `Project: ${input.projectName}`,
+    `Canvas: ${input.canvasName}`,
+    `Current status: ${input.currentStage}${pmcLine}`,
+    "",
+    `Update the status here: ${input.updateUrl}`,
+    "",
+    "Please keep the order status current.",
+  ].join("\n");
+  const pmcHtml = input.pmcDate
+    ? `<p style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px 14px;">PMC delivery date: <strong>${escapeHtml(input.pmcDate)}</strong></p>`
+    : "";
+  const html = `<p>Dear ${escapeHtml(input.supplierName)},</p><p>This is a status reminder for <strong>${escapeHtml(input.sequence)}</strong>.</p><p>Project: ${escapeHtml(input.projectName)}<br>Canvas: ${escapeHtml(input.canvasName)}<br>Current status: ${escapeHtml(input.currentStage)}</p>${pmcHtml}<p><a href="${escapeHtml(input.updateUrl)}" style="display:inline-block;padding:12px 18px;background:#172554;color:#fff;text-decoration:none;border-radius:6px">Click to update delivery date</a></p><p>Please keep the order status current using the link above.</p>`;
+  return { subject, text, html, attachments: [] };
+}
+
+export async function deliverReminderEmail(input: SendReminderEmailRequest) {
+  const parsed = sendReminderEmailRequestSchema.parse(input);
+  return delivery()(parsed.to, prepareReminderMail(parsed));
 }

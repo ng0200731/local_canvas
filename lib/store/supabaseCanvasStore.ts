@@ -959,6 +959,21 @@ export function createSupabaseCanvasStore(): CanvasStore {
       return mapSampleOrder(data);
     },
 
+    async deleteSampleOrder(id) {
+      const deleteUpdates = await supabase
+        .from("sample_order_updates")
+        .delete()
+        .eq("order_id", id);
+      if (deleteUpdates.error && !isSampleOrdersSchemaMissing(deleteUpdates.error.message)) {
+        assertNoError({ error: deleteUpdates.error }, "deleteSampleOrderUpdates");
+      }
+      const { error } = await supabase.from("sample_orders").delete().eq("id", id);
+      if (error && isSampleOrdersSchemaMissing(error.message)) {
+        throw sampleOrdersMigrationError("deleteSampleOrder");
+      }
+      assertNoError({ error }, "deleteSampleOrder");
+    },
+
     async generateDemoSampleOrders() {
       throw new Error("Demo sample orders are available only in local mode.");
     },

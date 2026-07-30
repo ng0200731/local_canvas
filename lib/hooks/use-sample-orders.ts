@@ -21,3 +21,22 @@ export function useGenerateDemoSampleOrders() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: SAMPLE_ORDERS_KEY }),
   });
 }
+
+export function useDeleteSampleOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => getCanvasStore().deleteSampleOrder(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SAMPLE_ORDERS_KEY }),
+  });
+}
+
+export function useDeleteSampleOrders() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: readonly string[]) => {
+      for (const id of ids) await getCanvasStore().deleteSampleOrder(id);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SAMPLE_ORDERS_KEY }),
+  });
+}
+

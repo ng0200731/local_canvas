@@ -5,12 +5,14 @@ import {
   sendCanvasReportEmailRequestSchema,
   sendPurchaseSamplingEmailRequestSchema,
   sendPhysicalSampleApprovalEmailRequestSchema,
+  sendReminderEmailRequestSchema,
   sendTestEmailRequestSchema,
   type EmailDeliveryResponse,
   type SendCanvasEmailRequest,
   type SendCanvasReportEmailRequest,
   type SendPurchaseSamplingEmailRequest,
   type SendPhysicalSampleApprovalEmailRequest,
+  type SendReminderEmailRequest,
   type SendTestEmailRequest,
 } from "@/lib/email/schemas";
 
@@ -72,4 +74,8 @@ export function sendPhysicalSampleApprovalEmail(
     "/api/email/physical-sample-approval",
     sendPhysicalSampleApprovalEmailRequestSchema.parse(input),
   );
+}
+
+export function sendReminderEmail(input: SendReminderEmailRequest): Promise<EmailDeliveryResponse> {
+  return postEmailRequest("/api/email/reminder", sendReminderEmailRequestSchema.parse(input));
 }

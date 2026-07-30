@@ -235,6 +235,17 @@ function ProjectCanvasDetailRow({
     );
   }
 
+  function canvasSupplierCount(canvas: Canvas): number {
+    const seen = new Set<string>();
+    for (const node of canvas.content.nodes) {
+      if (node.type !== "suppler") continue;
+      const data = node.data as Record<string, unknown>;
+      const id = typeof data.supplierId === "string" ? data.supplierId : "";
+      if (id) seen.add(id);
+    }
+    return seen.size;
+  }
+
   return (
     <tr className="bg-muted/20">
       <td colSpan={9} className="px-4 py-3">
@@ -268,6 +279,9 @@ function ProjectCanvasDetailRow({
                       <span className="text-muted-foreground mt-1 block text-xs">
                         Created {formatDate(canvas.createdAt)}
                       </span>
+                      <span className="text-muted-foreground mt-0.5 block text-xs">
+                        {canvasSupplierCount(canvas)} supplier{canvasSupplierCount(canvas) === 1 ? "" : "s"}
+                      </span>
                     </span>
                   </button>
                   {purchaseButton(canvas)}
@@ -291,6 +305,9 @@ function ProjectCanvasDetailRow({
                       </span>
                       <span className="text-muted-foreground mt-1 block text-xs">
                         Created {formatDate(canvas.createdAt)}
+                      </span>
+                      <span className="text-muted-foreground mt-0.5 block text-xs">
+                        {canvasSupplierCount(canvas)} supplier{canvasSupplierCount(canvas) === 1 ? "" : "s"}
                       </span>
                     </span>
                   </Link>

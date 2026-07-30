@@ -36,6 +36,7 @@ const METHODS = new Set<string>([
   "upsertSampleOrder",
   "updateSampleOrderEmail",
   "rotateSampleOrderToken",
+  "deleteSampleOrder",
   "generateDemoSampleOrders",
   "listImages",
   "recordImage",
