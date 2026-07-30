@@ -39,6 +39,7 @@ export const imageReferenceUrlSchema = z
   .min(1)
   .refine(
     (value) => {
+      if (value.startsWith("/")) return true;
       try {
         const url = new URL(value);
         return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "data:";
@@ -218,6 +219,7 @@ export const imageGenerationRequestSchema = z.object({
     .max(MAX_IMAGE_GENERATION_REFERENCES)
     .optional()
     .default([]),
+  maskUrl: imageReferenceUrlSchema.optional(),
 });
 
 export const DEFAULT_IMAGE_GENERATION_MODEL: ImageGenerationModelId = "gpt-image-2";

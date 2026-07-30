@@ -392,6 +392,9 @@ function renderMaskPngBlob(
   width: number,
   height: number,
 ): Promise<Blob | null> {
+  // GPT Image 2 mask convention: ALPHA = 0 is the region to regenerate,
+  // ALPHA = 255 is the region to keep. Our `selected[index] > 0` marks the
+  // user's drawn region = the area to change → alpha 0 there, alpha 255 elsewhere.
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -400,12 +403,12 @@ function renderMaskPngBlob(
   const imageData = context.createImageData(width, height);
   const data = imageData.data;
   for (let index = 0; index < selected.length; index += 1) {
-    const isOn = selected[index] > 0;
+    const isEditing = selected[index] > 0;
     const offset = index * 4;
-    data[offset] = 255;
-    data[offset + 1] = 255;
-    data[offset + 2] = 255;
-    data[offset + 3] = isOn ? 255 : 0;
+    data[offset] = 0;
+    data[offset + 1] = 0;
+    data[offset + 2] = 0;
+    data[offset + 3] = isEditing ? 0 : 255;
   }
   context.putImageData(imageData, 0, 0);
   return new Promise((resolve) =>

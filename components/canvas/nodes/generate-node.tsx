@@ -944,6 +944,14 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       toast.error(`Use no more than ${MAX_IMAGE_GENERATION_REFERENCES} reference images`);
       return;
     }
+    const rowMaskUrl = promptRows
+      .map(
+        (row) =>
+          masksForPromptSource(promptReferences, row.sourceNodeId).find(
+            (mask) => mask.id === row.maskId,
+          )?.maskUrl,
+      )
+      .find((url): url is string => typeof url === "string" && url.length > 0);
 
     const run = startGenerationRun(id);
     if (!run) return;
@@ -981,6 +989,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           outputFormat,
           resolution,
           references: allGenerationReferences,
+          maskUrl: rowMaskUrl,
         }),
       });
       if (!isGenerationRunCurrent(id, run.runId)) return;
@@ -1569,6 +1578,35 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                   >
                     {preview || "@product use collar region change color to @pantone red"}
                   </p>
+                  {selectedMaskReference?.maskUrl ? (
+                    <div className="nodrag nopan relative h-20 w-full overflow-hidden rounded-md border">
+                      {selectedSourceReference?.nodeId ? (
+                        (() => {
+                          const sourceRef = connectedImageReferences.find(
+                            (reference) => reference.nodeId === selectedSourceReference.nodeId,
+                          );
+                          return sourceRef?.imageUrl ? (
+                            <img
+                              src={sourceRef.imageUrl}
+                              alt="source"
+                              className="absolute inset-0 h-full w-full object-contain"
+                              draggable={false}
+                            />
+                          ) : null;
+                        })()
+                      ) : null}
+                      <img
+                        src={selectedMaskReference.maskUrl}
+                        alt={`Mask ${selectedMaskReference.name}`}
+                        className="absolute inset-0 h-full w-full object-contain opacity-60 mix-blend-screen"
+                        draggable={false}
+                        title={`Mask preview: ${selectedMaskReference.name}`}
+                      />
+                      <span className="absolute bottom-0.5 left-1 rounded bg-black/60 px-1 text-[0.6rem] text-white">
+                        mask: {selectedMaskReference.name}
+                      </span>
+                    </div>
+                  ) : null}
                   {rowState === "partial" ? (
                     <p className="text-[0.65rem] text-amber-600 dark:text-amber-300">
                       Complete the source and target to include this row. Mask is optional.

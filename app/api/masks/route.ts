@@ -2,10 +2,11 @@ import "server-only";
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { isLocalPostgresConfigured, isSupabaseConfigured } from "@/lib/env";
+import { env, isLocalPostgresConfigured, localUserId, isSupabaseConfigured } from "@/lib/env";
 
 const MAX_BYTES = 12 * 1024 * 1024;
 
@@ -71,14 +72,16 @@ export async function POST(request: Request) {
   const suffix = form.get("suffix");
   const safeSuffix =
     typeof suffix === "string" && suffix.trim() ? sanitizeName(suffix) : null;
-  const fileName = safeSuffix ? `${safe}-${safeSuffix}.png` : `${safe}.png`;
-
-  const targetDir = path.join(process.cwd(), "public", "uploads", "masks");
-  const absolutePath = path.join(targetDir, fileName);
-  await mkdir(targetDir, { recursive: true });
+  const humanName = safeSuffix ? `${safe}-${safeSuffix}` : safe;
+  const uniqueId = randomUUID();
+  const fileName = `${humanName}-${uniqueId}.png`;
+  const storagePath = `${localUserId}/masks/${fileName}`;
+  const absolutePath = path.join(process.cwd(), ".data", "uploads", storagePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
   const buffer = Buffer.from(await file.arrayBuffer());
   await writeFile(absolutePath, buffer);
 
-  const url = `/uploads/masks/${fileName}`;
-  return NextResponse.json({ url, fileName });
+  const baseUrl = (env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  const url = `${baseUrl}/api/uploads/${storagePath.split("/").map(encodeURIComponent).join("/")}`;
+  return NextResponse.json({ url, storagePath });
 }

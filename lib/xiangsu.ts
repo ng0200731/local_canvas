@@ -86,6 +86,7 @@ export interface XiangsuGenerateInput {
   outputFormat: ImageGenerationOutputFormat;
   resolution: ImageGenerationResolution;
   references: ImageGenerationReference[];
+  maskUrl?: string;
 }
 
 export interface XiangsuGenerateOutput {
@@ -297,6 +298,14 @@ export function createXiangsuImageGenerator({
               form.append("response_format", "b64_json");
               form.append("output_format", gptOutputFormat);
               await appendEditImages(form, compiled.imageUrls, fetcher, controller.signal);
+              if (input.maskUrl) {
+                const maskBlob = await blobFromReferenceUrl(
+                  input.maskUrl,
+                  fetcher,
+                  controller.signal,
+                );
+                form.append("mask", maskBlob, "mask.png");
+              }
 
               return fetcher(XIANGSU_EDIT_URL, {
                 method: "POST",

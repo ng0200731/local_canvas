@@ -60,6 +60,7 @@ export const POST = createGeneratePostHandler({
         outputFormat: input.outputFormat,
         resolution: input.resolution,
         references: input.references,
+        maskUrl: input.maskUrl,
       },
       signal,
     ),
