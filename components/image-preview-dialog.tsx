@@ -387,6 +387,32 @@ function selectedPixelsForMask(
   return excluded.length ? excludeSelectedPixels(selected, excluded) : selected;
 }
 
+function renderMaskPngBlob(
+  selected: Uint8ClampedArray,
+  width: number,
+  height: number,
+): Promise<Blob | null> {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return Promise.resolve(null);
+  const imageData = context.createImageData(width, height);
+  const data = imageData.data;
+  for (let index = 0; index < selected.length; index += 1) {
+    const isOn = selected[index] > 0;
+    const offset = index * 4;
+    data[offset] = 255;
+    data[offset + 1] = 255;
+    data[offset + 2] = 255;
+    data[offset + 3] = isOn ? 255 : 0;
+  }
+  context.putImageData(imageData, 0, 0);
+  return new Promise((resolve) =>
+    canvas.toBlob((blob) => resolve(blob), "image/png"),
+  );
+}
+
 function selectedColorPixelsForMask(
   source: PixelSource,
   mask: ImageMaskRegion,
@@ -516,6 +542,8 @@ export function ImagePreviewDialog({
   const [maskMode, setMaskMode] = useState(false);
   const [maskTool, setMaskTool] = useState<MaskTool>("pen");
   const [maskName, setMaskName] = useState("");
+  const [maskSaving, setMaskSaving] = useState(false);
+  const [maskSaveError, setMaskSaveError] = useState<string | null>(null);
   const [strokeThickness, setStrokeThickness] = useState(24);
   const [colorTolerance, setColorTolerance] = useState(12);
   const [colorScope, setColorScope] = useState<ImageMaskColorScope>("region");
@@ -989,13 +1017,44 @@ export function ImagePreviewDialog({
     setImageDisplaySize({ width: image.offsetWidth, height: image.offsetHeight });
   }, []);
 
-  function saveMask() {
+  async function uploadMaskPng(blob: Blob, name: string, suffix: string): Promise<string | null> {
+    const formData = new FormData();
+    formData.append("file", blob, `${name}.png`);
+    formData.append("name", name);
+    formData.append("suffix", suffix);
+    try {
+      const response = await fetch("/api/masks", { method: "POST", body: formData });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = payload && typeof payload.error === "string" ? payload.error : null;
+        setMaskSaveError(message ?? `Upload failed (${response.status}).`);
+        return null;
+      }
+      const payload = (await response.json()) as { url?: string };
+      if (typeof payload.url !== "string" || !payload.url) {
+        setMaskSaveError("Upload returned no URL.");
+        return null;
+      }
+      return payload.url;
+    } catch (error) {
+      setMaskSaveError(error instanceof Error ? error.message : "Upload failed.");
+      return null;
+    }
+  }
+
+  async function saveMask() {
     const name = maskName.trim();
-    if (!name || duplicateName || !hasDraft || !onMasksChange) return;
-    onMasksChange([
-      ...masks,
-      {
-        id: uid(),
+    if (!name || duplicateName || !hasDraft || !onMasksChange || maskSaving) return;
+    if (!imageSize || imageSize.width <= 0 || imageSize.height <= 0) {
+      setMaskSaveError("Image has not finished loading.");
+      return;
+    }
+    setMaskSaving(true);
+    setMaskSaveError(null);
+    try {
+      const draftId = uid();
+      const draftMask: ImageMaskRegion = {
+        id: draftId,
         name,
         imageKey: currentImageKey,
         excludedMaskIds: visibleDraftExcludedMaskIds.length
@@ -1003,9 +1062,30 @@ export function ImagePreviewDialog({
           : undefined,
         strokes: draftStrokes,
         colorSelections: draftColorSelections,
-      },
-    ]);
-    resetMaskDraft();
+      };
+      let selected: Uint8ClampedArray;
+      if (pixelSource && pixelSource.width === imageSize.width && pixelSource.height === imageSize.height) {
+        selected = selectedPixelsForMask(
+          pixelSource,
+          { ...draftMask, imageKey: currentImageKey },
+          visibleMaskLookup,
+        );
+      } else {
+        selected = rasterizeStrokePixels(draftStrokes, imageSize.width, imageSize.height);
+      }
+      const blob = await renderMaskPngBlob(selected, imageSize.width, imageSize.height);
+      if (!blob) {
+        setMaskSaveError("Could not render mask PNG.");
+        return;
+      }
+      const suffix = draftId.split("-").pop() ?? draftId.slice(0, 8);
+      const maskUrl = await uploadMaskPng(blob, name, suffix);
+      if (!maskUrl) return;
+      onMasksChange([...masks, { ...draftMask, maskUrl }]);
+      resetMaskDraft();
+    } finally {
+      setMaskSaving(false);
+    }
   }
 
   function removeMask(maskId: string) {
@@ -1183,12 +1263,15 @@ export function ImagePreviewDialog({
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={!maskName.trim() || duplicateName || !hasDraft}
+                    disabled={!maskName.trim() || duplicateName || !hasDraft || maskSaving}
                     onClick={saveMask}
                   >
                     <Save />
-                    Save
+                    {maskSaving ? "Saving..." : "Save"}
                   </Button>
+                ) : null}
+                {maskSaveError && maskMode ? (
+                  <p className="text-xs text-red-300">{maskSaveError}</p>
                 ) : null}
               </div>
               {maskMode ? (

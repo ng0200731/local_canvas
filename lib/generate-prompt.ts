@@ -7,6 +7,7 @@ import {
 export interface GeneratePromptMaskReference {
   id: string;
   name: string;
+  maskUrl?: string;
 }
 
 export interface GeneratePromptSourceReference {

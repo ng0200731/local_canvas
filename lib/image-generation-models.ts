@@ -54,6 +54,7 @@ export const imageGenerationReferenceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("image"),
     alias: z.string().trim().min(1).max(80),
     url: imageReferenceUrlSchema,
+    maskUrl: imageReferenceUrlSchema.optional(),
   }),
   z.object({
     kind: z.literal("pantone"),

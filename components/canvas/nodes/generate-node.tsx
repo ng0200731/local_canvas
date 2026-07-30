@@ -687,7 +687,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       connectedImageReferences.map((reference) => ({
         nodeId: reference.nodeId,
         alias: reference.alias,
-        masks: reference.masks.map((mask) => ({ id: mask.id, name: mask.name })),
+        masks: reference.masks.map((mask) => ({ id: mask.id, name: mask.name, maskUrl: mask.maskUrl })),
       })),
     [connectedImageReferences],
   );
@@ -1472,7 +1472,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                         <span
                           data-slot="select-value"
                           className={cn(
-                            "flex flex-1 items-center truncate text-left",
+                            "flex flex-1 items-center gap-1 truncate text-left",
                             !selectedMaskReference && "text-muted-foreground",
                           )}
                         >
@@ -1480,6 +1480,18 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                             (row.sourceNodeId && sourceMasks.length === 0
                               ? "No mask (optional)"
                               : "mask (optional)")}
+                          {selectedMaskReference?.maskUrl ? (
+                            <a
+                              href={selectedMaskReference.maskUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(event) => event.stopPropagation()}
+                              className="nodrag ml-1 text-[10px] text-blue-400 hover:text-blue-300"
+                              title="Open mask PNG"
+                            >
+                              PNG
+                            </a>
+                          ) : null}
                         </span>
                       </SelectTrigger>
                       <SelectContent align="start" className="nodrag nopan">

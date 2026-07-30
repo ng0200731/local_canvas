@@ -37,6 +37,7 @@ export interface ImageMaskRegion {
   excludedMaskIds?: string[];
   strokes: ImageMaskStroke[];
   colorSelections?: ImageMaskColorSelection[];
+  maskUrl?: string;
 }
 
 export const GENERATE_CHANGE_TYPES = ["texture", "color", "density", "object", "other"] as const;
