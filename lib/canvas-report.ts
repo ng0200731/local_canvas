@@ -721,17 +721,35 @@ export function buildCanvasReport(input: BuildCanvasReportInput): CanvasReport {
   const customerProducts = productNodeProducts;
 
   const supplierNodes = nodes.filter((node) => node.type === "suppler");
-  const connectedNodeIds = new Set<string>();
+  const nodeIds = new Set(content.nodes.map((node) => node.id));
+  const adjacency = new Map<string, Set<string>>();
   for (const edge of content.edges) {
     if (!edge.source || !edge.target) continue;
-    connectedNodeIds.add(edge.source);
-    connectedNodeIds.add(edge.target);
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, new Set());
+    adjacency.get(edge.source)!.add(edge.target);
   }
+  const generateNodeIds = new Set(
+    nodes.filter((node) => node.type === "generate").map((node) => node.id),
+  );
+  const reachesGenerate = new Set<string>();
+  const stack = [...generateNodeIds];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (reachesGenerate.has(id)) continue;
+    reachesGenerate.add(id);
+    for (const source of adjacency.keys()) {
+      if (adjacency.get(source)!.has(id)) {
+        stack.push(source);
+      }
+    }
+  }
+  const connectedSupplierNodes = supplierNodes.filter((node) => reachesGenerate.has(node.id));
   const filteredSupplierNodes = input.filterSupplierId
-    ? supplierNodes.filter(
+    ? connectedSupplierNodes.filter(
         (node) => stringValue(asRecord(node.data).supplierId) === input.filterSupplierId,
       )
-    : supplierNodes.filter((node) => connectedNodeIds.has(node.id));
+    : connectedSupplierNodes;
   const supplierBlocks = filteredSupplierNodes.map((node) => {
     const data = asRecord(node.data);
     const supplier = nullableString(data.supplierId)

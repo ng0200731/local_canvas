@@ -36,16 +36,34 @@ export function canvasPurchaseTargets(input: {
   const productsById = new Map(input.products.map((product) => [product.id, product]));
   const targets = new Map<string, CanvasPurchaseTarget>();
 
-  const connectedNodeIds = new Set<string>();
+  const nodeIds = new Set(input.canvas.content.nodes.map((node) => node.id));
+  const adjacency = new Map<string, Set<string>>();
   for (const edge of input.canvas.content.edges) {
     if (!edge.source || !edge.target) continue;
-    connectedNodeIds.add(edge.source);
-    connectedNodeIds.add(edge.target);
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, new Set());
+    adjacency.get(edge.source)!.add(edge.target);
+  }
+
+  const generateNodeIds = new Set(
+    input.canvas.content.nodes.filter((node) => node.type === "generate").map((node) => node.id),
+  );
+  const reachesGenerate = new Set<string>();
+  const stack = [...generateNodeIds];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (reachesGenerate.has(id)) continue;
+    reachesGenerate.add(id);
+    for (const source of adjacency.keys()) {
+      if (adjacency.get(source)!.has(id)) {
+        stack.push(source);
+      }
+    }
   }
 
   for (const node of input.canvas.content.nodes) {
     if (node.type !== "suppler") continue;
-    if (!connectedNodeIds.has(node.id)) continue;
+    if (!reachesGenerate.has(node.id)) continue;
     const supplierId = typeof node.data.supplierId === "string" ? node.data.supplierId : null;
     const supplier = supplierId ? suppliersById.get(supplierId) : undefined;
     if (!supplier) continue;
