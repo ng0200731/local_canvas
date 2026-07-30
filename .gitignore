@@ -48,6 +48,9 @@ next-env.d.ts
 services/picture-sherlock/.venv/
 services/picture-sherlock/**/__pycache__/
 services/picture-sherlock/.pytest_cache/
+services/milvus-match/.venv/
+services/milvus-match/**/__pycache__/
+services/milvus-match/.pytest_cache/
 **/__pycache__/
 .pytest_cache/
 *.pyc
