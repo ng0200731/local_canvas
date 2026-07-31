@@ -2,47 +2,28 @@ import "server-only";
 
 import sharp from "sharp";
 
+export interface MaskBbox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+}
+
 /**
- * Composite the transparent-mask region of `editedBuffer` onto `baseBuffer`,
- * using `maskBuffer`'s alpha channel to decide which pixels come from edited.
+ * Compute the bounding box of the transparent (alpha < 128) region of a mask.
+ * Returns null if the mask has no transparent region.
  *
  * Mask convention (same as OpenAI images.edit):
- *   - alpha = 0   → pixel is in the edit region → take from `editedBuffer`
- *   - alpha = 255 → pixel is preserved → keep `baseBuffer` pixel
- *
- * All three buffers must be the same pixel dimensions. Result is a PNG Buffer.
+ *   alpha = 0   → pixel is in the edit region
+ *   alpha = 255 → pixel is preserved
  */
-export async function compositeMaskedEdit(
-  baseBuffer: Buffer,
-  editedBuffer: Buffer,
+export async function maskBbox(
   maskBuffer: Buffer,
-): Promise<Buffer> {
-  const baseMeta = await sharp(baseBuffer).metadata();
-  const maskMeta = await sharp(maskBuffer)
-    // Ensure mask is RGBA so we can read its alpha channel
-    .ensureAlpha()
-    .toColorspace("srgb")
-    .metadata();
-
-  const width = baseMeta.width ?? 0;
-  const height = baseMeta.height ?? 0;
-  if (!width || !height) throw new Error("Composite: base image has no dimensions.");
-
-  // The provider may return a different size than requested (e.g. 1024x1024
-  // regardless of `size`). Resize the edited image to match the base dims
-  // so we can do a pixel-aligned composite. Use "fill" so the entire edited
-  // frame maps onto the base — this does stretch the edit, but pass 1's
-  // edit is only inside the mask and pass 2's transfer is also inside the
-  // mask, so stretching only matters inside the mask region (it distorts
-  // the inpainted texture to match the base's pixel grid).
-  const editedResized = await sharp(editedBuffer)
-    .resize(width, height, { fit: "fill" })
-    .ensureAlpha()
-    .raw()
-    .toBuffer();
-
-  // Compute mask alpha at base dims. If mask was already base-sized this is
-  // a no-op; if it was a different size, it's resized to match.
+  width: number,
+  height: number,
+): Promise<MaskBbox | null> {
   const maskAlpha = await sharp(maskBuffer)
     .resize(width, height, { fit: "fill" })
     .ensureAlpha()
@@ -50,12 +31,136 @@ export async function compositeMaskedEdit(
     .toFormat(sharp.format.raw)
     .toBuffer();
 
-  // Build a normalized mask: 255 where alpha was 0 (edit region), 0 elsewhere.
-  // This is the "take from edited" weight.
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const a = maskAlpha[y * width + x];
+      if (a < 128) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+/**
+ * Composite the model's output onto the original base, preserving the base
+ * outside the mask's bounding box and taking the model's pixels inside the
+ * bbox (with a soft feather at the boundary).
+ *
+ * Unlike `compositeMaskedEdit` (pixel-mask-scoped), this lets the model
+ * refine the edit shape inside the bbox — the mask is treated as semantic
+ * guidance for the model, not as a pixel-exact selection.
+ */
+export async function compositeOutsideBbox(
+  baseBuffer: Buffer,
+  editedBuffer: Buffer,
+  bbox: MaskBbox,
+  feather = 4,
+): Promise<Buffer> {
+  const baseMeta = await sharp(baseBuffer).metadata();
+  const width = baseMeta.width ?? 0;
+  const height = baseMeta.height ?? 0;
+  if (!width || !height) throw new Error("compositeOutsideBbox: base has no dimensions.");
+
+  // Resize model output to match base dims.
+  const editedResized = await sharp(editedBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+
+  const baseRaw = await sharp(baseBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+
+  // Build a weight map: 1.0 inside bbox (minus feather), 0.0 outside bbox
+  // (plus feather), linear ramp across the feather band.
+  const channels = 4;
+  const out = Buffer.from(baseRaw);
+  const featherClamped = Math.max(0, Math.min(feather, Math.floor(Math.min(bbox.width, bbox.height) / 4)));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      // Distance to bbox edge (positive = inside).
+      const distInside = Math.min(
+        x - bbox.minX,
+        bbox.maxX - x,
+        y - bbox.minY,
+        bbox.maxY - y,
+      );
+      let weight: number;
+      if (distInside < 0) {
+        weight = 0;
+      } else if (distInside >= featherClamped) {
+        weight = 1;
+      } else if (featherClamped === 0) {
+        weight = 1;
+      } else {
+        weight = distInside / featherClamped;
+      }
+      if (weight === 0) continue;
+      const idx = (y * width + x) * channels;
+      for (let c = 0; c < channels - 1; c += 1) {
+        out[idx + c] = Math.round(
+          weight * editedResized[idx + c] + (1 - weight) * baseRaw[idx + c],
+        );
+      }
+      // Alpha: keep base alpha.
+      out[idx + 3] = baseRaw[idx + 3];
+    }
+  }
+
+  return sharp(out, {
+    raw: { width, height, channels },
+  })
+    .png()
+    .toBuffer();
+}
+
+export async function compositeMaskedEdit(
+  baseBuffer: Buffer,
+  editedBuffer: Buffer,
+  maskBuffer: Buffer,
+): Promise<Buffer> {
+  const baseMeta = await sharp(baseBuffer).metadata();
+
+  const width = baseMeta.width ?? 0;
+  const height = baseMeta.height ?? 0;
+  if (!width || !height) throw new Error("Composite: base image has no dimensions.");
+
+  // The provider may return a different size than requested (e.g. 1024x1024
+  // regardless of `size`). Resize the edited image to match the base dims.
+  const editedResized = await sharp(editedBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+
+  const maskAlpha = await sharp(maskBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .extractChannel(3)
+    .toFormat(sharp.format.raw)
+    .toBuffer();
+
   const takeFromEdited = Buffer.alloc(maskAlpha.length);
   for (let i = 0; i < maskAlpha.length; i += 1) {
-    // Threshold at 128 so feathered edges go to the kept side (preserves
-    // soft boundaries of base image rather than blending in model bleed).
     takeFromEdited[i] = maskAlpha[i] < 128 ? 255 : 0;
   }
 

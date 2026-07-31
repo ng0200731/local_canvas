@@ -24,7 +24,8 @@ import {
   referencesForProvider,
   type ProviderImageReference,
 } from "@/lib/reference-prompt";
-import { compositeMaskedEdit } from "@/lib/mask-composite";
+import { compositeOutsideBbox, maskBbox } from "@/lib/mask-composite";
+import sharp from "sharp";
 
 const XIANGSU_GENERATION_URL = "https://www.xiangsuai.cn/v1/images/generations";
 const XIANGSU_EDIT_URL = "https://www.xiangsuai.cn/v1/images/edits";
@@ -378,28 +379,25 @@ export function createXiangsuImageGenerator({
           })
         : compiled.imageUrls.length > 0 && isGptModel
           ? await (async () => {
-              // Detect the two-pass scenario: a mask is attached AND there
+              // Detect masked texture transfer: a mask is attached AND there
               // were additional image references that got dropped by
               // compileReferencePrompt (e.g. a supplier texture image like
-              // @elastic). In that case we run a two-pass pipeline.
+              // @elastic). Route to runMaskedTextureTransfer.
               const droppedImageRefs = ordered.filter(
                 (reference) =>
                   reference.source === "image" &&
                   !compiled.imageUrls.includes(reference.url) &&
                   reference !== ordered.find((r) => r.maskUrl),
               );
-              const twoPassEligible = Boolean(compiled.maskUrl) && droppedImageRefs.length > 0;
+              const maskedTransferEligible = Boolean(compiled.maskUrl) && droppedImageRefs.length > 0;
 
-              if (twoPassEligible) {
-                return await runTwoPassMaskEdit(
+              if (maskedTransferEligible) {
+                return await runMaskedTextureTransfer(
                   input,
-                  compiled,
                   ordered,
                   droppedImageRefs,
-                  promptWithSpec,
                   gptQuality,
                   gptSize,
-                  gptOutputFormat,
                   apiKey,
                   fetcher,
                   controller.signal,
@@ -669,25 +667,23 @@ async function callGptImageEdit(
 }
 
 /**
- * Two-pass mask edit pipeline.
+ * Single-pass masked texture transfer.
  *
- * Pass 1: single base image + mask → inpaint a neutral material into the mask
- *         region (API honors the mask because there's only one image).
- * Composite: paste pass-1's mask region onto the original base → no bleed.
- * Pass 2: composited image + dropped texture image (no mask) → model transfers
- *         the texture into the "highlighted" region.
- * Composite: paste pass-2's mask region onto the original base again → final
- *         image, pixel-identical to the base outside the mask.
+ * The user's brush highlight is rough intent — the model should identify
+ * the most relevant object in the highlighted area (handle, strap, waistband,
+ * etc.) and apply @elastic's material to that whole object, following its
+ * existing form and lighting. We don't send the mask as a provider `mask`
+ * field (the OpenAI edit endpoint ignores the mask when 2+ images are
+ * attached). Instead the mask is described in the prompt as semantic
+ * guidance, and its bounding box is used only for the final composite to
+ * guarantee no drift outside the user's rough highlight area.
  */
-async function runTwoPassMaskEdit(
+async function runMaskedTextureTransfer(
   input: XiangsuGenerateInput,
-  _compiled: ReturnType<typeof compileReferencePrompt>,
   ordered: ProviderImageReference[],
   droppedImageRefs: ProviderImageReference[],
-  _promptWithSpec: string,
   gptQuality: string,
   gptSize: string,
-  _gptOutputFormat: ImageGenerationOutputFormat,
   apiKey: string | undefined,
   fetcher: typeof fetch,
   signal: AbortSignal,
@@ -695,7 +691,11 @@ async function runTwoPassMaskEdit(
 ): Promise<{ url: string; model: ImageGenerationModelId; diagnostics?: XiangsuGenerateDiagnostics }> {
   const maskCarrier = ordered.find((reference) => reference.maskUrl);
   if (!maskCarrier || !maskCarrier.url || !maskCarrier.maskUrl) {
-    throw new Error("Two-pass edit requires a base image with a mask.");
+    throw new Error("Masked texture transfer requires a base image with a mask.");
+  }
+  const textureRef = droppedImageRefs[0];
+  if (!textureRef?.url) {
+    throw new Error("Masked texture transfer requires a texture reference image.");
   }
 
   const editUrl = env.OPENAI_API_KEY
@@ -705,146 +705,99 @@ async function runTwoPassMaskEdit(
     ? `Bearer ${env.OPENAI_API_KEY}`
     : `Bearer ${apiKey}`;
 
-  // --- Pass 1: base + mask, generic material inpaint -----------------------
-  const pass1Prompt = [
-    "Reference image mapping:",
-    `- Provider image 1 is @${maskCarrier.alias}: the base image to edit.`,
-    "",
-    "User instruction:",
-    `Inpaint the masked (transparent) region of @${maskCarrier.alias} with a neutral placeholder material — a plain woven fabric texture, mid-gray, matte finish, soft top-lit. Match the lighting and shadow direction of @${maskCarrier.alias}.`,
-    "",
-    "MASK CONSTRAINT (HARD — must be obeyed exactly):",
-    `- An alpha-channel mask is attached. FULLY TRANSPARENT pixels (alpha=0) are the ONLY pixels you may modify. FULLY OPAQUE pixels (alpha=255) MUST remain pixel-identical to @${maskCarrier.alias}.`,
-    `- Do NOT expand the edit beyond the transparent area. Do NOT bleed or feather. The mask is an exact pixel selection.`,
-    `- Keep every pixel outside the transparent area bit-for-bit unchanged.`,
-    "",
-    "图像输出规格：输出画幅与参考图1保持完全一致的尺寸和宽高比。",
-  ].join("\n");
-
-  const pass1Form = new FormData();
-  pass1Form.append("model", input.model);
-  pass1Form.append("prompt", pass1Prompt);
-  pass1Form.append("n", "1");
-  pass1Form.append("quality", gptQuality);
-  pass1Form.append("response_format", "b64_json");
-  pass1Form.append("output_format", "png");
-
+  // Fetch base, texture, and mask bytes.
   const baseBlob = await blobFromReferenceUrl(maskCarrier.url, fetcher, signal);
-  pass1Form.append("image[]", baseBlob, "base.png");
+  const textureBlob = await blobFromReferenceUrl(textureRef.url, fetcher, signal);
+  const maskBlob = await blobFromReferenceUrl(maskCarrier.maskUrl, fetcher, signal);
+  const baseBuffer = Buffer.from(await baseBlob.arrayBuffer());
+  const textureBuffer = Buffer.from(await textureBlob.arrayBuffer());
+  const maskBuffer = Buffer.from(await maskBlob.arrayBuffer());
   const baseDims = await imageDimensions(baseBlob);
 
-  const maskBlob = await blobFromReferenceUrl(maskCarrier.maskUrl, fetcher, signal);
-  const maskDims = await imageDimensions(maskBlob);
-  if (
-    baseDims &&
-    maskDims &&
-    (baseDims.width !== maskDims.width || baseDims.height !== maskDims.height)
-  ) {
-    throw new Error(
-      `Mask dimensions (${maskDims.width}x${maskDims.height}) don't match the source image (${baseDims.width}x${baseDims.height}). Redraw the mask on the current variant.`,
-    );
-  }
-  pass1Form.append("mask", maskBlob, "mask.png");
-  if (input.matchSourceSize && baseDims) {
-    pass1Form.append("size", `${baseDims.width}x${baseDims.height}`);
-  } else {
-    pass1Form.append("size", gptSize);
+  // Compute the mask's bounding box for the final composite step.
+  let bbox: { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } | null = null;
+  if (baseDims) {
+    bbox = await maskBbox(maskBuffer, baseDims.width, baseDims.height);
   }
 
-  const pass1 = await callGptImageEdit(editUrl, editAuth, pass1Form, fetcher, signal);
-
-  // --- Composite pass-1 mask region onto original base --------------------
-  const baseBuffer = Buffer.from(await baseBlob.arrayBuffer());
-  const maskBuffer = Buffer.from(await maskBlob.arrayBuffer());
-  const composited1 = await compositeMaskedEdit(baseBuffer, pass1.buffer, maskBuffer);
-
-  // --- Pass 2: composited1 + dropped texture image, no mask --------------
-  // The model sees the pass-1 result (which has a neutral material where
-  // the mask was) plus the real @elastic image. We ask it to replace the
-  // neutral material region with @elastic's texture, keeping everything
-  // else unchanged. No mask this time, so the API doesn't ignore it.
-  const textureRef = droppedImageRefs[0];
-  const textureUrl = textureRef?.url;
-  if (!textureUrl) {
-    throw new Error("Two-pass edit requires a texture reference image URL.");
-  }
-
-  const pass2Prompt = [
+  const passPrompt = [
     "Reference image mapping:",
-    `- Provider image 1 is @${maskCarrier.alias}: the base image — it already has a placeholder material in one region.`,
-    `- Provider image 2 is @${textureRef.alias}: a real sample of the material to apply.`,
+    `- Provider image 1 is @${maskCarrier.alias}: the base product image. The user has roughly highlighted a region on this image where they want the material changed.`,
+    `- Provider image 2 is @${textureRef.alias}: a real sample of the new material to apply.`,
     "",
     "User instruction:",
-    `Replace the placeholder material region in @${maskCarrier.alias} with the exact material, texture, color, weave, and sheen shown in @${textureRef.alias}.`,
-    `Keep EVERYTHING else in @${maskCarrier.alias} pixel-identical: silhouette, background, lighting, print, logos, shadows, framing. Only the placeholder region should change.`,
-    `Match the light direction, shadow, and tone of @${maskCarrier.alias} inside the new material region — do not introduce new lighting.`,
-    "",
-    "The placeholder region is the area that visibly differs from the rest of @${maskCarrier.alias} (a plain gray woven patch). Replace only that patch.",
+    `Replace the material of the object inside the user-highlighted region of @${maskCarrier.alias} with @${textureRef.alias}'s exact material — same color, weave, fiber, sheen, stretch, and surface roughness.`,
+    `The user's highlight is rough intent, not an exact selection. Identify the most relevant object in that highlighted area (e.g. a handle, strap, waistband, band, or trim) and apply @${textureRef.alias}'s material to that whole object, following its existing silhouette, folds, wrinkles, and seams.`,
+    `Match @${maskCarrier.alias}'s light direction, shadows, highlights, and ambient tone on the new material. Do not introduce new lighting.`,
+    `Keep @${maskCarrier.alias}'s overall silhouette, background, framing, print, logos, and any region outside the highlighted area unchanged.`,
     "",
     "图像输出规格：输出画幅与参考图1保持完全一致的尺寸和宽高比。",
   ].join("\n");
 
-  const pass2Form = new FormData();
-  pass2Form.append("model", input.model);
-  pass2Form.append("prompt", pass2Prompt);
-  pass2Form.append("n", "1");
-  pass2Form.append("quality", gptQuality);
-  pass2Form.append("response_format", "b64_json");
-  pass2Form.append("output_format", "png");
-  pass2Form.append("image[]", new Blob([new Uint8Array(composited1)], { type: "image/png" }), "base.png");
-  const textureBlob = await blobFromReferenceUrl(textureUrl, fetcher, signal);
-  pass2Form.append("image[]", textureBlob, "texture.png");
+  const form = new FormData();
+  form.append("model", input.model);
+  form.append("prompt", passPrompt);
+  form.append("n", "1");
+  form.append("quality", gptQuality);
+  form.append("response_format", "b64_json");
+  form.append("output_format", "png");
+  form.append("image[]", new Blob([new Uint8Array(baseBuffer)], { type: "image/png" }), "base.png");
+  form.append("image[]", new Blob([new Uint8Array(textureBuffer)], { type: "image/png" }), "texture.png");
   if (input.matchSourceSize && baseDims) {
-    pass2Form.append("size", `${baseDims.width}x${baseDims.height}`);
+    form.append("size", `${baseDims.width}x${baseDims.height}`);
   } else {
-    pass2Form.append("size", gptSize);
+    form.append("size", gptSize);
   }
 
-  const pass2 = await callGptImageEdit(editUrl, editAuth, pass2Form, fetcher, signal);
+  const result = await callGptImageEdit(editUrl, editAuth, form, fetcher, signal);
 
-  // --- Final composite: paste pass-2's mask region back onto original base
-  const finalBuffer = await compositeMaskedEdit(baseBuffer, pass2.buffer, maskBuffer);
+  // --- Final composite: outside bbox = original base, inside bbox = model output (with feather).
+  let finalBuffer: Buffer;
+  if (bbox) {
+    finalBuffer = await compositeOutsideBbox(baseBuffer, result.buffer, bbox, 4);
+  } else if (baseDims) {
+    finalBuffer = await sharp(result.buffer)
+      .resize(baseDims.width, baseDims.height, { fit: "fill" })
+      .png()
+      .toBuffer();
+  } else {
+    finalBuffer = result.buffer;
+  }
 
   // --- Diagnostics ------------------------------------------------------
   (diagnosticsRef as { current?: XiangsuGenerateDiagnostics }).current = {
-    compiledPrompt: `--- PASS 1 (base + mask) ---\n${pass1Prompt}\n\n--- PASS 2 (composited + ${textureRef.alias}) ---\n${pass2Prompt}`,
+    compiledPrompt: passPrompt,
     resolvedReferences: [
       {
         alias: maskCarrier.alias,
-        role: "base-image-with-mask",
+        role: "base-image-with-mask" as const,
         imageUrl: maskCarrier.url,
         maskUrl: maskCarrier.maskUrl,
         description: maskCarrier.description,
       },
-      ...droppedImageRefs.map((reference) => ({
-        alias: reference.alias,
+      {
+        alias: textureRef.alias,
         role: "reference-image" as const,
-        imageUrl: reference.url,
-        description: reference.description,
-      })),
+        imageUrl: textureRef.url,
+        description: textureRef.description,
+      },
     ],
     formFields: {
-      "pass1.model": input.model,
-      "pass1.prompt": pass1Prompt,
-      "pass1.image[0]": maskCarrier.url,
-      "pass1.mask": maskCarrier.maskUrl,
-      "pass1.size": String(pass1Form.get("size") ?? ""),
-      "pass2.model": input.model,
-      "pass2.prompt": pass2Prompt,
-      "pass2.image[0]": "(composited pass-1 result)",
-      "pass2.image[1]": textureUrl,
-      "pass2.size": String(pass2Form.get("size") ?? ""),
+      model: input.model,
+      prompt: passPrompt,
+      "image[0]": maskCarrier.url,
+      "image[1]": textureRef.url,
+      size: String(form.get("size") ?? ""),
+      "composite.bbox": bbox ? JSON.stringify(bbox) : "(no mask region found)",
     },
   };
 
-  // Upload final buffer to the persistent store so a URL is returned to the
-  // client. Reuse the main /api/uploads route by posting the buffer as a
-  // multipart file field — that route handles local Postgres + Supabase.
+  // Upload final buffer via /api/uploads.
   const uploadForm = new FormData();
   uploadForm.append(
     "file",
     new Blob([new Uint8Array(finalBuffer)], { type: "image/png" }),
-    "two-pass-result.png",
+    "masked-texture-result.png",
   );
   const uploadRes = await fetcher(
     `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/uploads`,
@@ -862,8 +815,6 @@ async function runTwoPassMaskEdit(
     }
   }
 
-  // Fallback: inline the result as a data URL (keeps response shape intact
-  // even if the upload route isn't available / rejects server-side POSTs).
   const dataUrl = `data:image/png;base64,${finalBuffer.toString("base64")}`;
   return { url: dataUrl, model: input.model, diagnostics: diagnosticsRef.current };
 }
