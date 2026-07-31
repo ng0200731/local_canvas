@@ -62,4 +62,31 @@ describe("reference prompt compiler", () => {
     expect(compiled.prompt).toContain("Provider image 2 / @Red 032 U is only a color reference");
     expect(compiled.prompt).toContain("Preserve every detail from @bre");
   });
+
+  it("describes the union-mask convention when a mask is attached", () => {
+    const compiled = compileReferencePrompt(
+      [
+        "- @product use collar region change texture to @elastic",
+        "- @product use sleeve region change texture to @elastic",
+        "- @product use logo region change texture to @elastic",
+      ].join("\n"),
+      [
+        {
+          kind: "image",
+          alias: "product",
+          url: "https://images.example/product.png",
+          maskUrl: "https://images.example/combined-product.png",
+        },
+        { kind: "image", alias: "elastic", url: "https://images.example/elastic.png" },
+      ],
+    );
+
+    expect(compiled.maskUrl).toBe("https://images.example/combined-product.png");
+    expect(compiled.prompt).toContain(
+      "They are all satisfied by the SINGLE attached mask: the transparent area of that mask equals the union of all listed regions",
+    );
+    expect(compiled.prompt).toContain(
+      "apply that change uniformly across the entire transparent area",
+    );
+  });
 });

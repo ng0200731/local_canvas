@@ -217,6 +217,8 @@ export function compileReferencePrompt(
         `- The transparent region is small and precise. Treat it as a literal pixel-level boundary: do NOT expand the edit beyond the transparent area, do NOT bleed, do NOT feather the change into nearby pixels.`,
         `- Do NOT interpret the mask as a rough guide. It is an exact selection. Any pixel you modify outside the transparent region is a failure.`,
         `- Disregard any region-name words (e.g. "lol region", "u region", "collar region") in the prompt as positional guidance — the mask is the single source of truth for WHICH pixels to edit. Use those words only to understand WHAT to do (e.g. recolor, retexure) inside the mask.`,
+        `- Multiple named edit regions may be listed in the prompt (e.g. "collar region", "sleeve region", "logo region"). They are NOT separate selections. They are all satisfied by the SINGLE attached mask: the transparent area of that mask equals the union of all listed regions. Treat the transparent area as one combined editable selection.`,
+        `- If the prompt lists the same change for every region (e.g. "change texture to @X" repeated per region), apply that change uniformly across the entire transparent area. Do NOT apply the change to pixels outside the transparent area, and do NOT leave any transparent pixel unchanged.`,
         `- Keep the rest of @${maskCarrier.alias} (the opaque area) bit-for-bit unchanged. Do not recolor it, do not relight it, do not alter the background or any other letter, shape, or pixel.`,
       ].join("\n")
     : null;

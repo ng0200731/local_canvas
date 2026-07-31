@@ -13,6 +13,7 @@ export interface GeneratePromptMaskReference {
 export interface GeneratePromptSourceReference {
   nodeId: string;
   alias: string;
+  imageUrl?: string;
   masks: readonly GeneratePromptMaskReference[];
 }
 

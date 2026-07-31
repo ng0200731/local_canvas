@@ -60,6 +60,7 @@ import {
   type GeneratePromptSourceReference,
 } from "@/lib/generate-prompt";
 import { isAbortError } from "@/lib/generation-run";
+import { decodeMaskPng, unionMaskPngBlob } from "@/lib/mask-union";
 import { persistGeneratedImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
@@ -255,6 +256,70 @@ function uid(): string {
 
 function emptyPromptRow(): GeneratePromptRow {
   return emptyGeneratePromptRow(uid());
+}
+
+async function fetchMaskBlob(url: string): Promise<Blob | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
+}
+
+async function uploadCombinedMask(blob: Blob, sourceAlias: string): Promise<string | null> {
+  try {
+    const form = new FormData();
+    form.append("file", blob, "combined.png");
+    form.append("name", `combined-${sourceAlias}`);
+    const res = await fetch("/api/masks", { method: "POST", body: form });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { url?: unknown };
+    return typeof json.url === "string" ? json.url : null;
+  } catch {
+    return null;
+  }
+}
+
+async function computeUnionMasksForReferences(
+  references: readonly ImageGenerationReference[],
+): Promise<ImageGenerationReference[]> {
+  const perSourceMasks = new Map<string, string[]>();
+  for (const reference of references) {
+    if (reference.kind !== "image" || !reference.maskUrl) continue;
+    if (!reference.alias) continue;
+    const list = perSourceMasks.get(reference.alias) ?? [];
+    if (!list.includes(reference.maskUrl)) list.push(reference.maskUrl);
+    perSourceMasks.set(reference.alias, list);
+  }
+  const combinedByAlias = new Map<string, string>();
+  await Promise.all(
+    Array.from(perSourceMasks.entries()).map(async ([alias, urls]) => {
+      if (urls.length < 2) return;
+      const decoded = await Promise.all(urls.map((url) => fetchMaskBlob(url)));
+      const decodedMasks = (
+        await Promise.all(
+          decoded
+            .filter((blob): blob is Blob => Boolean(blob))
+            .map((blob) => decodeMaskPng(blob)),
+        )
+      ).filter((mask): mask is NonNullable<Awaited<ReturnType<typeof decodeMaskPng>>> =>
+        Boolean(mask),
+      );
+      const union = await unionMaskPngBlob(decodedMasks);
+      if (!union) return;
+      const uploaded = await uploadCombinedMask(union.blob, alias);
+      if (uploaded) combinedByAlias.set(alias, uploaded);
+    }),
+  );
+  if (combinedByAlias.size === 0) return [...references];
+  return references.map((reference) => {
+    if (reference.kind !== "image" || !reference.alias) return reference;
+    const combined = combinedByAlias.get(reference.alias);
+    if (!combined) return reference;
+    return { ...reference, maskUrl: combined };
+  });
 }
 
 interface MentionMatch {
@@ -656,6 +721,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const accent = useGroupAccent(parentId);
   const { hoveredReferenceNodeId, setHoveredReferenceNodeId } = useReferenceHover();
   const [invalidPromptRows, setInvalidPromptRows] = useState<ReadonlySet<string>>(new Set());
+  const [maskPreviewRowId, setMaskPreviewRowId] = useState<string | null>(null);
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
   useEffect(() => {
@@ -694,6 +760,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       connectedImageReferences.map((reference) => ({
         nodeId: reference.nodeId,
         alias: reference.alias,
+        imageUrl: reference.imageUrl,
         masks: reference.masks.map((mask) => ({ id: mask.id, name: mask.name, maskUrl: mask.maskUrl })),
       })),
     [connectedImageReferences],
@@ -918,15 +985,19 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   }
 
   function addPromptRow() {
-    const incompleteRows = promptRows.filter((row) => promptRowMissingFields(row).length > 0);
-    if (incompleteRows.length > 0) {
-      setInvalidPromptRows(new Set(incompleteRows.map((row) => row.id)));
+    // Only validate the last row (the one the user just filled in).
+    // Previous rows are already-committed, separate prompt blocks — don't
+    // re-validate them.
+    const lastRow = promptRows[promptRows.length - 1];
+    if (lastRow && promptRowMissingFields(lastRow).length > 0) {
+      setInvalidPromptRows(new Set([lastRow.id]));
       return;
     }
 
-    const lastRow = promptRows[promptRows.length - 1];
     if (lastRow) appendPromptRowText(lastRow);
-    updatePromptRows([...promptRows, autoMatchedPromptRow()]);
+    // Keep the completed row's fields intact as a visible record. Just
+    // append a fresh empty row for the next entry.
+    updatePromptRows([...promptRows, emptyPromptRow()]);
     setInvalidPromptRows(new Set());
   }
 
@@ -979,6 +1050,8 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     });
     const generationStartedAt = nowMs();
     try {
+      const referencesWithUnionMask =
+        await computeUnionMasksForReferences(allGenerationReferences);
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -990,7 +1063,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           size,
           outputFormat,
           resolution,
-          references: allGenerationReferences,
+          references: referencesWithUnionMask,
           matchSourceSize: data.matchSourceSize === true && hasMaskAttached,
         }),
       });
@@ -1508,16 +1581,30 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                               ? "No mask (optional)"
                               : "mask (optional)")}
                           {selectedMaskReference?.maskUrl ? (
-                            <a
-                              href={selectedMaskReference.maskUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(event) => event.stopPropagation()}
-                              className="nodrag ml-1 text-[10px] text-blue-400 hover:text-blue-300"
-                              title="Open mask PNG"
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onPointerDown={(event: ReactMouseEvent<HTMLSpanElement>) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                                setMaskPreviewRowId(row.id);
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                  event.stopPropagation();
+                                  event.preventDefault();
+                                  setMaskPreviewRowId(row.id);
+                                }
+                              }}
+                              className="nodrag nopan ml-1 cursor-pointer text-[10px] text-blue-400 hover:text-blue-300 underline"
+                              title="Open mask preview"
                             >
                               PNG
-                            </a>
+                            </span>
                           ) : null}
                         </span>
                       </SelectTrigger>
@@ -1597,12 +1684,11 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                     {preview || "@product use collar region change color to @pantone red"}
                   </p>
                   {selectedMaskReference?.maskUrl ? (
-                    <a
-                      href={selectedMaskReference.maskUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="nodrag nopan relative block h-20 w-full overflow-hidden rounded-md border bg-muted"
-                      title="Open mask PNG"
+                    <button
+                      type="button"
+                      onClick={() => setMaskPreviewRowId(row.id)}
+                      className="nodrag nopan relative block h-20 w-full overflow-hidden rounded-md border bg-muted cursor-zoom-in"
+                      title="Open mask preview"
                     >
                       {(() => {
                         const sourceRef = selectedSourceReference?.nodeId
@@ -1628,7 +1714,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                       <span className="absolute bottom-0.5 left-1 rounded bg-black/70 px-1 text-[0.6rem] text-white">
                         mask: {selectedMaskReference.name} (shaded = region to change)
                       </span>
-                    </a>
+                    </button>
                   ) : null}
                   {rowState === "partial" ? (
                     <p className="text-[0.65rem] text-amber-600 dark:text-amber-300">
@@ -1727,6 +1813,155 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       </div>
       <OutputPort color={NODE_PORT_COLORS.generate} />
       <ResizeHandle nodeId={id} width={width} height={height} minWidth={280} minHeight={400} />
+      {(() => {
+        if (!maskPreviewRowId) return null;
+        const row = promptRows.find((r) => r.id === maskPreviewRowId);
+        if (!row) return null;
+        const masks = masksForPromptSource(promptReferences, row.sourceNodeId);
+        const mask = masks.find((m) => m.id === row.maskId);
+        if (!mask?.maskUrl) return null;
+        const sourceRef = promptReferences.find(
+          (reference) => reference.nodeId === row.sourceNodeId,
+        );
+        return (
+          <MaskPreviewOverlay
+            maskUrl={mask.maskUrl}
+            maskName={mask.name}
+            sourceImageUrl={sourceRef?.imageUrl ?? null}
+            onClose={() => setMaskPreviewRowId(null)}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+function MaskPreviewOverlay({
+  maskUrl,
+  maskName,
+  sourceImageUrl,
+  onClose,
+}: {
+  maskUrl: string;
+  maskName: string;
+  sourceImageUrl: string | null;
+  onClose: () => void;
+}) {
+  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
+  const [highlightDataUrl, setHighlightDataUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setImgSize(null);
+    if (!sourceImageUrl) return;
+    const img = new Image();
+    img.onload = () => setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
+    img.src = sourceImageUrl;
+  }, [sourceImageUrl]);
+  // Mask PNGs follow the OpenAI images.edit convention: transparent pixels (alpha=0)
+  // are the region to regenerate, opaque pixels are preserved. Render the transparent
+  // region as a solid yellow overlay so the user can see the mask region.
+  useEffect(() => {
+    setHighlightDataUrl(null);
+    if (!maskUrl) return;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(img, 0, 0);
+      try {
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        for (let index = 0; index < data.length; index += 4) {
+          const alpha = data[index + 3];
+          if (alpha < 32) {
+            // transparent → region to regenerate → yellow highlight
+            data[index] = 250;
+            data[index + 1] = 204;
+            data[index + 2] = 21;
+            data[index + 3] = 180;
+          } else {
+            // opaque → preserve → no overlay
+            data[index + 3] = 0;
+          }
+        }
+        context.putImageData(imageData, 0, 0);
+        setHighlightDataUrl(canvas.toDataURL("image/png"));
+      } catch {
+        setHighlightDataUrl(null);
+      }
+    };
+    img.onerror = () => setHighlightDataUrl(null);
+    img.src = maskUrl;
+  }, [maskUrl]);
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const aspect = imgSize ? `${imgSize.w} / ${imgSize.h}` : "1 / 1";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-h-full max-w-3xl overflow-auto rounded-lg border bg-background p-3 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close mask preview"
+          className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+        >
+          <X className="size-4" />
+        </button>
+        <div className="mb-2 flex items-center gap-2 pr-8">
+          <span className="text-sm font-medium">Mask preview</span>
+          <span className="text-muted-foreground text-xs">· {maskName}</span>
+        </div>
+        <div
+          className="relative w-full overflow-hidden rounded-md border bg-muted"
+          style={{ aspectRatio: aspect, maxHeight: "70vh", maxWidth: "100%" }}
+        >
+          {/* Mask highlight layer (bottom, full opacity so the yellow region reads). */}
+          {highlightDataUrl ? (
+            <img
+              src={highlightDataUrl}
+              alt={`Mask ${maskName} highlight`}
+              className="absolute inset-0 z-0 h-full w-full object-contain"
+              draggable={false}
+            />
+          ) : (
+            <img
+              src={maskUrl}
+              alt={`Mask ${maskName}`}
+              className="absolute inset-0 z-0 h-full w-full object-contain opacity-60 mix-blend-screen"
+              draggable={false}
+            />
+          )}
+          {/* Source image on top at 50% so the object stays visible without
+              burying the yellow mask region underneath. */}
+          {sourceImageUrl ? (
+            <img
+              src={sourceImageUrl}
+              alt="source"
+              className="absolute inset-0 z-10 h-full w-full object-contain opacity-50"
+              draggable={false}
+            />
+          ) : null}
+        </div>
+        <p className="text-muted-foreground mt-2 text-[0.7rem]">
+          Yellow = region the model will regenerate. Unmarked area = pixel-identical to source.
+        </p>
+      </div>
     </div>
   );
 }
