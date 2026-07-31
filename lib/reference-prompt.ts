@@ -211,12 +211,13 @@ export function compileReferencePrompt(
   ].filter((constraint): constraint is string => Boolean(constraint));
   const maskConstraint = maskCarrier
     ? [
-        "Mask constraint:",
-        `- An alpha-channel mask is attached alongside @${maskCarrier.alias}.`,
-        `- The mask is transparent (alpha = 0) in the region to regenerate, and fully opaque (alpha = 255) in the region to preserve.`,
-        `- Apply the requested edit ONLY inside the transparent region of the mask.`,
-        `- Every pixel outside the transparent region MUST stay pixel-identical to @${maskCarrier.alias}. Do not change color, lighting, background, or any other pixel there.`,
-        `- The mask is registered to @${maskCarrier.alias} at the same pixel dimensions. Ignore any reference to "@${maskCarrier.alias} region" in the prompt as a textual region name — the mask file is the authority on which pixels to edit.`,
+        "MASK CONSTRAINT (HARD — must be obeyed exactly):",
+        `- An alpha-channel mask file is attached to this edit request alongside @${maskCarrier.alias}.`,
+        `- Mask convention: FULLY TRANSPARENT pixels (alpha = 0) mark the ONLY pixels you are allowed to modify. FULLY OPAQUE pixels (alpha = 255) mark pixels that MUST remain pixel-identical to @${maskCarrier.alias} in color, value, lighting, texture, and position.`,
+        `- The transparent region is small and precise. Treat it as a literal pixel-level boundary: do NOT expand the edit beyond the transparent area, do NOT bleed, do NOT feather the change into nearby pixels.`,
+        `- Do NOT interpret the mask as a rough guide. It is an exact selection. Any pixel you modify outside the transparent region is a failure.`,
+        `- Disregard any region-name words (e.g. "lol region", "u region", "collar region") in the prompt as positional guidance — the mask is the single source of truth for WHICH pixels to edit. Use those words only to understand WHAT to do (e.g. recolor, retexure) inside the mask.`,
+        `- Keep the rest of @${maskCarrier.alias} (the opaque area) bit-for-bit unchanged. Do not recolor it, do not relight it, do not alter the background or any other letter, shape, or pixel.`,
       ].join("\n")
     : null;
 

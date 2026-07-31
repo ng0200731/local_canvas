@@ -86,6 +86,7 @@ export interface XiangsuGenerateInput {
   outputFormat: ImageGenerationOutputFormat;
   resolution: ImageGenerationResolution;
   references: ImageGenerationReference[];
+  matchSourceSize?: boolean;
 }
 
 export interface XiangsuGenerateOutput {
@@ -215,12 +216,57 @@ async function appendEditImages(
   imageUrls: readonly string[],
   fetcher: typeof fetch,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<{ width: number; height: number } | null> {
+  let firstImageDimensions: { width: number; height: number } | null = null;
   for (const [index, imageUrl] of imageUrls.entries()) {
     const blob = await blobFromReferenceUrl(imageUrl, fetcher, signal);
     const extension = extensionForMimeType(blob.type);
     form.append("image", blob, `reference-${index + 1}.${extension}`);
+    if (index === 0) {
+      firstImageDimensions = await imageDimensions(blob);
+    }
   }
+  return firstImageDimensions;
+}
+
+async function imageDimensions(blob: Blob): Promise<{ width: number; height: number } | null> {
+  try {
+    const buffer = Buffer.from(await blob.arrayBuffer());
+    // PNG: bytes 16..24 are width/height big-endian 32-bit.
+    if (buffer.length >= 24 && buffer.slice(0, 8).toString("hex") === "89504e470d0a1a0a") {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    // JPEG: scan SOF0 (0xFFC0) marker for dimensions.
+    if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+      let offset = 2;
+      while (offset < buffer.length - 1) {
+        if (buffer[offset] !== 0xff) break;
+        const marker = buffer[offset + 1];
+        const segmentStart = offset + 2;
+        if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2 || marker === 0xc3) {
+          if (segmentStart + 7 <= buffer.length) {
+            const height = buffer.readUInt16BE(segmentStart + 3);
+            const width = buffer.readUInt16BE(segmentStart + 5);
+            return { width, height };
+          }
+          break;
+        }
+        if (marker === 0xd8 || marker === 0xd9) break;
+        if (segmentStart + 1 >= buffer.length) break;
+        const segmentLength = buffer.readUInt16BE(segmentStart);
+        offset = segmentStart + segmentLength;
+      }
+    }
+    // WebP: RIFF header at 0, dimensions in VP8/VP8L chunk.
+    if (buffer.length >= 30 && buffer.slice(0, 4).toString("ascii") === "RIFF") {
+      const stride = buffer.readUInt16LE(20);
+      const height = buffer.readUInt16LE(22);
+      if (stride && height) return { width: stride & 0x3fff, height };
+    }
+  } catch {
+    // fall through to null
+  }
+  return null;
 }
 
 function isOpenAiEditEligible(input: XiangsuGenerateInput): boolean {
@@ -273,11 +319,13 @@ export function createXiangsuImageGenerator({
 
       const systemPrompt = input.systemPrompt?.trim();
       const basePrompt = systemPrompt ? `${systemPrompt}\n\n${compiled.prompt}` : compiled.prompt;
-      const specSuffix = isGptModel
+      const specSuffix = isGptModel && !input.matchSourceSize
         ? `\n\n图像输出规格：必须严格按 ${aspectRatioForImageGenerationSize(
             input.size,
           )} 宽高比生成，输出分辨率必须为 ${gptSize}。不要因为参考图尺寸改变最终画幅。`
-        : "";
+        : isGptModel
+          ? `\n\n图像输出规格：输出画幅与参考图1保持完全一致的尺寸和宽高比，不进行任何裁剪或缩放。`
+          : "";
       const promptWithSpec = `${basePrompt}${specSuffix}`;
 
       const response = isGemini
@@ -310,11 +358,15 @@ export function createXiangsuImageGenerator({
               form.append("model", input.model);
               form.append("prompt", promptWithSpec);
               form.append("n", "1");
-              form.append("size", gptSize);
               form.append("quality", gptQuality);
               form.append("response_format", "b64_json");
               form.append("output_format", gptOutputFormat);
-              await appendEditImages(form, compiled.imageUrls, fetcher, controller.signal);
+              const firstImageDimensions = await appendEditImages(
+                form,
+                compiled.imageUrls,
+                fetcher,
+                controller.signal,
+              );
               if (compiled.maskUrl) {
                 const maskBlob = await blobFromReferenceUrl(
                   compiled.maskUrl,
@@ -322,6 +374,13 @@ export function createXiangsuImageGenerator({
                   controller.signal,
                 );
                 form.append("mask", maskBlob, "mask.png");
+                if (input.matchSourceSize && firstImageDimensions) {
+                  form.append("size", `${firstImageDimensions.width}x${firstImageDimensions.height}`);
+                } else {
+                  form.append("size", gptSize);
+                }
+              } else {
+                form.append("size", gptSize);
               }
 
               const editUrl = env.OPENAI_API_KEY

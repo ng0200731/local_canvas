@@ -737,6 +737,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     );
   const hasReferenceItems = connectedReferences.length > 0 || manualImageReferences.length > 0;
   const hasGenerationReferences = allGenerationReferences.length > 0;
+  const hasMaskAttached = allGenerationReferences.some(
+    (reference) => reference.kind === "image" && Boolean(reference.maskUrl),
+  );
   const model = normalizeImageGenerationModel(data.model);
   const provider = providerForModel(model);
   const size = normalizeImageGenerationSize(data.size ?? DEFAULT_IMAGE_GENERATION_SIZE);
@@ -988,6 +991,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           outputFormat,
           resolution,
           references: allGenerationReferences,
+          matchSourceSize: data.matchSourceSize === true && hasMaskAttached,
         }),
       });
       if (!isGenerationRunCurrent(id, run.runId)) return;
@@ -1288,6 +1292,22 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           {selectedModel.officialName}
           {provider === "gpt" ? " · output pinned to PNG" : null}
         </p>
+
+        {hasGenerationReferences && hasMaskAttached ? (
+          <label className="nodrag nopan flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={Boolean(data.matchSourceSize)}
+              disabled={isGenerating}
+              onChange={(event) =>
+                updateNodeData(id, { matchSourceSize: event.target.checked })
+              }
+            />
+            <span>
+              Match source size (recommended with mask)
+            </span>
+          </label>
+        ) : null}
 
         <div className="flex flex-col gap-1">
           <label className="text-muted-foreground text-xs">System prompt</label>

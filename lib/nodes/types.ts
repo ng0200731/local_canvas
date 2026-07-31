@@ -122,6 +122,10 @@ export interface GenerateNodeData {
   resolution?: ImageGenerationResolution;
   systemPrompt?: string;
   references: string[];
+  /** When true and a mask is attached, the edit request sets `size` to the
+   * source image's exact pixel dimensions (preserves aspect + spatial
+   * alignment with the mask). When false, uses the selected `size`/`resolution`. */
+  matchSourceSize?: boolean;
   status: "idle" | "loading" | "error" | "done";
   resultUrl: string | null;
   error?: string;

@@ -231,6 +231,7 @@ export const imageGenerationRequestSchema = z.object({
     .max(MAX_IMAGE_GENERATION_REFERENCES)
     .optional()
     .default([]),
+  matchSourceSize: z.boolean().optional().default(false),
 });
 
 export const DEFAULT_IMAGE_GENERATION_MODEL: ImageGenerationModelId = "gpt-image-2";
