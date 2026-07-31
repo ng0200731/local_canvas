@@ -60,7 +60,9 @@ import {
   type GeneratePromptSourceReference,
 } from "@/lib/generate-prompt";
 import { isAbortError } from "@/lib/generation-run";
+import { imageOutputSpecLine } from "@/lib/image-generation-spec";
 import { decodeMaskPng, unionMaskPngBlob } from "@/lib/mask-union";
+import { compileReferencePrompt } from "@/lib/reference-prompt";
 import { persistGeneratedImage } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
@@ -225,6 +227,7 @@ function hasImageUrl(reference: ConnectedInputReference): reference is Connected
 
 function toGenerationReference(
   reference: ConnectedInputReference,
+  selectedMaskUrl?: string,
 ): ImageGenerationReference | null {
   if (reference.kind === "image") {
     const entry: ImageGenerationReference = {
@@ -232,11 +235,11 @@ function toGenerationReference(
       alias: reference.alias,
       url: reference.imageUrl,
     };
-    const attachedMaskUrl = reference.masks
-      .map((mask) => mask.maskUrl)
-      .find((url): url is string => typeof url === "string" && url.length > 0);
-    if (attachedMaskUrl) {
-      entry.maskUrl = attachedMaskUrl;
+    // Use the user-selected mask from the prompt row, NOT the first mask
+    // on the source node. The prompt row's Mask dropdown is the source of
+    // truth for which mask applies to this edit.
+    if (selectedMaskUrl && selectedMaskUrl.length > 0) {
+      entry.maskUrl = selectedMaskUrl;
     }
     return entry;
   }
@@ -722,6 +725,7 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
   const { hoveredReferenceNodeId, setHoveredReferenceNodeId } = useReferenceHover();
   const [invalidPromptRows, setInvalidPromptRows] = useState<ReadonlySet<string>>(new Set());
   const [maskPreviewRowId, setMaskPreviewRowId] = useState<string | null>(null);
+  const [showLogOverlay, setShowLogOverlay] = useState(false);
   const width = data.width ?? DEFAULT_WIDTH;
   const height = data.height ?? DEFAULT_HEIGHT;
   useEffect(() => {
@@ -792,8 +796,31 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
     [connectedImageReferences],
   );
   const manualImageReferences = data.references.filter((url) => !connectedReferenceUrls.has(url));
+  // For each connected source image, find the mask URL selected in *any*
+  // prompt row pointing at that source. If multiple rows reference the same
+  // source, the last row wins (rare in practice; matches the row-merge logic).
+  const selectedMaskUrlBySourceNode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of promptRows) {
+      if (!row.sourceNodeId || !row.maskId) continue;
+      const source = promptReferences.find((r) => r.nodeId === row.sourceNodeId);
+      if (!source) continue;
+      const mask = source.masks.find((m) => m.id === row.maskId);
+      if (mask?.maskUrl) {
+        map.set(row.sourceNodeId, mask.maskUrl);
+      }
+    }
+    return map;
+  }, [promptRows, promptReferences]);
   const allGenerationReferences = connectedReferences
-    .map(toGenerationReference)
+    .map((reference) =>
+      toGenerationReference(
+        reference,
+        reference.kind === "image"
+          ? selectedMaskUrlBySourceNode.get(reference.nodeId)
+          : undefined,
+      ),
+    )
     .filter((reference): reference is ImageGenerationReference => reference !== null)
     .concat(
       manualImageReferences.map((url, index) => ({
@@ -819,6 +846,40 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       DEFAULT_IMAGE_GENERATION_RESOLUTION,
   );
   const systemPrompt = typeof data.systemPrompt === "string" ? data.systemPrompt : "";
+  const previewFinalPrompt = useMemo(() => {
+    if (!allGenerationReferences.length) return "";
+    const rowPrompt = compileGeneratePromptRows(promptRows, promptReferences).trim();
+    const existingPrompt = data.prompt.trim();
+    const missingRows = rowPrompt
+      .split("\n")
+      .filter(
+        (line) =>
+          line.trim() &&
+          !existingPrompt.split("\n").some((existing) => existing.trim() === line.trim()),
+      );
+    const mergedPrompt = [existingPrompt, ...missingRows].filter(Boolean).join("\n");
+    if (!mergedPrompt) return "";
+    const compiled = compileReferencePrompt(mergedPrompt, allGenerationReferences);
+    const spec = imageOutputSpecLine({
+      isGptModel: model.startsWith("gpt-image"),
+      matchSourceSize: data.matchSourceSize === true,
+      size,
+      resolution,
+    });
+    const systemPromptText = systemPrompt.trim();
+    const base = systemPromptText ? `${systemPromptText}\n\n${compiled.prompt}` : compiled.prompt;
+    return `${base}${spec}`;
+  }, [
+    allGenerationReferences,
+    promptRows,
+    promptReferences,
+    data.prompt,
+    data.matchSourceSize,
+    systemPrompt,
+    model,
+    size,
+    resolution,
+  ]);
   const geminiVersion = geminiVersionForModel(model);
   const selectedModel = getModelCatalogEntry(model);
   const isGenerating = data.status === "loading";
@@ -1111,6 +1172,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       toast.error(message);
     } finally {
       finishGenerationRun(id, run.runId);
+      // Auto-open the log overlay so the user can inspect exactly what was
+      // sent to the model — without needing the terminal.
+      setShowLogOverlay(true);
     }
   }
 
@@ -1749,6 +1813,17 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           </span>
         </div>
 
+        <div className="grid gap-1">
+          <details className="nodrag nopan rounded-md border bg-background/60 p-2 text-xs">
+            <summary className="text-muted-foreground cursor-pointer select-none text-xs">
+              Preview final prompt sent to model
+            </summary>
+            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 text-[0.7rem] leading-5">
+              {previewFinalPrompt || "(Connect a reference and enter a prompt to preview.)"}
+            </pre>
+          </details>
+        </div>
+
         <ConfirmDialog
           title={connectedOutputHasImage ? "Replace output image?" : "Generate image?"}
           description={
@@ -1785,6 +1860,14 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
             {allGenerationReferences.length === 1 ? "" : "s"} will guide this generation.
           </p>
         )}
+        <button
+          type="button"
+          onClick={() => setShowLogOverlay(true)}
+          className="nodrag nopan text-left text-[0.65rem] text-blue-500 underline hover:text-blue-400"
+          title="Open the most recent request/response sent to the AI model"
+        >
+          View last generate request →
+        </button>
         {allGenerationReferences.length > MAX_IMAGE_GENERATION_REFERENCES && (
           <p className="text-xs text-amber-700 dark:text-amber-400">
             Remove references until there are no more than {MAX_IMAGE_GENERATION_REFERENCES}.
@@ -1813,6 +1896,9 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       </div>
       <OutputPort color={NODE_PORT_COLORS.generate} />
       <ResizeHandle nodeId={id} width={width} height={height} minWidth={280} minHeight={400} />
+      {showLogOverlay ? (
+        <GenerateLogOverlay onClose={() => setShowLogOverlay(false)} />
+      ) : null}
       {(() => {
         if (!maskPreviewRowId) return null;
         const row = promptRows.find((r) => r.id === maskPreviewRowId);
@@ -1960,6 +2046,103 @@ function MaskPreviewOverlay({
         </div>
         <p className="text-muted-foreground mt-2 text-[0.7rem]">
           Yellow = region the model will regenerate. Unmarked area = pixel-identical to source.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+interface GenerateLogEntry {
+  id: string;
+  timestamp: number;
+  ok: boolean;
+  request: unknown;
+  response?: unknown;
+  error?: string;
+  durationMs?: number;
+}
+
+function GenerateLogOverlay({ onClose }: { onClose: () => void }) {
+  const [entries, setEntries] = useState<readonly GenerateLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = () => {
+    setLoading(true);
+    setError(null);
+    fetch("/api/generate-log", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { entries: readonly GenerateLogEntry[] }) => {
+        setEntries(data.entries ?? []);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load log");
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const latest = entries[0];
+  const jsonText = latest
+    ? JSON.stringify(latest, null, 2)
+    : "No generate log entries yet. Click Generate first.";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-h-[85vh] max-w-4xl overflow-auto rounded-lg border bg-background p-3 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close generate log"
+          className="absolute right-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+        >
+          <X className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={refresh}
+          className="nodrag nopan absolute right-12 top-2 z-10 inline-flex h-8 items-center rounded-full bg-black/60 px-3 text-xs text-white hover:bg-black/80"
+        >
+          Refresh
+        </button>
+        <div className="mb-2 flex items-center gap-2 pr-24">
+          <span className="text-sm font-medium">Generate request log</span>
+          <span className="text-muted-foreground text-xs">
+            · {entries.length} entr{entries.length === 1 ? "y" : "ies"} · showing most recent
+          </span>
+        </div>
+        {loading ? (
+          <p className="text-muted-foreground text-sm">Loading…</p>
+        ) : error ? (
+          <p className="text-sm text-red-500">{error}</p>
+        ) : (
+          <textarea
+            readOnly
+            value={jsonText}
+            className="nodrag nopan h-[60vh] w-full resize-none rounded-md border bg-muted p-3 font-mono text-[0.7rem] leading-snug"
+            onClick={(event) => event.currentTarget.select()}
+          />
+        )}
+        <p className="text-muted-foreground mt-2 text-[0.7rem]">
+          Click the textarea to select all, then Ctrl+C to copy. Paste back to Claude.
         </p>
       </div>
     </div>

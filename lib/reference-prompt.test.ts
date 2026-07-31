@@ -89,4 +89,24 @@ describe("reference prompt compiler", () => {
       "apply that change uniformly across the entire transparent area",
     );
   });
+
+  it("emits the object/material constraint when the prompt mentions 'object' and a second image", () => {
+    const compiled = compileReferencePrompt(
+      "- @product use 3 region change object to @elastic",
+      [
+        {
+          kind: "image",
+          alias: "product",
+          url: "https://images.example/product.png",
+          maskUrl: "https://images.example/3-mask.png",
+        },
+        { kind: "image", alias: "elastic", url: "https://images.example/elastic.png" },
+      ],
+    );
+
+    expect(compiled.prompt).toContain("Object/material-transfer constraint:");
+    expect(compiled.prompt).toContain("Use @product as the target/base image");
+    expect(compiled.prompt).toContain("Use @elastic only as the source of the new object");
+    expect(compiled.prompt).toContain("Preserve @product's overall silhouette");
+  });
 });

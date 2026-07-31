@@ -118,7 +118,7 @@ function mentionIndex(prompt: string, alias: string): number {
   return prompt.toLocaleLowerCase().indexOf(`@${alias.toLocaleLowerCase()}`);
 }
 
-function orderedReferences(
+export function orderedReferences(
   prompt: string,
   references: readonly ProviderImageReference[],
 ): ProviderImageReference[] {
@@ -188,16 +188,67 @@ function colorTransferConstraint(
   ].join("\n");
 }
 
+function objectOrMaterialConstraint(
+  prompt: string,
+  references: readonly ProviderImageReference[],
+  droppedForMask: readonly ProviderImageReference[] = [],
+): string | null {
+  if (!/\b(object|material|part|piece|handle|strap|button|zipper|panel|region)\b/i.test(prompt)) {
+    return null;
+  }
+  // Include dropped references in the mention search so constraints still
+  // fire when a texture image was dropped due to a mask being attached.
+  const pool = [...references, ...droppedForMask];
+  const mentioned = mentionedReferences(prompt, pool);
+  if (mentioned.length < 2) return null;
+
+  const [target, source] = mentioned;
+  const maskClause = `Only the pixels inside an attached alpha mask (transparent = edit) may change. If no mask is attached, do not edit @${target.alias} at all — refuse rather than drifting.`;
+  const sourceNote =
+    droppedForMask.length > 0 && droppedForMask.some((reference) => reference.alias === source.alias)
+      ? `\n- @${source.alias} is provided by name only (no attached image). Infer the material/style from the alias name and apply it inside the mask region.`
+      : null;
+  return [
+    "Object/material-transfer constraint:",
+    `- Use @${target.alias} as the target/base image (the object you are editing).`,
+    `- Use @${source.alias} only as the source of the new object, material, or part shape — not as a replacement for the whole product.`,
+    `- Preserve @${target.alias}'s overall silhouette, construction, proportions, framing, lighting, background, and surrounding context.`,
+    `- Match @${target.alias}'s original light direction, highlights, and shadows inside the masked region. Do not introduce new lighting.`,
+    `- ${maskClause}`,
+    `- Do not replace @${target.alias} with an unrelated product, do not relight the unmasked area, and do not alter letters, logos, or shapes outside the masked region.`,
+    sourceNote,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
 export function compileReferencePrompt(
   userPrompt: string,
   references: readonly ImageGenerationReference[],
 ): CompiledReferencePrompt {
-  const ordered = orderedReferences(userPrompt, referencesForProvider(references));
+  let ordered = orderedReferences(userPrompt, referencesForProvider(references));
   if (ordered.length === 0) {
     return { prompt: userPrompt, imageUrls: [] };
   }
 
+  // OpenAI images.edit applies the mask only to image[0]. When a mask is
+  // attached, drop additional image references from the wire payload —
+  // the provider ignores the mask when multiple images are sent. Keep the
+  // non-image references (pantone swatches) and preserve their names in the
+  // prompt mapping so the model still has the @alias context as text.
   const maskCarrier = ordered.find((reference) => reference.maskUrl);
+  let droppedForMask: ProviderImageReference[] = [];
+  if (maskCarrier) {
+    ordered = [maskCarrier, ...ordered.filter((reference) => reference !== maskCarrier)];
+    const extraImages = ordered
+      .filter((reference) => reference !== maskCarrier && reference.source === "image");
+    if (extraImages.length > 0) {
+      droppedForMask = extraImages;
+      ordered = ordered.filter(
+        (reference) => reference === maskCarrier || reference.source !== "image",
+      );
+    }
+  }
 
   const mapping = ordered
     .map(
@@ -205,9 +256,23 @@ export function compileReferencePrompt(
         `- Provider image ${index + 1} is @${reference.alias}: ${reference.description}`,
     )
     .join("\n");
+  // When we drop image references because a mask is attached, surface their
+  // names in the prompt so the model still has context for those @aliases
+  // (e.g. "@elastic" becomes a textual material cue rather than an image).
+  const droppedNote =
+    maskCarrier && droppedForMask.length > 0
+      ? [
+          "Additional reference images not attached to this edit (known by name only):",
+          ...droppedForMask.map(
+            (reference) =>
+              `- @${reference.alias}: treat as a textual material/style cue. Infer its meaning from the alias name and apply that material or style inside the mask region. Do not require an actual image of @${reference.alias} to be attached.`,
+          ),
+        ].join("\n")
+      : null;
   const constraints = [
     textureTransferConstraint(userPrompt, ordered),
     colorTransferConstraint(userPrompt, ordered),
+    objectOrMaterialConstraint(userPrompt, ordered, droppedForMask),
   ].filter((constraint): constraint is string => Boolean(constraint));
   const maskConstraint = maskCarrier
     ? [
@@ -233,6 +298,7 @@ export function compileReferencePrompt(
       "",
       "Resolve every @alias using the mapping above and the attached provider images in the same order. Do not interpret an @alias as unrelated text.",
       "When the instruction asks to change color, edit provider image 1 as the base image. Later provider images are references only.",
+      droppedNote,
       ...constraints,
       maskConstraint,
     ]

@@ -7,6 +7,7 @@ import {
   type XiangsuGenerateInput,
   type XiangsuGenerateOutput,
 } from "@/lib/xiangsu";
+import { writeGenerateLog } from "@/lib/generate-log-store";
 
 export const runtime = "nodejs";
 
@@ -40,9 +41,27 @@ export function createGeneratePostHandler({ configured, generate }: GenerateRout
     }
 
     try {
-      return NextResponse.json(await generate(parsed.data, request.signal));
+      const startedAt = Date.now();
+      const result = await generate(parsed.data, request.signal);
+      writeGenerateLog({
+        ok: true,
+        request: parsed.data,
+        compiledPrompt: result.diagnostics?.compiledPrompt,
+        resolvedReferences: result.diagnostics?.resolvedReferences,
+        formFields: result.diagnostics?.formFields,
+        response: { url: result.url, model: result.model },
+        durationMs: Date.now() - startedAt,
+      });
+      // Strip diagnostics from the client response — they're for the log only.
+      const { diagnostics: _omit, ...clientResult } = result;
+      return NextResponse.json(clientResult);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed.";
+      writeGenerateLog({
+        ok: false,
+        request: parsed.data,
+        error: message,
+      });
       return NextResponse.json({ error: message }, { status: 502 });
     }
   };

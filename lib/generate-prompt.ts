@@ -88,8 +88,11 @@ export function generatePromptRowText(
   const source = references.find((reference) => reference.nodeId === row.sourceNodeId);
   const mask = source?.masks.find((candidate) => candidate.id === row.maskId);
   const sourceToken = source ? `@${source.alias}` : "";
-  const target = row.targetText.trim();
-  const maskTokens = mask ? ["use", mask.name, "region"] : [];
+  const target = row.targetText
+    .trim()
+    .replace(/^change\s+to\s+/i, "")
+    .replace(/^change\s+/i, "");
+  const maskTokens = mask ? ["use", `${mask.name} png file mask`] : [];
   return [sourceToken, ...maskTokens, "change", row.changeType, "to", target]
     .filter(Boolean)
     .join(" ");
