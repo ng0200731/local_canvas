@@ -15,6 +15,7 @@ import {
   geminiImageSizeForResolution,
   gptImageQualityForResolution,
   gptImageSizeForResolution,
+  sizeWithinProviderBounds,
   xiangsuImageModelIdSchema,
 } from "@/lib/image-generation-models";
 import { imageOutputSpecLine } from "@/lib/image-generation-spec";
@@ -256,37 +257,8 @@ async function appendEditImages(
 async function imageDimensions(blob: Blob): Promise<{ width: number; height: number } | null> {
   try {
     const buffer = Buffer.from(await blob.arrayBuffer());
-    // PNG: bytes 16..24 are width/height big-endian 32-bit.
-    if (buffer.length >= 24 && buffer.slice(0, 8).toString("hex") === "89504e470d0a1a0a") {
-      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
-    }
-    // JPEG: scan SOF0 (0xFFC0) marker for dimensions.
-    if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
-      let offset = 2;
-      while (offset < buffer.length - 1) {
-        if (buffer[offset] !== 0xff) break;
-        const marker = buffer[offset + 1];
-        const segmentStart = offset + 2;
-        if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2 || marker === 0xc3) {
-          if (segmentStart + 7 <= buffer.length) {
-            const height = buffer.readUInt16BE(segmentStart + 3);
-            const width = buffer.readUInt16BE(segmentStart + 5);
-            return { width, height };
-          }
-          break;
-        }
-        if (marker === 0xd8 || marker === 0xd9) break;
-        if (segmentStart + 1 >= buffer.length) break;
-        const segmentLength = buffer.readUInt16BE(segmentStart);
-        offset = segmentStart + segmentLength;
-      }
-    }
-    // WebP: RIFF header at 0, dimensions in VP8/VP8L chunk.
-    if (buffer.length >= 30 && buffer.slice(0, 4).toString("ascii") === "RIFF") {
-      const stride = buffer.readUInt16LE(20);
-      const height = buffer.readUInt16LE(22);
-      if (stride && height) return { width: stride & 0x3fff, height };
-    }
+    const meta = await sharp(buffer).metadata();
+    if (meta.width && meta.height) return { width: meta.width, height: meta.height };
   } catch {
     // fall through to null
   }
@@ -437,7 +409,8 @@ export function createXiangsuImageGenerator({
                 }
                 form.append("mask", maskBlob, "mask.png");
                 if (input.matchSourceSize && firstImageDimensions) {
-                  form.append("size", `${firstImageDimensions.width}x${firstImageDimensions.height}`);
+                  const providerSize = sizeWithinProviderBounds(firstImageDimensions);
+                  form.append("size", `${providerSize.width}x${providerSize.height}`);
                 } else {
                   form.append("size", gptSize);
                 }
@@ -714,8 +687,10 @@ async function runMaskedTextureTransfer(
   const maskBuffer = Buffer.from(await maskBlob.arrayBuffer());
   const baseDims = await imageDimensions(baseBlob);
 
-  // Compute the mask's bounding box for the final composite step.
-  let bbox: { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } | null = null;
+  // Compute the mask's bounding box (in the mask PNG's native coordinate
+  // space) for the final composite step. The composite function rescales
+  // these coordinates to the base image's dimensions.
+  let bbox: { sourceWidth: number; sourceHeight: number; minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } | null = null;
   if (baseDims) {
     bbox = await maskBbox(maskBuffer, baseDims.width, baseDims.height);
   }
@@ -744,7 +719,8 @@ async function runMaskedTextureTransfer(
   form.append("image[]", new Blob([new Uint8Array(baseBuffer)], { type: "image/png" }), "base.png");
   form.append("image[]", new Blob([new Uint8Array(textureBuffer)], { type: "image/png" }), "texture.png");
   if (input.matchSourceSize && baseDims) {
-    form.append("size", `${baseDims.width}x${baseDims.height}`);
+    const providerSize = sizeWithinProviderBounds(baseDims);
+    form.append("size", `${providerSize.width}x${providerSize.height}`);
   } else {
     form.append("size", gptSize);
   }
@@ -756,8 +732,9 @@ async function runMaskedTextureTransfer(
   if (bbox) {
     finalBuffer = await compositeOutsideBbox(baseBuffer, result.buffer, bbox, 4);
   } else if (baseDims) {
+    const providerSize = sizeWithinProviderBounds(baseDims);
     finalBuffer = await sharp(result.buffer)
-      .resize(baseDims.width, baseDims.height, { fit: "fill" })
+      .resize(providerSize.width, providerSize.height, { fit: "fill" })
       .png()
       .toBuffer();
   } else {

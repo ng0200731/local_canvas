@@ -3,6 +3,9 @@ import "server-only";
 import sharp from "sharp";
 
 export interface MaskBbox {
+  /** Bbox coordinate space (the mask PNG's native size). */
+  sourceWidth: number;
+  sourceHeight: number;
   minX: number;
   minY: number;
   maxX: number;
@@ -48,6 +51,8 @@ export async function maskBbox(
   }
   if (maxX < 0) return null;
   return {
+    sourceWidth: width,
+    sourceHeight: height,
     minX,
     minY,
     maxX,
@@ -77,6 +82,19 @@ export async function compositeOutsideBbox(
   const height = baseMeta.height ?? 0;
   if (!width || !height) throw new Error("compositeOutsideBbox: base has no dimensions.");
 
+  const bboxScaled: MaskBbox = {
+    sourceWidth: width,
+    sourceHeight: height,
+    minX: Math.round((bbox.minX * width) / bbox.sourceWidth),
+    minY: Math.round((bbox.minY * height) / bbox.sourceHeight),
+    maxX: Math.round((bbox.maxX * width) / bbox.sourceWidth),
+    maxY: Math.round((bbox.maxY * height) / bbox.sourceHeight),
+    width: 0,
+    height: 0,
+  };
+  bboxScaled.width = bboxScaled.maxX - bboxScaled.minX + 1;
+  bboxScaled.height = bboxScaled.maxY - bboxScaled.minY + 1;
+
   // Resize model output to match base dims.
   const editedResized = await sharp(editedBuffer)
     .resize(width, height, { fit: "fill" })
@@ -94,15 +112,15 @@ export async function compositeOutsideBbox(
   // (plus feather), linear ramp across the feather band.
   const channels = 4;
   const out = Buffer.from(baseRaw);
-  const featherClamped = Math.max(0, Math.min(feather, Math.floor(Math.min(bbox.width, bbox.height) / 4)));
+  const featherClamped = Math.max(0, Math.min(feather, Math.floor(Math.min(bboxScaled.width, bboxScaled.height) / 4)));
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       // Distance to bbox edge (positive = inside).
       const distInside = Math.min(
-        x - bbox.minX,
-        bbox.maxX - x,
-        y - bbox.minY,
-        bbox.maxY - y,
+        x - bboxScaled.minX,
+        bboxScaled.maxX - x,
+        y - bboxScaled.minY,
+        bboxScaled.maxY - y,
       );
       let weight: number;
       if (distInside < 0) {

@@ -44,7 +44,16 @@ describe("maskBbox", () => {
   it("returns the bounding box of the transparent region", async () => {
     const mask = await makeMaskPng(20, 30, { x: 5, y: 8, w: 6, h: 10 });
     const bbox = await maskBbox(mask, 20, 30);
-    expect(bbox).toEqual({ minX: 5, minY: 8, maxX: 10, maxY: 17, width: 6, height: 10 });
+    expect(bbox).toEqual({
+      sourceWidth: 20,
+      sourceHeight: 30,
+      minX: 5,
+      minY: 8,
+      maxX: 10,
+      maxY: 17,
+      width: 6,
+      height: 10,
+    });
   });
 
   it("returns null when the mask has no transparent region", async () => {
@@ -60,7 +69,16 @@ describe("compositeOutsideBbox", () => {
   it("keeps base pixels outside the bbox and takes edited pixels inside", async () => {
     const base = await makeSolidPng(20, 20, 0, 0, 0); // black
     const edited = await makeSolidPng(20, 20, 255, 255, 255); // white
-    const bbox = { minX: 5, minY: 5, maxX: 14, maxY: 14, width: 10, height: 10 };
+    const bbox = {
+      sourceWidth: 20,
+      sourceHeight: 20,
+      minX: 5,
+      minY: 5,
+      maxX: 14,
+      maxY: 14,
+      width: 10,
+      height: 10,
+    };
     const out = await compositeOutsideBbox(base, edited, bbox, 0);
 
     const { data } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
@@ -78,7 +96,16 @@ describe("compositeOutsideBbox", () => {
   it("feathers the boundary when feather > 0", async () => {
     const base = await makeSolidPng(20, 20, 0, 0, 0);
     const edited = await makeSolidPng(20, 20, 255, 255, 255);
-    const bbox = { minX: 5, minY: 5, maxX: 14, maxY: 14, width: 10, height: 10 };
+    const bbox = {
+      sourceWidth: 20,
+      sourceHeight: 20,
+      minX: 5,
+      minY: 5,
+      maxX: 14,
+      maxY: 14,
+      width: 10,
+      height: 10,
+    };
     const out = await compositeOutsideBbox(base, edited, bbox, 3);
     const { data } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
     // Pixel one step inside the bbox boundary — within feather band, should be partially blended.
@@ -89,5 +116,30 @@ describe("compositeOutsideBbox", () => {
     // Pixel at center of bbox — outside feather band, should be fully edited.
     const centerIdx = (10 * 20 + 10) * 4;
     expect(data[centerIdx]).toBe(255);
+  });
+
+  it("scales bbox coordinates when base size differs from mask source size", async () => {
+    // Base is 40x40 (2x the mask's 20x20 source). Bbox covers (5,5)-(14,14) in
+    // mask space → should be (10,10)-(28,28) in base space.
+    const base = await makeSolidPng(40, 40, 0, 0, 0);
+    const edited = await makeSolidPng(40, 40, 255, 255, 255);
+    const bbox = {
+      sourceWidth: 20,
+      sourceHeight: 20,
+      minX: 5,
+      minY: 5,
+      maxX: 14,
+      maxY: 14,
+      width: 10,
+      height: 10,
+    };
+    const out = await compositeOutsideBbox(base, edited, bbox, 0);
+    const { data } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+    // (5,5) in base space — outside scaled bbox (scaled bbox is 10..28), expect base.
+    const outsideIdx = (5 * 40 + 5) * 4;
+    expect(data[outsideIdx]).toBe(0);
+    // (20,20) in base space — inside scaled bbox, expect edited.
+    const insideIdx = (20 * 40 + 20) * 4;
+    expect(data[insideIdx]).toBe(255);
   });
 });

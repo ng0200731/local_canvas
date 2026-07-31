@@ -147,6 +147,60 @@ function alignToStep(value: number): number {
   return Math.max(IMAGE_SIZE_STEP, Math.round(value / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
 }
 
+/**
+ * Align a width up to the 16-px step. Used when the minimum-pixel constraint
+ * is binding — rounding to nearest can undershoot by up to half a step, so
+ * the dependent dimension is rounded up to guarantee crossing the floor.
+ */
+function alignToStepUp(value: number): number {
+  return Math.max(IMAGE_SIZE_STEP, Math.ceil(value / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
+}
+
+function clampAspect(width: number, height: number): { width: number; height: number } {
+  if (width / height > IMAGE_SIZE_MAX_RATIO) {
+    width = alignToStep(height * IMAGE_SIZE_MAX_RATIO);
+  } else if (height / width > IMAGE_SIZE_MAX_RATIO) {
+    height = alignToStep(width * IMAGE_SIZE_MAX_RATIO);
+  }
+  return { width, height };
+}
+
+/**
+ * Scale an arbitrary pixel size to satisfy the provider's pixel-count bounds
+ * (IMAGE_SIZE_MIN_PIXELS ≤ w*h ≤ IMAGE_SIZE_MAX_PIXELS), preserving aspect
+ * ratio (clamped to IMAGE_SIZE_MAX_RATIO) and aligning to IMAGE_SIZE_STEP.
+ *
+ * Used for `matchSourceSize` requests where the source image's natural
+ * dimensions fall outside the provider's accepted range — e.g. a 450×620
+ * product photo (279k px) is below the 655,360 minimum and would be rejected
+ * with "Invalid image size … total minimum number of pixels … must be at
+ * least 655,360".
+ */
+export function sizeWithinProviderBounds(dims: {
+  width: number;
+  height: number;
+}): { width: number; height: number } {
+  const { width, height } = dims;
+  if (!width || !height) return { width, height };
+  const pixels = width * height;
+
+  if (pixels < IMAGE_SIZE_MIN_PIXELS) {
+    const scale = Math.sqrt(IMAGE_SIZE_MIN_PIXELS / pixels);
+    const newHeight = alignToStepUp(height * scale);
+    const newWidth = alignToStep(newHeight * (width / height));
+    return clampAspect(newWidth, newHeight);
+  }
+
+  if (pixels > IMAGE_SIZE_MAX_PIXELS) {
+    const scale = Math.sqrt(IMAGE_SIZE_MAX_PIXELS / pixels);
+    const newWidth = alignToStep(width * scale);
+    const newHeight = alignToStep(newWidth * (height / width));
+    return clampAspect(newWidth, newHeight);
+  }
+
+  return clampAspect(alignToStep(width), alignToStep(height));
+}
+
 function dynamicGptImageSize(
   ratio: ImageGenerationAspectRatio,
   quality: "low" | "medium" | "high",
