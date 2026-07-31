@@ -392,9 +392,12 @@ function renderMaskPngBlob(
   width: number,
   height: number,
 ): Promise<Blob | null> {
-  // GPT Image 2 mask convention: ALPHA = 0 is the region to regenerate,
-  // ALPHA = 255 is the region to keep. Our `selected[index] > 0` marks the
-  // user's drawn region = the area to change → alpha 0 there, alpha 255 elsewhere.
+  // OpenAI images.edit mask convention (from the docs):
+  //   - Fully transparent pixels (alpha = 0) → region to regenerate.
+  //   - Non-transparent pixels (alpha = 255) → region to preserve.
+  // Our `selected[index] > 0` marks the user-drawn region, i.e. the area to
+  // change. So alpha = 0 there, alpha = 255 everywhere else. Mask must match
+  // the source image's dimensions exactly, which is the caller's responsibility.
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -1072,10 +1075,14 @@ export function ImagePreviewDialog({
           pixelSource,
           { ...draftMask, imageKey: currentImageKey },
           visibleMaskLookup,
-        );
+        ) ?? rasterizeStrokePixels(draftStrokes, imageSize.width, imageSize.height);
       } else {
         selected = rasterizeStrokePixels(draftStrokes, imageSize.width, imageSize.height);
       }
+      // The OpenAI images.edit contract requires the mask PNG to have the
+      // same pixel dimensions as the base image. `imageSize` is the source
+      // image's natural dimensions as loaded in the dialog, which is the
+      // size the server will send to the provider. No resampling needed.
       const blob = await renderMaskPngBlob(selected, imageSize.width, imageSize.height);
       if (!blob) {
         setMaskSaveError("Could not render mask PNG.");

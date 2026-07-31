@@ -70,6 +70,8 @@ const envSchema = z
 
     // ── Xiangsu AI (optional, server-only) ──────────────────────────────
     XIANGSU_API_KEY: optionalString,
+    OPENAI_API_KEY: optionalString,
+    OPENAI_BASE_URL: optionalUrl.default("https://api.openai.com"),
 
     // ── Picture Sherlock CLIP sidecar (optional, server-only) ────────
     PICTURE_SHERLOCK_URL: optionalUrl,
@@ -146,6 +148,8 @@ function loadEnv(): Env {
     LOCAL_USER_ID: process.env.LOCAL_USER_ID,
     NEXT_PUBLIC_LOCAL_POSTGRES: process.env.NEXT_PUBLIC_LOCAL_POSTGRES,
     XIANGSU_API_KEY: process.env.XIANGSU_API_KEY,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
     PICTURE_SHERLOCK_URL: process.env.PICTURE_SHERLOCK_URL,
     PICTURE_SHERLOCK_TIMEOUT_MS: process.env.PICTURE_SHERLOCK_TIMEOUT_MS,
     PICTURE_SHERLOCK_FALLBACK_TO_LOCAL: process.env.PICTURE_SHERLOCK_FALLBACK_TO_LOCAL,
@@ -192,6 +196,10 @@ export const localUserId = env.LOCAL_USER_ID ?? DEFAULT_LOCAL_USER_ID;
 
 /** True when a Xiangsu API key is present (AI image generation active). */
 export const isXiangsuConfigured = Boolean(env.XIANGSU_API_KEY);
+
+/** True when an OpenAI API key is present (allows A/B testing the mask
+ *  contract against the reference OpenAI implementation, bypassing xiangsu). */
+export const isOpenAiConfigured = Boolean(env.OPENAI_API_KEY);
 
 /** True when the Picture Sherlock CLIP sidecar is configured. */
 export const isPictureSherlockConfigured = Boolean(env.PICTURE_SHERLOCK_URL);

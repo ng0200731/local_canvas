@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isXiangsuConfigured } from "@/lib/env";
+import { isXiangsuConfigured, isOpenAiConfigured } from "@/lib/env";
 import { imageGenerationRequestSchema } from "@/lib/image-generation-models";
 import {
   generateXiangsuImage,
@@ -49,7 +49,7 @@ export function createGeneratePostHandler({ configured, generate }: GenerateRout
 }
 
 export const POST = createGeneratePostHandler({
-  configured: isXiangsuConfigured,
+  configured: isXiangsuConfigured || isOpenAiConfigured,
   generate: (input, signal) =>
     generateXiangsuImage(
       {
@@ -60,7 +60,6 @@ export const POST = createGeneratePostHandler({
         outputFormat: input.outputFormat,
         resolution: input.resolution,
         references: input.references,
-        maskUrl: input.maskUrl,
       },
       signal,
     ),

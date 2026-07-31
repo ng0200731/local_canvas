@@ -226,11 +226,18 @@ function toGenerationReference(
   reference: ConnectedInputReference,
 ): ImageGenerationReference | null {
   if (reference.kind === "image") {
-    return {
+    const entry: ImageGenerationReference = {
       kind: "image",
       alias: reference.alias,
       url: reference.imageUrl,
     };
+    const attachedMaskUrl = reference.masks
+      .map((mask) => mask.maskUrl)
+      .find((url): url is string => typeof url === "string" && url.length > 0);
+    if (attachedMaskUrl) {
+      entry.maskUrl = attachedMaskUrl;
+    }
+    return entry;
   }
 
   return {
@@ -944,14 +951,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
       toast.error(`Use no more than ${MAX_IMAGE_GENERATION_REFERENCES} reference images`);
       return;
     }
-    const rowMaskUrl = promptRows
-      .map(
-        (row) =>
-          masksForPromptSource(promptReferences, row.sourceNodeId).find(
-            (mask) => mask.id === row.maskId,
-          )?.maskUrl,
-      )
-      .find((url): url is string => typeof url === "string" && url.length > 0);
 
     const run = startGenerationRun(id);
     if (!run) return;
@@ -989,7 +988,6 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
           outputFormat,
           resolution,
           references: allGenerationReferences,
-          maskUrl: rowMaskUrl,
         }),
       });
       if (!isGenerationRunCurrent(id, run.runId)) return;
@@ -1579,33 +1577,38 @@ export function GenerateNode({ id, data, parentId, selected }: NodeProps<Generat
                     {preview || "@product use collar region change color to @pantone red"}
                   </p>
                   {selectedMaskReference?.maskUrl ? (
-                    <div className="nodrag nopan relative h-20 w-full overflow-hidden rounded-md border">
-                      {selectedSourceReference?.nodeId ? (
-                        (() => {
-                          const sourceRef = connectedImageReferences.find(
-                            (reference) => reference.nodeId === selectedSourceReference.nodeId,
-                          );
-                          return sourceRef?.imageUrl ? (
-                            <img
-                              src={sourceRef.imageUrl}
-                              alt="source"
-                              className="absolute inset-0 h-full w-full object-contain"
-                              draggable={false}
-                            />
-                          ) : null;
-                        })()
-                      ) : null}
+                    <a
+                      href={selectedMaskReference.maskUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="nodrag nopan relative block h-20 w-full overflow-hidden rounded-md border bg-muted"
+                      title="Open mask PNG"
+                    >
+                      {(() => {
+                        const sourceRef = selectedSourceReference?.nodeId
+                          ? connectedImageReferences.find(
+                              (reference) => reference.nodeId === selectedSourceReference.nodeId,
+                            )
+                          : undefined;
+                        return sourceRef?.imageUrl ? (
+                          <img
+                            src={sourceRef.imageUrl}
+                            alt="source"
+                            className="absolute inset-0 h-full w-full object-contain"
+                            draggable={false}
+                          />
+                        ) : null;
+                      })()}
                       <img
                         src={selectedMaskReference.maskUrl}
                         alt={`Mask ${selectedMaskReference.name}`}
-                        className="absolute inset-0 h-full w-full object-contain opacity-60 mix-blend-screen"
+                        className="absolute inset-0 h-full w-full object-contain opacity-40 mix-blend-multiply"
                         draggable={false}
-                        title={`Mask preview: ${selectedMaskReference.name}`}
                       />
-                      <span className="absolute bottom-0.5 left-1 rounded bg-black/60 px-1 text-[0.6rem] text-white">
-                        mask: {selectedMaskReference.name}
+                      <span className="absolute bottom-0.5 left-1 rounded bg-black/70 px-1 text-[0.6rem] text-white">
+                        mask: {selectedMaskReference.name} (shaded = region to change)
                       </span>
-                    </div>
+                    </a>
                   ) : null}
                   {rowState === "partial" ? (
                     <p className="text-[0.65rem] text-amber-600 dark:text-amber-300">

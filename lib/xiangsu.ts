@@ -86,7 +86,6 @@ export interface XiangsuGenerateInput {
   outputFormat: ImageGenerationOutputFormat;
   resolution: ImageGenerationResolution;
   references: ImageGenerationReference[];
-  maskUrl?: string;
 }
 
 export interface XiangsuGenerateOutput {
@@ -195,7 +194,15 @@ async function blobFromReferenceUrl(
   signal.throwIfAborted();
   if (url.startsWith("data:")) return blobFromDataUrl(url);
 
-  const response = await fetcher(url, { signal });
+  // Relative URLs (e.g. legacy mask paths saved as "/uploads/masks/...") have
+  // no origin to resolve against on the server; pin them to the public app URL.
+  let target = url;
+  if (url.startsWith("/")) {
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    target = `${baseUrl}${url}`;
+  }
+
+  const response = await fetcher(target, { signal });
   if (!response.ok) {
     throw new Error(`Reference image request failed with ${response.status}.`);
   }
@@ -216,6 +223,14 @@ async function appendEditImages(
   }
 }
 
+function isOpenAiEditEligible(input: XiangsuGenerateInput): boolean {
+  if (!env.OPENAI_API_KEY) return false;
+  // OpenAI images.edit supports a single base image + optional mask. Only
+  // A/B test when there's exactly one reference image (the base) so the
+  // request shape matches.
+  return input.references.filter((r) => r.kind === "image").length === 1;
+}
+
 export function createXiangsuImageGenerator({
   apiKey,
   fetcher = fetch,
@@ -224,8 +239,10 @@ export function createXiangsuImageGenerator({
     input: XiangsuGenerateInput,
     requestSignal?: AbortSignal,
   ): Promise<XiangsuGenerateOutput> {
-    if (!apiKey) {
-      throw new Error("AI generation is disabled. Set XIANGSU_API_KEY in .env.local.");
+    const useOpenAi = env.OPENAI_API_KEY && isOpenAiEditEligible(input);
+    const effectiveApiKey = useOpenAi ? env.OPENAI_API_KEY : apiKey;
+    if (!effectiveApiKey) {
+      throw new Error("AI generation is disabled. Set XIANGSU_API_KEY or OPENAI_API_KEY in .env.local.");
     }
 
     if (!xiangsuImageModelIdSchema.safeParse(input.model).success) {
@@ -298,19 +315,26 @@ export function createXiangsuImageGenerator({
               form.append("response_format", "b64_json");
               form.append("output_format", gptOutputFormat);
               await appendEditImages(form, compiled.imageUrls, fetcher, controller.signal);
-              if (input.maskUrl) {
+              if (compiled.maskUrl) {
                 const maskBlob = await blobFromReferenceUrl(
-                  input.maskUrl,
+                  compiled.maskUrl,
                   fetcher,
                   controller.signal,
                 );
                 form.append("mask", maskBlob, "mask.png");
               }
 
-              return fetcher(XIANGSU_EDIT_URL, {
+              const editUrl = env.OPENAI_API_KEY
+                ? `${env.OPENAI_BASE_URL ?? "https://api.openai.com"}/v1/images/edits`
+                : XIANGSU_EDIT_URL;
+              const editAuth = env.OPENAI_API_KEY
+                ? `Bearer ${env.OPENAI_API_KEY}`
+                : `Bearer ${apiKey}`;
+
+              return fetcher(editUrl, {
                 method: "POST",
                 headers: {
-                  Authorization: `Bearer ${apiKey}`,
+                  Authorization: editAuth,
                 },
                 body: form,
                 signal: controller.signal,
@@ -349,7 +373,7 @@ export function createXiangsuImageGenerator({
 
       if (!response.ok) {
         const message = providerErrorMessage(payload) ?? "The image provider rejected the request.";
-        throw new Error(sanitizeMessage(message, apiKey));
+        throw new Error(sanitizeMessage(message, effectiveApiKey ?? ""));
       }
 
       if (isGeminiImageModel(input.model)) {

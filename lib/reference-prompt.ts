@@ -5,6 +5,7 @@ import type { ImageGenerationReference } from "@/lib/image-generation-models";
 export interface ProviderImageReference {
   alias: string;
   url: string;
+  maskUrl?: string;
   description: string;
   source: "image" | "pantone";
 }
@@ -12,6 +13,7 @@ export interface ProviderImageReference {
 export interface CompiledReferencePrompt {
   prompt: string;
   imageUrls: string[];
+  maskUrl?: string;
 }
 
 const PNG_SWATCH_SIZE = 512;
@@ -95,6 +97,7 @@ export function referencesForProvider(
       return {
         alias,
         url: reference.url,
+        maskUrl: reference.maskUrl,
         source: "image",
         description: `@${alias} is a user-provided image reference.`,
       };
@@ -194,6 +197,8 @@ export function compileReferencePrompt(
     return { prompt: userPrompt, imageUrls: [] };
   }
 
+  const maskCarrier = ordered.find((reference) => reference.maskUrl);
+
   const mapping = ordered
     .map(
       (reference, index) =>
@@ -204,6 +209,16 @@ export function compileReferencePrompt(
     textureTransferConstraint(userPrompt, ordered),
     colorTransferConstraint(userPrompt, ordered),
   ].filter((constraint): constraint is string => Boolean(constraint));
+  const maskConstraint = maskCarrier
+    ? [
+        "Mask constraint:",
+        `- An alpha-channel mask is attached alongside @${maskCarrier.alias}.`,
+        `- The mask is transparent (alpha = 0) in the region to regenerate, and fully opaque (alpha = 255) in the region to preserve.`,
+        `- Apply the requested edit ONLY inside the transparent region of the mask.`,
+        `- Every pixel outside the transparent region MUST stay pixel-identical to @${maskCarrier.alias}. Do not change color, lighting, background, or any other pixel there.`,
+        `- The mask is registered to @${maskCarrier.alias} at the same pixel dimensions. Ignore any reference to "@${maskCarrier.alias} region" in the prompt as a textual region name — the mask file is the authority on which pixels to edit.`,
+      ].join("\n")
+    : null;
 
   return {
     prompt: [
@@ -216,9 +231,11 @@ export function compileReferencePrompt(
       "Resolve every @alias using the mapping above and the attached provider images in the same order. Do not interpret an @alias as unrelated text.",
       "When the instruction asks to change color, edit provider image 1 as the base image. Later provider images are references only.",
       ...constraints,
+      maskConstraint,
     ]
       .filter((part): part is string => Boolean(part))
       .join("\n"),
     imageUrls: ordered.map((reference) => reference.url),
+    maskUrl: maskCarrier?.maskUrl,
   };
 }

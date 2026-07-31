@@ -182,6 +182,18 @@ export function gptImageSizeForResolution(
   return `${w}x${h}`;
 }
 
+export function gptImageDimensionsForResolution(
+  size: ImageGenerationSize,
+  resolution: ImageGenerationResolution,
+): { width: number; height: number } {
+  const ratio = aspectRatioForImageGenerationSize(size);
+  const quality = gptImageQualityForResolution(resolution);
+  const entry = GPT_IMAGE_SIZE_TABLE[ratio]?.[quality];
+  if (entry) return { width: entry[0], height: entry[1] };
+  const [w, h] = dynamicGptImageSize(ratio, quality);
+  return { width: w, height: h };
+}
+
 /** UI Resolution → provider quality. preview = low (1K), 2K = medium, 4K = high. */
 export function gptImageQualityForResolution(
   resolution: ImageGenerationResolution,
@@ -219,7 +231,6 @@ export const imageGenerationRequestSchema = z.object({
     .max(MAX_IMAGE_GENERATION_REFERENCES)
     .optional()
     .default([]),
-  maskUrl: imageReferenceUrlSchema.optional(),
 });
 
 export const DEFAULT_IMAGE_GENERATION_MODEL: ImageGenerationModelId = "gpt-image-2";
