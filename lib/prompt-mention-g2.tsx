@@ -9,6 +9,7 @@
  */
 
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -34,64 +35,28 @@ interface MentionMatch {
   query: string;
 }
 
+/**
+ * Detect a FRESH "@" trigger at the caret.
+ *
+ * Fresh = caret is positioned RIGHT AFTER a "@" that has nothing but
+ * whitespace (or start-of-text) immediately before it AND nothing after it
+ * yet (empty query). The user just typed "@" and the dropdown opens once.
+ *
+ * On any existing @alias token (caret inside or right after "@region-1"),
+ * either (a) the char-before is a non-space word char, or (b) the query is
+ * non-empty — both make us return null, so the menu NEVER reopens while the
+ * user edits an existing token. The user picks from the list only at the
+ * moment they type a brand-new "@", and thereafter the token is plain text.
+ */
 export function mentionAtCaret(value: string, caret: number): MentionMatch | null {
-  const match = value.slice(0, caret).match(/@([^\s@]*)$/);
-  if (!match || match.index === undefined) return null;
-  return { start: match.index, end: caret, query: match[1] ?? "" };
-}
-
-/**
- * Resolve which candidate a mouse hover over the textarea is on (used to dim the
- * other thumbnails / highlight the matched one). Returns the candidate id or null.
- */
-export function aliasAtOffset(
-  value: string,
-  offset: number,
-  aliases: readonly MentionCandidate[],
-): string | null {
-  if (!value || offset < 0 || offset > value.length) return null;
-  const match = /(^|\s)(@[^\s@]+)/g;
-  let token: RegExpExecArray | null;
-  while ((token = match.exec(value))) {
-    if (token[0].length === 0) {
-      match.lastIndex += 1;
-      continue;
-    }
-    const start = (token.index ?? 0) + token[1].length;
-    const end = start + token[2].length;
-    if (offset < start || offset > end) continue;
-    const rawName = (token[2] ?? "").slice(1).toLocaleLowerCase();
-    if (!rawName) continue;
-    return aliases.find((a) => a.alias.toLocaleLowerCase() === rawName)?.id ?? null;
-  }
-  return null;
-}
-
-/**
- * Split the prompt into parts, flagging which ranges are recognized @alias
- * mentions so the highlight backdrop can render them as <mark>.
- */
-export function renderHighlightedAliases(
-  value: string,
-  aliases: readonly MentionCandidate[],
-): Array<{ text: string; highlight: boolean }> {
-  const pattern = /(^|\s)(@[^\s@]+)/g;
-  const parts: Array<{ text: string; highlight: boolean }> = [];
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(value))) {
-    const token = match[2] ?? "";
-    const tokenStart = (match.index ?? 0) + (match[1]?.length ?? 0);
-    const tokenEnd = tokenStart + token.length;
-    const name = token.slice(1).toLocaleLowerCase();
-    const isAlias = aliases.some((a) => a.alias.toLocaleLowerCase() === name);
-    if (!isAlias) continue;
-    if (tokenStart > cursor) parts.push({ text: value.slice(cursor, tokenStart), highlight: false });
-    parts.push({ text: value.slice(tokenStart, tokenEnd), highlight: true });
-    cursor = tokenEnd;
-  }
-  if (cursor < value.length) parts.push({ text: value.slice(cursor), highlight: false });
-  return parts.length ? parts : [{ text: value, highlight: false }];
+  // Caret must sit immediately after a "@".
+  if (caret < 1 || value[caret - 1] !== "@") return null;
+  const start = caret - 1;
+  const charBefore = start > 0 ? value[start - 1] : "";
+  // "@" must be preceded by nothing OR whitespace. Glued to a word char? Skip.
+  if (charBefore !== "" && !/\s/.test(charBefore)) return null;
+  // Nothing but "@" up to the caret (empty query) → fresh trigger.
+  return { start, end: caret, query: "" };
 }
 
 export interface G2MentionTextareaProps {
@@ -114,25 +79,39 @@ export function G2MentionTextarea({
   className,
 }: G2MentionTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<{ start: number; end: number } | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const [mention, setMention] = useState<MentionMatch | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const suggestions = mention
-    ? aliases.filter((option) => {
-        const query = mention.query.toLocaleLowerCase();
-        return (
-          option.alias.toLocaleLowerCase().includes(query) ||
-          option.label.toLocaleLowerCase().includes(query)
-        );
-      })
-    : [];
+  const suggestions = mention ? aliases : [];
 
   function updateMention(nextValue: string, caret: number | null) {
     setMention(caret === null ? null : mentionAtCaret(nextValue, caret));
     setActiveIndex(0);
   }
+
+  // Restore the selection we deferred when patching value via the parent.
+  useLayoutEffect(() => {
+    const selection = selectionRef.current;
+    if (!selection || !textareaRef.current) return;
+    textareaRef.current.setSelectionRange(selection.start, selection.end);
+    selectionRef.current = null;
+  }, [value]);
+
+  // Keep the active row visible while navigating by keyboard. Manual scroll
+  // (rather than scrollIntoView, which can fight the textarea/viewport).
+  useEffect(() => {
+    if (!mention) return;
+    const list = listRef.current;
+    if (!list) return;
+    const el = list.children[activeIndex] as HTMLElement | undefined;
+    if (!el) return;
+    const top = el.offsetTop;
+    const bottom = top + el.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }, [activeIndex, mention]);
 
   function insertAlias(alias: string) {
     if (!mention) return;
@@ -147,20 +126,34 @@ export function G2MentionTextarea({
     });
   }
 
-  // Restore the selection we deferred when patching value via the parent.
-  useLayoutEffect(() => {
-    const selection = selectionRef.current;
-    if (!selection || !textareaRef.current) return;
-    textareaRef.current.setSelectionRange(selection.start, selection.end);
-    selectionRef.current = null;
-  }, [value]);
+  function caretOffsetFromPoint(event: ReactMouseEvent<HTMLTextAreaElement>): number | null {
+    const doc = document as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const position = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
+    if (position?.offsetNode === event.currentTarget) return position.offset;
+    const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
+    return range?.startContainer === event.currentTarget ? range.startOffset : null;
+  }
 
-  // Keep the highlight overlay scrolled in sync with the textarea.
-  function syncScroll() {
-    if (highlightRef.current && textareaRef.current) {
-      highlightRef.current.scrollTop = textareaRef.current.scrollTop;
-      highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
+  function aliasAtOffset(offset: number): string | null {
+    if (!value || offset < 0 || offset > value.length) return null;
+    const pattern = /(^|\s)(@[^\s@]+)/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(value))) {
+      if (match[0].length === 0) {
+        pattern.lastIndex += 1;
+        continue;
+      }
+      const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+      const end = start + (match[2] ?? "").length;
+      if (offset < start || offset > end) continue;
+      const rawName = (match[2] ?? "").slice(1).toLocaleLowerCase();
+      if (!rawName) continue;
+      return aliases.find((a) => a.alias.toLocaleLowerCase() === rawName)?.id ?? null;
     }
+    return null;
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
@@ -189,40 +182,8 @@ export function G2MentionTextarea({
     }
   }
 
-  function caretOffsetFromPoint(event: ReactMouseEvent<HTMLTextAreaElement>): number | null {
-    const doc = document as Document & {
-      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-      caretRangeFromPoint?: (x: number, y: number) => Range | null;
-    };
-    const position = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
-    if (position?.offsetNode === event.currentTarget) return position.offset;
-    const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
-    return range?.startContainer === event.currentTarget ? range.startOffset : null;
-  }
-
-  const highlighted = renderHighlightedAliases(value, aliases);
-
   return (
     <div className={cn("relative", className)}>
-      {/* Highlight backdrop — sits behind the transparent textarea. */}
-      <div
-        ref={highlightRef}
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words p-2 text-xs leading-5"
-      >
-        {highlighted.map((part, i) =>
-          part.highlight ? (
-            <mark
-              key={i}
-              className="rounded bg-yellow-300/40 px-0.5 text-foreground"
-            >
-              {part.text}
-            </mark>
-          ) : (
-            <span key={i}>{part.text}</span>
-          ),
-        )}
-      </div>
       <textarea
         ref={textareaRef}
         value={value}
@@ -233,30 +194,36 @@ export function G2MentionTextarea({
           onChange(event.target.value);
           updateMention(event.target.value, event.target.selectionStart);
         }}
-        onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+        onKeyUp={(event) => {
+          // Only the "@" key opens the dropdown. Re-running mentionAtCaret on
+          // every keyup is what re-opened it while editing existing tokens.
+          if (event.key !== "@") {
+            if (event.key === "Escape" || event.key === " ") setMention(null);
+            return;
+          }
+          updateMention(event.currentTarget.value, event.currentTarget.selectionStart);
+        }}
         onClick={(event) => {
           const caret = caretOffsetFromPoint(event);
           if (caret !== null) updateMention(event.currentTarget.value, caret);
-          if (onHoverAlias) {
-            const caret2 = caretOffsetFromPoint(event);
-            const id = caret2 === null ? null : aliasAtOffset(value, caret2, aliases);
-            onHoverAlias(id);
-          }
+          if (onHoverAlias) onHoverAlias(caret === null ? null : aliasAtOffset(caret));
         }}
         onMouseMove={(event) => {
           if (!onHoverAlias) return;
           const caret = caretOffsetFromPoint(event);
-          onHoverAlias(caret === null ? null : aliasAtOffset(value, caret, aliases));
+          onHoverAlias(caret === null ? null : aliasAtOffset(caret));
         }}
         onMouseLeave={() => onHoverAlias?.(null)}
         onKeyDown={handleKeyDown}
-        onScroll={syncScroll}
         className={cn(
-          "nodrag nopan caret-foreground placeholder:text-muted-foreground relative z-10 min-h-16 w-full resize-y rounded-md border bg-transparent p-2 text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+          "nodrag nopan caret-foreground placeholder:text-muted-foreground min-h-16 w-full resize-y rounded-md border bg-background/60 p-2 text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
         )}
       />
       {mention && suggestions.length > 0 && (
-        <div className="nodrag nopan bg-popover text-popover-foreground absolute bottom-full left-0 z-30 mb-1 max-h-48 w-56 overflow-y-auto rounded-md border shadow-lg">
+        <div
+          ref={listRef}
+          className="nodrag nopan bg-popover text-popover-foreground absolute bottom-full left-0 z-30 mb-1 max-h-56 w-60 overflow-y-auto rounded-md border p-0 shadow-lg"
+        >
           {suggestions.map((candidate, index) => (
             <button
               key={candidate.id}
@@ -267,12 +234,12 @@ export function G2MentionTextarea({
               }}
               onMouseEnter={() => setActiveIndex(index)}
               className={cn(
-                "flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs",
+                "flex w-full items-center px-2 py-1.5 text-left text-xs",
                 index === activeIndex ? "bg-accent text-accent-foreground" : "",
               )}
             >
               <span className="font-medium">@{candidate.alias}</span>
-              <span className="text-muted-foreground truncate">· {candidate.label}</span>
+              <span className="text-muted-foreground ml-2 truncate">· {candidate.label}</span>
             </button>
           ))}
         </div>
@@ -280,3 +247,4 @@ export function G2MentionTextarea({
     </div>
   );
 }
+

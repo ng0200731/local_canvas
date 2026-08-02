@@ -250,3 +250,87 @@ describe("alphaMapBbox + compositeAlphaShape (follow mask shape, not bbox)", () 
   });
 });
 
+describe("mask alpha resampler (regression for thin-stroke vanished/smeared)", () => {
+  // These tests guard against regressing to the default bilinear resampler
+  // for the mask's alpha channel. The mask's alpha is binary 0/255 on the
+  // client (lib/mask-union.ts). Bilinear would smear the boundary into
+  // mid-range values, which downstream `< ALPHA_THRESHOLD (128)` would
+  // either drop entirely (thin 1px strokes) or bloat into a fat band.
+
+  it("alphaMapFromBuffer keeps a binary stroke intact when downscaled", async () => {
+    // 200x200 mask with a 4px-wide transparent vertical band at x=98..101.
+    // Downscaled 4x to 50x50, a 4px-wide band in the source is GUARANTEED to
+    // cover at least one target column fully (nearest picks source pixels
+    // by target center). With NEAREST, alpha values must be only near 0 or
+    // near 255 — never mid-range (e.g. 64, 107, 198, 238) which would
+    // indicate bilinear smear.
+    const w = 200;
+    const h = 200;
+    const raw = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < w * h; i += 1) {
+      const x = i % w;
+      const transparent = x >= 98 && x <= 101;
+      raw[i * 4 + 0] = 255;
+      raw[i * 4 + 1] = 255;
+      raw[i * 4 + 2] = 255;
+      raw[i * 4 + 3] = transparent ? 0 : 255;
+    }
+    const mask = await sharp(raw, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
+
+    const map = await alphaMapFromBuffer(mask, 50, 50);
+    const values = Array.from(map.alpha);
+    const distinct = new Set(values);
+    expect(distinct.has(0)).toBe(true); // editable band survives
+    expect(distinct.has(255)).toBe(true); // keep band survives
+    for (const v of values) {
+      const isBinary = v < 5 || v > 250;
+      if (!isBinary) {
+        throw new Error(
+          `Expected binary alpha (near 0 or near 255); got mid-range value ${v}. ` +
+            `This indicates the bilinear resampler was used instead of nearest.`,
+        );
+      }
+    }
+  });
+
+  it("compositeAlphaShape keeps a 1px-thin stroke editable with dilate: 0", async () => {
+    // 1px-thin cross — narrower than the existing makeCrossMaskPng (arm=2).
+    // Without nearest resampling, the thin arms would smear into keep and the
+    // composite would not show the cross shape. With nearest, the arms
+    // remain editable and the composite follows the shape.
+    const width = 30;
+    const height = 30;
+    const raw = Buffer.alloc(width * height * 4);
+    const arm = 1;
+    const cx = Math.floor(width / 2);
+    const cy = Math.floor(height / 2);
+    for (let i = 0; i < width * height; i += 1) {
+      const x = i % width;
+      const y = Math.floor(i / width);
+      const inVertical = x >= cx - arm && x <= cx + arm;
+      const inHorizontal = y >= cy - arm && y <= cy + arm;
+      const editable = inVertical || inHorizontal;
+      raw[i * 4 + 0] = 255;
+      raw[i * 4 + 1] = 255;
+      raw[i * 4 + 2] = 255;
+      raw[i * 4 + 3] = editable ? 0 : 255;
+    }
+    const mask = await sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer();
+
+    const base = await makeSolidPng(width, height, 0, 0, 0);
+    const edited = await makeSolidPng(width, height, 255, 255, 255);
+    const out = await compositeAlphaShape(base, edited, mask, { feather: 0, dilate: 0 });
+    const { data } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+
+    // Center of the cross is editable (white).
+    const centerIdx = (15 * width + 15) * 4;
+    expect(data[centerIdx]).toBe(255);
+    // A pixel on the vertical arm (1px off-center) is editable (white).
+    const armIdx = (10 * width + 15) * 4;
+    expect(data[armIdx]).toBe(255);
+    // A corner (outside the cross arms) stays preserved (black).
+    const cornerIdx = (1 * width + 1) * 4;
+    expect(data[cornerIdx]).toBe(0);
+  });
+});
+

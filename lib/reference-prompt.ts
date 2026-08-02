@@ -178,8 +178,13 @@ function colorTransferConstraint(
 
   const [target, source] = mentioned;
   const hasMask = references.some((reference) => reference.maskUrl);
+  // Strict mask clause: the attached mask IS the edit region. No "expand to
+  // the whole object" — that caused the model to recolor the dominant region
+  // of the subject (e.g. the whole shoe body) instead of the user's thin
+  // brush stroke. When a mask is present, the recolor is confined to the
+  // mask's pixels; the rest of the subject must be preserved exactly.
   const maskClause = hasMask
-    ? `- Only recolor the pixels inside an attached alpha mask (transparent = edit) on @${target.alias}. The transparent region may be a thin brush stroke — the user wants the whole object the stroke touches recolored, following that object's silhouette, folds, and seams (e.g. the entire collar, the whole strap, the full waistband). Pixels outside the mask stay exactly as in @${target.alias}.`
+    ? `- Only recolor the pixels inside the attached alpha mask on @${target.alias}. Transparent pixels (alpha 0) = recolor; opaque pixels = preserve exactly as in @${target.alias}. Do NOT recolor any area outside the mask, even if it appears to be the same object, fabric, or panel — the user's stroke is the edit, not a hint.`
     : `- Recolor every visible surface of the subject in @${target.alias}.`;
   return [
     "Color-transfer constraint:",
@@ -282,9 +287,9 @@ export function compileReferencePrompt(
     ? [
         "MASK GUIDANCE (the attached mask marks the exact edit region):",
         `- @${maskCarrier.alias} is the base image the user wants to edit.`,
-        `- An alpha mask is attached: transparent (alpha 0) = the region to edit, opaque = keep unchanged. Regenerate the pixels inside the transparent region only; keep every opaque pixel exactly as in @${maskCarrier.alias}. The transparent area may be a thin brush stroke — the user wants the change applied to the whole object that the stroke touches (e.g. the entire collar, the whole strap, the full waistband), following that object's silhouette, folds, and seams, so expand to that object within the mask's vicinity.`,
-        `- Identify the most relevant object overlapping the highlighted area and apply the requested change to that whole object. Do not restrict the edit to the literal thin stroke.`,
-        `- Keep the rest of @${maskCarrier.alias} unchanged: overall silhouette, background, framing, print, logos, and lighting outside the edited object.`,
+        `- An alpha mask is attached: transparent (alpha 0) = the region to edit, opaque = keep unchanged. Regenerate the pixels inside the transparent region ONLY. Every opaque pixel must be preserved exactly as in @${maskCarrier.alias} — no recoloring outside the mask, no matter how visually similar the surrounding area looks.`,
+        `- The user's stroke is a literal selection, not a hint to recolor a larger object. Do NOT expand the edit to neighbouring regions, panels, seams, straps, or fabric of the same material. The edit shape is the mask shape — nothing more.`,
+        `- Keep every part of @${maskCarrier.alias} unchanged outside the mask: silhouette, background, framing, print, logos, lighting, shadows, and every other visible detail.`,
       ].join("\n")
     : null;
 

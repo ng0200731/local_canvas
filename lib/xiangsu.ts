@@ -700,10 +700,22 @@ async function runMaskedTextureTransfer(
   // Mask convention (OpenAI images.edit, and this codebase): alpha = 0
   // (transparent) = the region to edit; alpha = 255 (opaque) = keep. `sharp`
   // preserves the mask's alpha channel.
+  //
+  // The mask's alpha is binary (0/255) on the client. Sharp's default resize
+  // resampler is bilinear, which would smear the binary boundary into
+  // mid-range alpha values — a thin 1px stroke can interpolate entirely
+  // above the ALPHA_THRESHOLD (128) downstream and silently vanish, or
+  // smear into a fat band. Use nearest-neighbor so the boundary stays
+  // binary on resize. ensureAlpha() guarantees channel 3 exists before the
+  // later extractChannel(3) in alphaMapFromBuffer.
   const maskPngBuffer =
     baseWidth && baseHeight
-      ? await sharp(maskBuffer).resize(baseWidth, baseHeight, { fit: "fill" }).png().toBuffer()
-      : await sharp(maskBuffer).png().toBuffer();
+      ? await sharp(maskBuffer)
+          .ensureAlpha()
+          .resize(baseWidth, baseHeight, { fit: "fill", kernel: "nearest" })
+          .png()
+          .toBuffer()
+      : await sharp(maskBuffer).ensureAlpha().png().toBuffer();
 
   // --- Prompt -------------------------------------------------------------
   // Use the user's own (reference-resolved) instruction from
@@ -744,11 +756,11 @@ async function runMaskedTextureTransfer(
   const maskBboxBase = rawAlphaMap ? alphaMapBbox(rawAlphaMap) : null;
 
   // Rough-location cue: tell the model the bbox in words so even without the
-  // attached mask it knows where to focus. (Belt + suspenders alongside the
-  // provider `mask` field below.)
+  // attached mask it knows where to focus. Strict wording — the stroke is a
+  // literal selection, not a hint to expand the edit to a neighbouring object.
   const locationCue =
     maskBboxBase && baseWidth && baseHeight
-      ? `\n\nMask region (rough): bounding box (${maskBboxBase.minX},${maskBboxBase.minY})–(${maskBboxBase.maxX},${maskBboxBase.maxY}) on a ${baseWidth}×${baseHeight}px image — the user's brush stroke marks this area. The stroke may be thin; recolor/re-render the whole object it touches within and around that area, following the object's silhouette, folds, and seams.`
+      ? `\n\nMask region (exact): bounding box (${maskBboxBase.minX},${maskBboxBase.minY})–(${maskBboxBase.maxX},${maskBboxBase.maxY}) on a ${baseWidth}×${baseHeight}px image. Recolor ONLY the pixels inside the attached alpha mask; do not recolor any neighbouring panel, seam, or object of the same material — the stroke is a literal selection, not a hint.`
       : "";
 
   const form = new FormData();

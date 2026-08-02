@@ -83,11 +83,14 @@ describe("reference prompt compiler", () => {
 
     expect(compiled.maskUrl).toBe("https://images.example/combined-product.png");
     expect(compiled.prompt).toContain("MASK GUIDANCE (the attached mask marks the exact edit region)");
+    // The stroke is a literal selection, not a hint to recolor a larger object.
+    // The model must NOT expand the edit to neighbouring regions or "the whole
+    // strap" — only the mask pixels change.
     expect(compiled.prompt).toContain(
-      "the whole object that the stroke touches (e.g. the entire collar, the whole strap, the full waistband)",
+      "The user's stroke is a literal selection, not a hint to recolor a larger object",
     );
     expect(compiled.prompt).toContain(
-      "Identify the most relevant object overlapping the highlighted area",
+      "Do NOT expand the edit to neighbouring regions",
     );
   });
 

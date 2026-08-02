@@ -27,9 +27,13 @@ export async function maskBbox(
   width: number,
   height: number,
 ): Promise<MaskBbox | null> {
+  // ensureAlpha() before resize so the alpha plane being resampled is the
+  // real mask channel 3. kernel: "nearest" preserves the binary 0/255
+  // boundary — bilinear would smear it into mid-range values that the
+  // < 128 threshold below could either miss or bloat.
   const maskAlpha = await sharp(maskBuffer)
-    .resize(width, height, { fit: "fill" })
     .ensureAlpha()
+    .resize(width, height, { fit: "fill", kernel: "nearest" })
     .extractChannel(3)
     .toFormat(sharp.format.raw)
     .toBuffer();
@@ -170,9 +174,12 @@ export async function compositeMaskedEdit(
     .raw()
     .toBuffer();
 
+  // Mask alpha: nearest resample so the binary 0/255 boundary stays binary.
+  // Bilinear would smear the boundary into mid-range values that the
+  // < 128 threshold below could either miss or bloat.
   const maskAlpha = await sharp(maskBuffer)
-    .resize(width, height, { fit: "fill" })
     .ensureAlpha()
+    .resize(width, height, { fit: "fill", kernel: "nearest" })
     .extractChannel(3)
     .toFormat(sharp.format.raw)
     .toBuffer();
@@ -225,9 +232,14 @@ export async function alphaMapFromBuffer(
   width: number,
   height: number,
 ): Promise<AlphaMap> {
+  // ensureAlpha() before resize so the alpha plane being resampled is the
+  // real mask channel 3. kernel: "nearest" preserves the binary 0/255
+  // boundary — the default bilinear resampler would smear it into
+  // mid-range values, and ALPHA_THRESHOLD (128) downstream would either
+  // drop a thin stroke entirely or bloat it into a fat band.
   const raw = await sharp(maskBuffer)
-    .resize(width, height, { fit: "fill" })
     .ensureAlpha()
+    .resize(width, height, { fit: "fill", kernel: "nearest" })
     .extractChannel(3)
     .toFormat(sharp.format.raw)
     .toBuffer();
