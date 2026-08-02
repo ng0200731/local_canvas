@@ -43,11 +43,38 @@ export interface ConnectedOutputState {
   error?: string;
 }
 
+/**
+ * A single image-bearing source wired into a G2 node, split by the role the
+ * drop recorded on the edge. `main` is image A; `reference` is B/C/D… Reuses
+ * the ConnectedInputReference shape (alias/label/masks) verbatim — the G2
+ * editor just needs to know which one is the main image vs. a reference.
+ */
+export interface G2ImageReferences {
+  main: ConnectedImageReference | null;
+  references: ConnectedImageReference[];
+}
+
 export interface CanvasActions {
   /** Patch a node's data object (shallow merge). */
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
   /** Return image inputs connected to a node, used as named generation references. */
   getConnectedInputReferences: (nodeId: string) => ConnectedInputReference[];
+  /**
+   * G2 only: image-bearing sources wired into the node, split by the
+   * `data.g2Role` recorded on each edge at drop time ("main" vs. "reference").
+   * Edges without a role default to "reference" (so legacy wires still show
+   * up as references); a single un_ROLEd edge is treated as main.
+   */
+  getG2ImageReferences: (nodeId: string) => G2ImageReferences;
+  /**
+   * G2 only: create a wired edge from `sourceNodeId` into the G2 node `g2NodeId`,
+   * tagged with the drop role so the thumbnail lands in the right area. Used by
+   * the G2 node's HTML5 drag-fallback (the Link2 handle on image/output nodes);
+   * the primary path is dragging the React Flow edge dot, which the canvas
+   * editor wires directly. Returns false if the source has no image or the
+   * edge already exists.
+   */
+  addG2ImageReference: (g2NodeId: string, sourceNodeId: string, role: "main" | "reference") => boolean;
   /** True when a Generate node is connected to an Output node. */
   hasConnectedOutputNode: (generateNodeId: string) => boolean;
   /** Current data snapshot for the Output node connected to a Generate node. */
@@ -126,6 +153,12 @@ export interface ConnectionHighlight {
   targetId: string | null;
   /** Which dot on the hovered target node the pointer is over ("left" | "right" | null). */
   targetDot: "left" | "right" | null;
+  /**
+   * When the connection pointer is hovering a G2 node's tagged drop area, the
+   * role of that area ("main" | "reference" | null). Lets the G2 node highlight
+   * just that area instead of the whole node body.
+   */
+  targetG2Drop: "main" | "reference" | null;
   /** Color shared by the in-progress wire and all highlight rings — the source node's type color. */
   color: string;
 }
@@ -134,6 +167,7 @@ export const ConnectionHighlightContext = createContext<ConnectionHighlight>({
   sourceId: null,
   targetId: null,
   targetDot: null,
+  targetG2Drop: null,
   color: DEFAULT_EDGE_COLOR,
 });
 

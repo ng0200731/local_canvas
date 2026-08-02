@@ -9,6 +9,7 @@ import { ImagePreviewDialog } from "@/components/image-preview-dialog";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
 import type { ImageCanvasNode } from "@/lib/nodes/types";
+import { writeImageRefDrag } from "@/lib/nodes/image-ref-drag";
 import { uploadImage } from "@/lib/upload";
 import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
@@ -108,7 +109,12 @@ export function ImageNode({ id, data, parentId, selected }: NodeProps<ImageCanva
               className="nodrag bg-background/85 focus-visible:ring-ring absolute top-2 right-2 flex size-7 cursor-grab items-center justify-center rounded-md border shadow-sm backdrop-blur-sm outline-none focus-visible:ring-2 active:cursor-grabbing"
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/ica-image-url", data.url!);
-                e.dataTransfer.effectAllowed = "link";
+                writeImageRefDrag(e.dataTransfer, {
+                  url: data.url!,
+                  sourceNodeId: id,
+                  alias: typeof data.alt === "string" && data.alt ? data.alt : null,
+                  label: typeof data.alt === "string" && data.alt ? data.alt : "Image",
+                });
               }}
             >
               <Link2 className="size-3.5" />

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 
-import { compositeOutsideBbox, maskBbox } from "@/lib/mask-composite";
+import { compositeOutsideBbox, maskBbox, dilateAlpha, alphaMapBbox, alphaMapFromBuffer, compositeAlphaShape } from "@/lib/mask-composite";
 
 /** Build an RGBA PNG buffer of size wxh with a transparent rectangular region. */
 async function makeMaskPng(
@@ -143,3 +143,110 @@ describe("compositeOutsideBbox", () => {
     expect(data[insideIdx]).toBe(255);
   });
 });
+
+/**
+ * Build an RGBA PNG with a transparent *cross* (plus-sign) editable region,
+ * so the shape is clearly NOT a rectangle — its bounding box would cover a
+ * large square while the actual transparent area is only two thin strokes.
+ */
+async function makeCrossMaskPng(
+  width: number,
+  height: number,
+): Promise<Buffer> {
+  const raw = Buffer.alloc(width * height * 4);
+  const arm = 2;
+  const cx = Math.floor(width / 2);
+  const cy = Math.floor(height / 2);
+  for (let i = 0; i < width * height; i += 1) {
+    const x = i % width;
+    const y = Math.floor(i / width);
+    const inVertical = x >= cx - arm && x <= cx + arm;
+    const inHorizontal = y >= cy - arm && y <= cy + arm;
+    const editable = inVertical || inHorizontal;
+    raw[i * 4 + 0] = 255;
+    raw[i * 4 + 1] = 255;
+    raw[i * 4 + 2] = 255;
+    raw[i * 4 + 3] = editable ? 0 : 255;
+  }
+  return sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer();
+}
+
+describe("dilateAlpha", () => {
+  it("grows a single editable pixel into a small square", () => {
+    const width = 11;
+    const height = 11;
+    const alpha = Buffer.alloc(width * height).fill(255);
+    alpha[5 * width + 5] = 0; // one editable pixel at center
+    const out = dilateAlpha(alpha, width, height, 2);
+    // Center plus the 2-pixel ring around it should be editable.
+    expect(out[5 * width + 5]).toBe(0);
+    expect(out[3 * width + 5]).toBe(0); // up 2
+    expect(out[7 * width + 5]).toBe(0); // down 2
+    expect(out[5 * width + 3]).toBe(0); // left 2
+    expect(out[5 * width + 7]).toBe(0); // right 2
+    // Corner at distance 3 diagonally stays preserved.
+    expect(out[2 * width + 2]).toBe(255);
+  });
+
+  it("no-op when radius is 0", () => {
+    const alpha = Buffer.alloc(9).fill(255);
+    alpha[4] = 0;
+    const out = dilateAlpha(alpha, 3, 3, 0);
+    expect(out).toBe(alpha);
+  });
+});
+
+describe("alphaMapBbox + compositeAlphaShape (follow mask shape, not bbox)", () => {
+  it("alphaMapBbox reports the cross bbox but composite keeps the cross shape", async () => {
+    const width = 30;
+    const height = 30;
+    const mask = await makeCrossMaskPng(width, height);
+    const map = await alphaMapFromBuffer(mask, width, height);
+
+    // The cross's bounding box is the full 30x30 square (arms reach the
+    // center of each edge), but the actual editable pixels form a plus sign.
+    const bbox = alphaMapBbox(map);
+    expect(bbox).not.toBeNull();
+    expect(bbox!.width).toBe(width);
+    expect(bbox!.height).toBe(height);
+
+    // Composite: black base, white edited, no feather, no dilate. The result
+    // should be white ONLY along the cross arms and black in the four bbox
+    // corners that a rectangle composite would have wrongly filled.
+    const base = await makeSolidPng(width, height, 0, 0, 0);
+    const edited = await makeSolidPng(width, height, 255, 255, 255);
+    const out = await compositeAlphaShape(base, edited, mask, { feather: 0, dilate: 0 });
+    const { data } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+
+    // A corner of the cross bounding box (top-left) is preserved (black) — a
+    // bbox rectangle would have made it white.
+    const cornerIdx = (1 * width + 1) * 4;
+    expect(data[cornerIdx]).toBe(0);
+    // Center of the cross is editable (white).
+    const centerIdx = (15 * width + 15) * 4;
+    expect(data[centerIdx]).toBe(255);
+    // A mid-edge pixel on the vertical arm is editable (white).
+    const armIdx = (8 * width + 15) * 4;
+    expect(data[armIdx]).toBe(255);
+  });
+
+  it("dilate grows the cross to cover a band, then composite fills the band", async () => {
+    const width = 30;
+    const height = 30;
+    const mask = await makeCrossMaskPng(width, height);
+    const base = await makeSolidPng(width, height, 0, 0, 0);
+    const edited = await makeSolidPng(width, height, 255, 255, 255);
+
+    const out = await compositeAlphaShape(base, edited, mask, { feather: 0, dilate: 4 });
+    const { data } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+
+    // After a 4px dilation the cross grows into a plus-shaped band. A pixel
+    // ~3px off the vertical arm (still inside the bounding square) should now
+    // be white, but a far corner must stay black.
+    const nearArmIdx = (15 * width + 11) * 4; // 4px left of center, within arm+dilate
+    expect(data[nearArmIdx]).toBe(255);
+    const farCornerIdx = (2 * width + 2) * 4;
+    expect(data[farCornerIdx]).toBe(0);
+  });
+});
+

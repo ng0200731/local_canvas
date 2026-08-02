@@ -82,11 +82,12 @@ describe("reference prompt compiler", () => {
     );
 
     expect(compiled.maskUrl).toBe("https://images.example/combined-product.png");
+    expect(compiled.prompt).toContain("MASK GUIDANCE (the attached mask marks the exact edit region)");
     expect(compiled.prompt).toContain(
-      "They are all satisfied by the SINGLE attached mask: the transparent area of that mask equals the union of all listed regions",
+      "the whole object that the stroke touches (e.g. the entire collar, the whole strap, the full waistband)",
     );
     expect(compiled.prompt).toContain(
-      "apply that change uniformly across the entire transparent area",
+      "Identify the most relevant object overlapping the highlighted area",
     );
   });
 

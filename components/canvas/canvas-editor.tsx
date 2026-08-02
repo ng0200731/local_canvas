@@ -102,14 +102,17 @@ import {
   CanvasActionsContext,
   ConnectionHighlightContext,
   ReferenceHoverContext,
-  type ConnectedOutputState,
+  type ConnectedImageReference,
   type ConnectedInputReference,
+  type ConnectedOutputState,
+  type G2ImageReferences,
 } from "./canvas-context";
 import { NodePalette } from "./node-palette";
 import { CanvasLogPanel } from "./canvas-log-panel";
 import { RenderGalleryDialog } from "./render-gallery-dialog";
 import { DeletableEdge } from "./edges/canvas-edge";
 import { ActionNode } from "./nodes/action-node";
+import { G2Node } from "./nodes/g2-node";
 import { GenerateNode } from "./nodes/generate-node";
 import { GroupNode } from "./nodes/group-node";
 import { InputNode } from "./nodes/input-node";
@@ -140,6 +143,7 @@ const CANVAS_NODE_TYPES: NodeTypes = {
   product: ProductNode,
   action: ActionNode,
   pantone: PantoneNode,
+  g2: G2Node,
 };
 
 const CANVAS_EDGE_TYPES: EdgeTypes = { deletable: DeletableEdge };
@@ -161,6 +165,8 @@ interface ClientPoint {
 
 interface NodeConnectionTarget {
   nodeId: string;
+  /** When dropped on a G2 node's tagged area, the role to record on the edge. */
+  g2Role?: "main" | "reference";
 }
 
 type PendingGroupMembershipChange =
@@ -200,7 +206,17 @@ function findNodeConnectionTarget(
 
   if (!nodeElement || !nodeId || nodeId === sourceNodeId) return null;
 
-  return nodeElement.querySelector('[data-handleid="left"]') ? { nodeId } : null;
+  // Surface a G2 drop-area role if the pointer is on a tagged zone so the
+  // created edge can remember main vs. reference.
+  const dropZone = element?.closest<HTMLElement>("[data-g2-drop]");
+  const g2Role =
+    dropZone?.getAttribute("data-g2-drop") === "main" ||
+    dropZone?.getAttribute("data-g2-drop") === "reference"
+      ? (dropZone.getAttribute("data-g2-drop") as "main" | "reference")
+      : undefined;
+
+  if (!nodeElement.querySelector('[data-handleid="left"]')) return null;
+  return g2Role ? { nodeId, g2Role } : { nodeId };
 }
 
 /**
@@ -636,6 +652,157 @@ function findConnectedInputReferences(
   return references;
 }
 
+/**
+ * Image-bearing sources wired into a G2 node, split by the `data.g2Role`
+ * recorded on each edge at drop time. Reuses the same per-node-type logic as
+ * {@link findConnectedInputReferences} (imageInput / suppler / product /
+ * pantone / image / imageOutput) — only pixels-in-a-node sources count; pure
+ * note/group nodes are skipped.
+ *
+ * Role resolution:
+ *  - an edge with `data.g2Role === "main"` → main image;
+ *  - an edge with `data.g2Role === "reference"` → reference;
+ *  - an edge with no role → reference, EXCEPT when exactly one un_ROLEd edge
+ *    exists and no explicit "main" edge is present, that single edge is the
+ *    main image (so a plain Input→G2 wire still seeds image A).
+ */
+function findG2ImageReferences(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+  nodeId: string,
+): G2ImageReferences {
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const));
+  const seen = new Set<string>();
+  const mainRefs: ConnectedImageReference[] = [];
+  const otherRefs: ConnectedImageReference[] = [];
+
+  function classify(edge: CanvasEdge, ref: ConnectedImageReference): void {
+    const role = (edge.data as { g2Role?: unknown } | undefined)?.g2Role;
+    if (role === "main") {
+      mainRefs.push(ref);
+    } else if (role === "reference") {
+      otherRefs.push(ref);
+    } else {
+      otherRefs.push(ref);
+    }
+  }
+
+  for (const edge of edges) {
+    const otherNodeId =
+      edge.source === nodeId ? edge.target : edge.target === nodeId ? edge.source : null;
+    if (!otherNodeId || seen.has(otherNodeId)) continue;
+
+    const node = nodesById.get(otherNodeId);
+    if (!node) continue;
+
+    const push = (ref: Omit<ConnectedImageReference, "edgeId" | "nodeId">) => {
+      seen.add(otherNodeId);
+      classify(edge, { edgeId: edge.id, nodeId: otherNodeId, ...ref } as ConnectedImageReference);
+    };
+
+    if (node.type === "imageInput") {
+      const imageUrl = typeof node.data.imageUrl === "string" ? node.data.imageUrl : null;
+      if (!imageUrl) continue;
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : "image";
+      push({
+        kind: "image",
+        alias,
+        label: alias,
+        imageUrl,
+        masks: imageMasksForImage(
+          node.data.imageMasks,
+          typeof node.data.selectedGenericImageId === "string"
+            ? node.data.selectedGenericImageId
+            : imageUrl,
+        ),
+      });
+      continue;
+    }
+
+    if (node.type === "suppler") {
+      const imageUrl =
+        typeof node.data.variantImageUrl === "string" ? node.data.variantImageUrl : null;
+      if (!imageUrl) continue;
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : "supplier";
+      const label =
+        typeof node.data.productSubject === "string" && node.data.productSubject.trim()
+          ? node.data.productSubject.trim()
+          : alias;
+      push({
+        kind: "image",
+        alias,
+        label,
+        imageUrl,
+        masks: imageMasksForImage(
+          node.data.imageMasks,
+          typeof node.data.productId === "string" && typeof node.data.variantId === "string"
+            ? `${node.data.productId}:${node.data.variantId}`
+            : imageUrl,
+        ),
+      });
+      continue;
+    }
+
+    if (node.type === "product") {
+      const imageUrl =
+        typeof node.data.variantImageUrl === "string" ? node.data.variantImageUrl : null;
+      if (!imageUrl) continue;
+      const alias =
+        typeof node.data.alias === "string" && node.data.alias.trim()
+          ? node.data.alias.trim()
+          : "product";
+      const label =
+        typeof node.data.productSubject === "string" && node.data.productSubject.trim()
+          ? node.data.productSubject.trim()
+          : alias;
+      push({
+        kind: "image",
+        alias,
+        label,
+        imageUrl,
+        masks: imageMasksForImage(
+          node.data.imageMasks,
+          typeof node.data.productId === "string" && typeof node.data.variantId === "string"
+            ? `${node.data.productId}:${node.data.variantId}`
+            : imageUrl,
+        ),
+      });
+      continue;
+    }
+
+    if (node.type === "image" || node.type === "imageOutput") {
+      const imageUrl =
+        node.type === "image"
+          ? (typeof node.data.url === "string" ? node.data.url : null)
+          : (typeof node.data.resultUrl === "string" ? node.data.resultUrl : null);
+      if (!imageUrl) continue;
+      const alt =
+        node.type === "image"
+          ? (typeof node.data.alt === "string" ? node.data.alt : null)
+          : (typeof node.data.prompt === "string" ? node.data.prompt : null);
+      const alias =
+        alt && alt.trim() ? alt.trim() : node.type === "image" ? "image" : "output";
+      push({ kind: "image", alias, label: alias, imageUrl, masks: [] });
+      continue;
+    }
+  }
+
+  // No explicit main edge and exactly one un_ROLEd reference → promote it to main.
+  let references = otherRefs;
+  if (mainRefs.length === 0 && otherRefs.length === 1) {
+    mainRefs.push(otherRefs[0]!);
+    references = [];
+  }
+
+  return { main: mainRefs[0] ?? null, references };
+}
+
 function normalizeNodeType(node: CanvasNode): CanvasNode {
   const normalizedType = (node.type as string) === "output" ? "imageOutput" : node.type;
   const data =
@@ -759,6 +926,7 @@ function Editor({
   const [connectionSourceId, setConnectionSourceId] = useState<string | null>(null);
   const [connectionTargetId, setConnectionTargetId] = useState<string | null>(null);
   const [connectionTargetDot, setConnectionTargetDot] = useState<"left" | "right" | null>(null);
+  const [connectionTargetG2Drop, setConnectionTargetG2Drop] = useState<"main" | "reference" | null>(null);
   const [hoverTarget, setHoverTarget] = useState<HoverTarget>(null);
   const [hoveredReferenceNodeId, setHoveredReferenceNodeId] = useState<string | null>(null);
   const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
@@ -863,6 +1031,12 @@ function Editor({
     [edges, graphEpoch],
   );
 
+  const getG2ImageReferences = useCallback(
+    (nodeId: string) =>
+      findG2ImageReferences(nodesRef.current, edgesRef.current, nodeId),
+    [edges, graphEpoch],
+  );
+
   const hasConnectedOutputNode = useCallback(
     (generateNodeId: string) =>
       findConnectedOutputNodeId(nodesRef.current, edgesRef.current, generateNodeId) !== null,
@@ -956,7 +1130,7 @@ function Editor({
   );
 
   const addCanvasConnection = useCallback(
-    (connection: Connection) => {
+    (connection: Connection, edgeData?: Record<string, unknown>) => {
       const source = nodesRef.current.find((node) => node.id === connection.source);
       if (source?.type === "group") {
         const childIds = nodesRef.current
@@ -999,6 +1173,7 @@ function Editor({
             targetHandle: "left",
             type: "deletable",
             style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: EDGE_WIDTH },
+            data: edgeData,
           },
           eds,
         ),
@@ -1011,6 +1186,37 @@ function Editor({
   );
 
   const onConnect = addCanvasConnection;
+
+  // G2: create a role-tagged edge from an arbitrary source node into this G2
+  // node, used by the G2 node's HTML5 drag-fallback (the Link2 handle on
+  // image/output nodes) when the user drops onto the main/reference area. The
+  // primary path is dragging the source node's React Flow edge dot, which is
+  // wired directly via onConnectEnd above.
+  const addG2ImageReference = useCallback(
+    (g2NodeId: string, sourceNodeId: string, role: "main" | "reference") => {
+      const source = nodesRef.current.find((node) => node.id === sourceNodeId);
+      if (!source || sourceNodeId === g2NodeId) return false;
+      const imageType = ["image", "imageOutput", "imageInput", "suppler", "product"].includes(
+        source.type ?? "",
+      );
+      if (!imageType) return false;
+      const exists = edgesRef.current.some(
+        (edge) => edge.source === sourceNodeId && edge.target === g2NodeId,
+      );
+      if (exists) return false;
+      addCanvasConnection(
+        {
+          source: sourceNodeId,
+          sourceHandle: null,
+          target: g2NodeId,
+          targetHandle: "left",
+        },
+        { g2Role: role },
+      );
+      return true;
+    },
+    [addCanvasConnection],
+  );
 
   const handleSelectionEnd = useCallback(() => {
     const selectedIds = nodesRef.current
@@ -1099,12 +1305,15 @@ function Editor({
           : null;
 
         if (target) {
-          addCanvasConnection({
-            source: connectionState.fromHandle.nodeId,
-            sourceHandle: connectionState.fromHandle.id ?? null,
-            target: target.nodeId,
-            targetHandle: "left",
-          });
+          addCanvasConnection(
+            {
+              source: connectionState.fromHandle.nodeId,
+              sourceHandle: connectionState.fromHandle.id ?? null,
+              target: target.nodeId,
+              targetHandle: "left",
+            },
+            target.g2Role ? { g2Role: target.g2Role } : undefined,
+          );
         }
       }
 
@@ -1113,6 +1322,7 @@ function Editor({
       setConnectionSourceId(null);
       setConnectionTargetId(null);
       setConnectionTargetDot(null);
+      setConnectionTargetG2Drop(null);
     },
     [addCanvasConnection, scheduleAutosave],
   );
@@ -1412,8 +1622,10 @@ function Editor({
       );
       const targetId = target?.nodeId ?? null;
       const dot = target ? "left" : null;
+      const g2Drop = target?.g2Role ?? null;
       setConnectionTargetId((prev) => (prev === targetId ? prev : targetId));
       setConnectionTargetDot((prev) => (prev === dot ? prev : dot));
+      setConnectionTargetG2Drop((prev) => (prev === g2Drop ? prev : g2Drop));
     };
     window.addEventListener("pointermove", handlePointerMove);
     return () => window.removeEventListener("pointermove", handlePointerMove);
@@ -1424,9 +1636,10 @@ function Editor({
       sourceId: connectionSourceId,
       targetId: connectionTargetId,
       targetDot: connectionTargetDot,
+      targetG2Drop: connectionTargetG2Drop,
       color: connectionColor,
     }),
-    [connectionSourceId, connectionTargetId, connectionTargetDot, connectionColor],
+    [connectionSourceId, connectionTargetId, connectionTargetDot, connectionTargetG2Drop, connectionColor],
   );
 
   const referenceHover = useMemo(
@@ -1980,6 +2193,8 @@ function Editor({
     () => ({
       updateNodeData,
       getConnectedInputReferences,
+      getG2ImageReferences,
+      addG2ImageReference,
       hasConnectedOutputNode,
       getConnectedOutputState,
       updateConnectedOutputData,
@@ -1999,6 +2214,8 @@ function Editor({
     [
       updateNodeData,
       getConnectedInputReferences,
+      getG2ImageReferences,
+      addG2ImageReference,
       hasConnectedOutputNode,
       getConnectedOutputState,
       updateConnectedOutputData,

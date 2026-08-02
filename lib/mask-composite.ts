@@ -204,3 +204,201 @@ export async function compositeMaskedEdit(
     .png()
     .toBuffer();
 }
+
+// ── Shape-aware utilities ────────────────────────────────────────────────
+// The bbox-based composites above reduce the mask to its bounding rectangle,
+// so the edit covers a hard box regardless of the brush shape. The helpers
+// below keep the mask's real silhouette so edits follow it.
+
+const ALPHA_THRESHOLD = 128;
+
+/** 1 byte per pixel in the mask's native resolution: 0 = edit, 255 = keep. */
+export interface AlphaMap {
+  width: number;
+  height: number;
+  alpha: Buffer;
+}
+
+/** Decode a mask PNG to an {@link AlphaMap} scaled to width×height. */
+export async function alphaMapFromBuffer(
+  maskBuffer: Buffer,
+  width: number,
+  height: number,
+): Promise<AlphaMap> {
+  const raw = await sharp(maskBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .extractChannel(3)
+    .toFormat(sharp.format.raw)
+    .toBuffer();
+  return { width, height, alpha: raw };
+}
+
+/**
+ * Morphologically dilate the editable (alpha < threshold) region of an alpha
+ * map outwards by `radius` pixels using an integral-image so the per-pixel
+ * cost stays cheap. A thin brush stroke grows this way to cover the whole
+ * object it touches — the user's highlight is intent, not a pixel boundary.
+ */
+export function dilateAlpha(
+  alpha: Buffer,
+  width: number,
+  height: number,
+  radius: number,
+): Buffer {
+  const r = Math.max(0, Math.floor(radius));
+  if (r === 0 || width * height === 0) return alpha;
+
+  // 2D prefix sum of editable pixels (alpha < threshold ⇒ 1).
+  const integral = new Int32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) {
+      const editable = alpha[y * width + x] < ALPHA_THRESHOLD ? 1 : 0;
+      rowSum += editable;
+      const above = y > 0 ? integral[(y - 1) * width + x] : 0;
+      integral[y * width + x] = rowSum + above;
+    }
+  }
+
+  const out = Buffer.from(alpha);
+  for (let y = 0; y < height; y += 1) {
+    const y0 = Math.max(0, y - r);
+    const y1 = Math.min(height - 1, y + r);
+    for (let x = 0; x < width; x += 1) {
+      if (alpha[y * width + x] < ALPHA_THRESHOLD) continue; // already editable
+      const x0 = Math.max(0, x - r);
+      const x1 = Math.min(width - 1, x + r);
+      const total =
+        integral[y1 * width + x1] -
+        (y0 > 0 ? integral[(y0 - 1) * width + x1] : 0) -
+        (x0 > 0 ? integral[y1 * width + x0 - 1] : 0) +
+        (y0 > 0 && x0 > 0 ? integral[(y0 - 1) * width + x0 - 1] : 0);
+      if (total > 0) out[y * width + x] = 0;
+    }
+  }
+  return out;
+}
+
+/**
+ * Bounding box of the editable region in an alpha map's native coordinates.
+ * Mirrors {@link maskBbox} but operates on a decoded (possibly dilated) map.
+ */
+export function alphaMapBbox(map: AlphaMap): MaskBbox | null {
+  const { width, height, alpha } = map;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (alpha[y * width + x] < ALPHA_THRESHOLD) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return {
+    sourceWidth: width,
+    sourceHeight: height,
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+/**
+ * Composite the model's output onto the original base following the mask's
+ * actual silhouette — editable pixels take the model's repaint, preserved
+ * pixels keep the base, and a smooth feather is sampled by dilating the
+ * editable region outwards by `feather` pixels (linear ramp from the edge).
+ *
+ * Unlike {@link compositeOutsideBbox} (a bounding rectangle), the edit shape
+ * is the mask shape itself (optionally dilated first to cover the whole
+ * touched object), so angled strokes, rounded forms, and curves keep their
+ * real outline instead of collapsing to a rectangle.
+ */
+export async function compositeAlphaShape(
+  baseBuffer: Buffer,
+  editedBuffer: Buffer,
+  maskBuffer: Buffer,
+  options: { feather?: number; dilate?: number } = {},
+): Promise<Buffer> {
+  const feather = Math.max(0, options.feather ?? 3);
+  const dilate = Math.max(0, options.dilate ?? 0);
+
+  const baseMeta = await sharp(baseBuffer).metadata();
+  const width = baseMeta.width ?? 0;
+  const height = baseMeta.height ?? 0;
+  if (!width || !height) throw new Error("compositeAlphaShape: base has no dimensions.");
+
+  let alpha = (await alphaMapFromBuffer(maskBuffer, width, height)).alpha;
+  if (dilate > 0) alpha = dilateAlpha(alpha, width, height, dilate);
+
+  const editedResized = await sharp(editedBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+
+  const baseRaw = await sharp(baseBuffer)
+    .resize(width, height, { fit: "fill" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+
+  // BFS distance from the editable set; cap depth at `feather` for a linear
+  // weight ramp. Pixels beyond the ramp (outside the feather band) keep the
+  // base pixel-for-pixel, so the edit never leaks past the shape + halo.
+  const channels = 4;
+  const out = Buffer.from(baseRaw);
+  const dist = new Int32Array(width * height).fill(-1);
+  // Index queue sized to the pixel count (BFS only enqueues each pixel once).
+  const ring = new Int32Array(width * height);
+  let queueHead = 0;
+  let queueTail = 0;
+  for (let idx = 0; idx < width * height; idx += 1) {
+    if (alpha[idx] < ALPHA_THRESHOLD) {
+      dist[idx] = 0;
+      ring[queueTail++] = idx;
+      const off = idx * channels;
+      out[off] = editedResized[off];
+      out[off + 1] = editedResized[off + 1];
+      out[off + 2] = editedResized[off + 2];
+    }
+  }
+
+  while (queueHead < queueTail) {
+    const idx = ring[queueHead++];
+    const d = dist[idx];
+    if (d >= feather) continue; // past the band; spread stops here
+    const x = idx % width;
+    const y = (idx / width) | 0;
+    for (let n = 0; n < 4; n += 1) {
+      const nx = x + NEIGHBORS[n * 2];
+      const ny = y + NEIGHBORS[n * 2 + 1];
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const nidx = ny * width + nx;
+      if (dist[nidx] !== -1) continue; // visited or editable (dist 0)
+      dist[nidx] = d + 1;
+      ring[queueTail++] = nidx;
+      const weight = feather > 0 ? (feather - (d + 1)) / feather : 1;
+      const off = nidx * channels;
+      for (let c = 0; c < channels - 1; c += 1) {
+        out[off + c] = Math.round(
+          weight * editedResized[off + c] + (1 - weight) * baseRaw[off + c],
+        );
+      }
+    }
+  }
+
+  return sharp(out, { raw: { width, height, channels } }).png().toBuffer();
+}
+
+const NEIGHBORS = [-1, 0, 1, 0, 0, -1, 0, 1];

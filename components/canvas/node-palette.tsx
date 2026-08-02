@@ -9,6 +9,7 @@ import {
   Sparkles,
   Square,
   StickyNote,
+  Wand2,
   X,
   Zap,
   type LucideIcon,
@@ -33,6 +34,7 @@ const ICONS: Record<NodeType, LucideIcon> = {
   product: PackageOpen,
   action: Zap,
   pantone: Palette,
+  g2: Wand2,
 };
 
 function nodeDisplayName(node: CanvasNode): string {

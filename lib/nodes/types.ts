@@ -63,6 +63,7 @@ export const NODE_TYPES = [
   "product",
   "action",
   "pantone",
+  "g2",
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -213,6 +214,65 @@ export interface PantoneNodeData {
   [key: string]: unknown;
 }
 
+export interface G2Region {
+  id: string;
+  name: string; // editable in the draw overlay; referenced in the prompt via @name
+  type: "rect" | "freehand";
+  /**
+   * Coordinates are stored in the main image's NATURAL pixel space so masks
+   * render correctly regardless of the view size used to draw them.
+   * - rect:     { left, top, width, height }
+   * - freehand: { points: {x,y}[], thickness, closed }
+   */
+  data: Record<string, unknown>;
+  color: string;
+  /** Rect outline width (visual only; rects fill the whole interior) or brush stroke width. */
+  thickness: number;
+}
+
+export interface G2Reference {
+  /** Reference image URL (B, C, D…). */
+  url: string;
+  /** Node the image was dragged from, when dropped from a canvas node (for @alias). */
+  sourceNodeId: string | null;
+  /** Alias shown on the thumbnail and used in @ mentions. */
+  alias: string | null;
+}
+
+export interface G2NodeData {
+  /** Main uploaded/dragged image A */
+  mainImageUrl: string | null;
+  mainImageStoragePath: string | null;
+  /** Node the main image was dragged from (for the @alias badge). */
+  mainImageSourceNodeId: string | null;
+  /** Alias shown on the main-image thumbnail (e.g. "@shoe"). */
+  mainImageAlias: string | null;
+  /** Regions drawn on the main image, in natural-image pixel space. */
+  g2Regions: G2Region[];
+  /** Undo/redo snapshots of g2Regions (overlay editor history). */
+  undoStack: G2Region[][];
+  redoStack: G2Region[][];
+  /** Reference image descriptors (B, C, D...). */
+  references: G2Reference[];
+  /** Edit prompt (supports @alias mentions). */
+  prompt: string;
+  /** System prompt */
+  systemPrompt: string;
+  /** Generation options (user-editable). */
+  model?: ImageGenerationModelId;
+  size?: ImageGenerationSize;
+  outputFormat?: ImageGenerationOutputFormat;
+  resolution?: ImageGenerationResolution;
+  matchSourceSize?: boolean;
+  status: "idle" | "loading" | "error" | "done";
+  resultUrl: string | null;
+  error?: string;
+  /** Node size in pixels; set by the resize handle. Absent = type default. */
+  width?: number;
+  height?: number;
+  [key: string]: unknown;
+}
+
 // ── Generic shapes used by the persistence layer ─────────────────────────
 export type CanvasNode = Node<Record<string, unknown>, NodeType>;
 export type CanvasEdge = Edge;
@@ -235,3 +295,4 @@ export type SupplerCanvasNode = Node<SupplerNodeData, "suppler">;
 export type ProductCanvasNode = Node<ProductNodeData, "product">;
 export type ActionCanvasNode = Node<ActionNodeData, "action">;
 export type PantoneCanvasNode = Node<PantoneNodeData, "pantone">;
+export type G2CanvasNode = Node<G2NodeData, "g2">;

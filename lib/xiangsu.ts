@@ -25,7 +25,11 @@ import {
   referencesForProvider,
   type ProviderImageReference,
 } from "@/lib/reference-prompt";
-import { compositeOutsideBbox, maskBbox } from "@/lib/mask-composite";
+import {
+  alphaMapBbox,
+  alphaMapFromBuffer,
+  compositeAlphaShape,
+} from "@/lib/mask-composite";
 import sharp from "sharp";
 
 const XIANGSU_GENERATION_URL = "https://www.xiangsuai.cn/v1/images/generations";
@@ -351,23 +355,16 @@ export function createXiangsuImageGenerator({
           })
         : compiled.imageUrls.length > 0 && isGptModel
           ? await (async () => {
-              // Detect masked texture transfer: a mask is attached AND there
-              // were additional image references that got dropped by
-              // compileReferencePrompt (e.g. a supplier texture image like
-              // @elastic). Route to runMaskedTextureTransfer.
-              const droppedImageRefs = ordered.filter(
-                (reference) =>
-                  reference.source === "image" &&
-                  !compiled.imageUrls.includes(reference.url) &&
-                  reference !== ordered.find((r) => r.maskUrl),
-              );
-              const maskedTransferEligible = Boolean(compiled.maskUrl) && droppedImageRefs.length > 0;
-
-              if (maskedTransferEligible) {
+              // Route any mask-attached GPT edit through runMaskedTextureTransfer.
+              // It uses the user's own (reference-resolved) prompt as the
+              // instruction, sends only the base image to the provider, and
+              // uses the mask only to compute a bounding box for the final
+              // composite — so a rough brush highlight covers the whole object.
+              if (compiled.maskUrl) {
                 return await runMaskedTextureTransfer(
                   input,
                   ordered,
-                  droppedImageRefs,
+                  basePrompt,
                   gptQuality,
                   gptSize,
                   apiKey,
@@ -640,21 +637,29 @@ async function callGptImageEdit(
 }
 
 /**
- * Single-pass masked texture transfer.
+ * Single-pass masked edit.
  *
- * The user's brush highlight is rough intent — the model should identify
- * the most relevant object in the highlighted area (handle, strap, waistband,
- * etc.) and apply @elastic's material to that whole object, following its
- * existing form and lighting. We don't send the mask as a provider `mask`
- * field (the OpenAI edit endpoint ignores the mask when 2+ images are
- * attached). Instead the mask is described in the prompt as semantic
- * guidance, and its bounding box is used only for the final composite to
- * guarantee no drift outside the user's rough highlight area.
+ * The user's brush highlight is rough intent, not a pixel-exact selection
+ * (a thin stroke may cover ~1% of the image). We let `gpt-image` understand
+ * the rough mask location and render the edit, then clip the result to the
+ * mask's real shape — not a bounding rectangle:
+ *   - The base image AND the mask PNG are both sent to the provider. OpenAI's
+ *     images.edit convention is transparent = edit / opaque = keep, which
+ *     matches our mask, so the model regenerates only inside the mask. This
+ *     is the primary shape constraint.
+ *   - The prompt also names the mask's bounding box in words so the model
+ *     knows the rough area even before reading the mask pixels.
+ *   - `compositeAlphaShape` then feathers the seam (small dilate + soft band)
+ *     so the recolor blends with the surrounding fabric and nothing drifts
+ *     outside the mask — but it is no longer the main clip, the provider is.
+ *   - Color-only edits (Pantone target, no second image ref) keep a tighter
+ *     feather to preserve the original pattern edge; object/material edits
+ *     feather more so the new material blends with the surrounding garment.
  */
 async function runMaskedTextureTransfer(
   input: XiangsuGenerateInput,
   ordered: ProviderImageReference[],
-  droppedImageRefs: ProviderImageReference[],
+  compiledPrompt: string,
   gptQuality: string,
   gptSize: string,
   apiKey: string | undefined,
@@ -666,10 +671,6 @@ async function runMaskedTextureTransfer(
   if (!maskCarrier || !maskCarrier.url || !maskCarrier.maskUrl) {
     throw new Error("Masked texture transfer requires a base image with a mask.");
   }
-  const textureRef = droppedImageRefs[0];
-  if (!textureRef?.url) {
-    throw new Error("Masked texture transfer requires a texture reference image.");
-  }
 
   const editUrl = env.OPENAI_API_KEY
     ? `${env.OPENAI_BASE_URL ?? "https://api.openai.com"}/v1/images/edits`
@@ -678,46 +679,88 @@ async function runMaskedTextureTransfer(
     ? `Bearer ${env.OPENAI_API_KEY}`
     : `Bearer ${apiKey}`;
 
-  // Fetch base, texture, and mask bytes.
+  // Fetch base and mask bytes.
   const baseBlob = await blobFromReferenceUrl(maskCarrier.url, fetcher, signal);
-  const textureBlob = await blobFromReferenceUrl(textureRef.url, fetcher, signal);
   const maskBlob = await blobFromReferenceUrl(maskCarrier.maskUrl, fetcher, signal);
   const baseBuffer = Buffer.from(await baseBlob.arrayBuffer());
-  const textureBuffer = Buffer.from(await textureBlob.arrayBuffer());
   const maskBuffer = Buffer.from(await maskBlob.arrayBuffer());
   const baseDims = await imageDimensions(baseBlob);
+  const baseWidth = baseDims?.width ?? 0;
+  const baseHeight = baseDims?.height ?? 0;
 
-  // Compute the mask's bounding box (in the mask PNG's native coordinate
-  // space) for the final composite step. The composite function rescales
-  // these coordinates to the base image's dimensions.
-  let bbox: { sourceWidth: number; sourceHeight: number; minX: number; minY: number; maxX: number; maxY: number; width: number; height: number } | null = null;
-  if (baseDims) {
-    bbox = await maskBbox(maskBuffer, baseDims.width, baseDims.height);
-  }
+  // Re-encode the base as PNG so the provider receives a clean image
+  // regardless of the uploaded format (e.g. WebP).
+  const basePngBuffer = await sharp(baseBuffer).png().toBuffer();
 
-  const passPrompt = [
-    "Reference image mapping:",
-    `- Provider image 1 is @${maskCarrier.alias}: the base product image. The user has roughly highlighted a region on this image where they want the material changed.`,
-    `- Provider image 2 is @${textureRef.alias}: a real sample of the new material to apply.`,
-    "",
-    "User instruction:",
-    `Replace the material of the object inside the user-highlighted region of @${maskCarrier.alias} with @${textureRef.alias}'s exact material — same color, weave, fiber, sheen, stretch, and surface roughness.`,
-    `The user's highlight is rough intent, not an exact selection. Identify the most relevant object in that highlighted area (e.g. a handle, strap, waistband, band, or trim) and apply @${textureRef.alias}'s material to that whole object, following its existing silhouette, folds, wrinkles, and seams.`,
-    `Match @${maskCarrier.alias}'s light direction, shadows, highlights, and ambient tone on the new material. Do not introduce new lighting.`,
-    `Keep @${maskCarrier.alias}'s overall silhouette, background, framing, print, logos, and any region outside the highlighted area unchanged.`,
-    "",
-    "图像输出规格：输出画幅与参考图1保持完全一致的尺寸和宽高比。",
-  ].join("\n");
+  // Re-encode the mask to a PNG with the same dimensions as the base so we
+  // can extract a pixel-aligned alpha map in the base's coordinate space.
+  // `sharp` preserves the mask's alpha channel.
+  const maskPngBuffer =
+    baseWidth && baseHeight
+      ? await sharp(maskBuffer).resize(baseWidth, baseHeight, { fit: "fill" }).png().toBuffer()
+      : await sharp(maskBuffer).png().toBuffer();
+
+  // --- Prompt -------------------------------------------------------------
+  // Use the user's own (reference-resolved) instruction from
+  // compileReferencePrompt rather than overwriting it with a hardcoded
+  // texture-transfer template. That compiled prompt already contains the
+  // "Reference image mapping:" header, the user instruction verbatim
+  // (e.g. "change color to @pantone"), and every applicable constraint
+  // (colour/texture/object transfer, mask guidance). We only append the
+  // output-format spec line so the model keeps the base image's aspect ratio.
+  const specSuffix = imageOutputSpecLine({
+    isGptModel: true,
+    matchSourceSize: input.matchSourceSize,
+    size: input.size,
+    resolution: input.resolution,
+  });
+  const passPrompt = `${compiledPrompt}${specSuffix}`;
+
+  // --- Edit kind + mask shape --------------------------------------------
+  // Decide whether this is a color-only change (target reference is a Pantone
+  // swatch and no second *image* reference is attached) or an object/
+  // material change. Color-only edits should preserve the original pattern;
+  // object/material edits legitimately let the model repaint texture inside
+  // the mask.
+  const isColorOnly =
+    ordered.some((reference) => reference.source === "pantone") &&
+    !ordered.some(
+      (reference) => reference !== maskCarrier && reference.source === "image",
+    );
+
+  // The mask's bounding box (in base-pixel space) is used both as a textual
+  // spatial cue in the prompt and for diagnostics. The highlight is rough
+  // intent, so we do NOT collapse the edit to this rectangle — the actual
+  // mask is sent to the provider and the local composite follows its shape.
+  const rawAlphaMap =
+    baseWidth && baseHeight
+      ? await alphaMapFromBuffer(maskPngBuffer, baseWidth, baseHeight)
+      : null;
+  const maskBboxBase = rawAlphaMap ? alphaMapBbox(rawAlphaMap) : null;
+
+  // Rough-location cue: tell the model the bbox in words so even without the
+  // attached mask it knows where to focus. (Belt + suspenders alongside the
+  // provider `mask` field below.)
+  const locationCue =
+    maskBboxBase && baseWidth && baseHeight
+      ? `\n\nMask region (rough): bounding box (${maskBboxBase.minX},${maskBboxBase.minY})–(${maskBboxBase.maxX},${maskBboxBase.maxY}) on a ${baseWidth}×${baseHeight}px image. Edit the whole object the stroke touches, within and around that area.`
+      : "";
 
   const form = new FormData();
   form.append("model", input.model);
-  form.append("prompt", passPrompt);
+  form.append("prompt", `${passPrompt}${locationCue}`);
   form.append("n", "1");
   form.append("quality", gptQuality);
   form.append("response_format", "b64_json");
   form.append("output_format", "png");
-  form.append("image[]", new Blob([new Uint8Array(baseBuffer)], { type: "image/png" }), "base.png");
-  form.append("image[]", new Blob([new Uint8Array(textureBuffer)], { type: "image/png" }), "texture.png");
+  form.append("image[]", new Blob([new Uint8Array(basePngBuffer)], { type: "image/png" }), "base.png");
+  // Send the actual mask PNG (base-aligned dims, OpenAI edit convention:
+  // transparent = edit, opaque = keep) so the model regenerates only inside
+  // it. This is the primary shape constraint — the local composite below
+  // only feathers the seam and guards against drift outside the mask.
+  if (maskPngBuffer.length > 0) {
+    form.append("mask", new Blob([new Uint8Array(maskPngBuffer)], { type: "image/png" }), "mask.png");
+  }
   if (input.matchSourceSize && baseDims) {
     const providerSize = sizeWithinProviderBounds(baseDims);
     form.append("size", `${providerSize.width}x${providerSize.height}`);
@@ -727,45 +770,41 @@ async function runMaskedTextureTransfer(
 
   const result = await callGptImageEdit(editUrl, editAuth, form, fetcher, signal);
 
-  // --- Final composite: outside bbox = original base, inside bbox = model output (with feather).
+  // --- Final composite --------------------------------------------------
+  // The provider already clipped the repaint to the mask. Composite locally
+  // only to feather the seam (small dilate to round the raw stroke edge +
+  // soft band) so the recolor blends with the surrounding fabric and
+  // nothing drifts outside the mask. A color-only edit keeps a tighter edge
+  // to preserve the original pattern; an object edit feathers more so the
+  // new material blends with the surrounding garment.
   let finalBuffer: Buffer;
-  if (bbox) {
-    finalBuffer = await compositeOutsideBbox(baseBuffer, result.buffer, bbox, 4);
-  } else if (baseDims) {
-    const providerSize = sizeWithinProviderBounds(baseDims);
-    finalBuffer = await sharp(result.buffer)
-      .resize(providerSize.width, providerSize.height, { fit: "fill" })
-      .png()
-      .toBuffer();
+  if (baseWidth && baseHeight && maskPngBuffer.length > 0) {
+    finalBuffer = await compositeAlphaShape(baseBuffer, result.buffer, maskPngBuffer, {
+      dilate: 2,
+      feather: isColorOnly ? 3 : 6,
+    });
   } else {
     finalBuffer = result.buffer;
   }
 
   // --- Diagnostics ------------------------------------------------------
+  const passPromptWithCue = `${passPrompt}${locationCue}`;
   (diagnosticsRef as { current?: XiangsuGenerateDiagnostics }).current = {
-    compiledPrompt: passPrompt,
-    resolvedReferences: [
-      {
-        alias: maskCarrier.alias,
-        role: "base-image-with-mask" as const,
-        imageUrl: maskCarrier.url,
-        maskUrl: maskCarrier.maskUrl,
-        description: maskCarrier.description,
-      },
-      {
-        alias: textureRef.alias,
-        role: "reference-image" as const,
-        imageUrl: textureRef.url,
-        description: textureRef.description,
-      },
-    ],
+    compiledPrompt: passPromptWithCue,
+    resolvedReferences: ordered.map((reference) => ({
+      alias: reference.alias,
+      role: reference === maskCarrier ? ("base-image-with-mask" as const) : reference.source === "pantone" ? ("pantone" as const) : ("reference-image" as const),
+      imageUrl: reference.url,
+      maskUrl: reference === maskCarrier ? reference.maskUrl : undefined,
+      description: reference.description,
+    })),
     formFields: {
       model: input.model,
-      prompt: passPrompt,
+      prompt: passPromptWithCue,
       "image[0]": maskCarrier.url,
-      "image[1]": textureRef.url,
+      ...(maskPngBuffer.length > 0 ? { mask: maskCarrier.maskUrl ?? "(attached png)" } : {}),
+      ...(maskBboxBase ? { maskBbox: `${maskBboxBase.minX},${maskBboxBase.minY} ${maskBboxBase.maxX},${maskBboxBase.maxY} (${maskBboxBase.width}x${maskBboxBase.height})` } : {}),
       size: String(form.get("size") ?? ""),
-      "composite.bbox": bbox ? JSON.stringify(bbox) : "(no mask region found)",
     },
   };
 

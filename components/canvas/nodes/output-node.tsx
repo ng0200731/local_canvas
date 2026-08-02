@@ -11,6 +11,7 @@ import { downloadImageFile } from "@/lib/download-image";
 import { isStaleGenerationConfigurationError } from "@/lib/generation-errors";
 import { cn } from "@/lib/utils";
 import { NODE_PORT_COLORS } from "@/lib/nodes/ports";
+import { writeImageRefDrag } from "@/lib/nodes/image-ref-drag";
 import type { OutputCanvasNode } from "@/lib/nodes/types";
 import { useCanvasActions, useConnectionHighlight, useGroupAccent } from "../canvas-context";
 import { NodeDeleteButton } from "./delete-button";
@@ -150,7 +151,12 @@ export function OutputNode({ id, data, parentId, selected }: NodeProps<OutputCan
               className="nodrag nopan bg-background/85 focus-visible:ring-ring absolute top-2 right-2 z-10 flex size-7 cursor-grab items-center justify-center rounded-md border shadow-sm backdrop-blur-sm outline-none focus-visible:ring-2 active:cursor-grabbing"
               onDragStart={(event) => {
                 event.dataTransfer.setData("application/ica-image-url", resultUrl);
-                event.dataTransfer.effectAllowed = "link";
+                writeImageRefDrag(event.dataTransfer, {
+                  url: resultUrl,
+                  sourceNodeId: id,
+                  alias: typeof data.prompt === "string" && data.prompt ? null : null,
+                  label: "Output",
+                });
               }}
             >
               <Link2 className="size-3.5" />

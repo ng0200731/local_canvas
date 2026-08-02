@@ -232,22 +232,21 @@ export function compileReferencePrompt(
   }
 
   // OpenAI images.edit applies the mask only to image[0]. When a mask is
-  // attached, drop additional image references from the wire payload —
-  // the provider ignores the mask when multiple images are sent. Keep the
-  // non-image references (pantone swatches) and preserve their names in the
-  // prompt mapping so the model still has the @alias context as text.
+  // attached, drop additional image references from the wire payload — the
+  // server sends only the base image (bounding-box composite handles
+  // coverage, see runMaskedTextureTransfer). Keep the non-image references
+  // (pantone swatches) and preserve all reference names in the prompt
+  // mapping so the model still has the @alias context as text.
   const maskCarrier = ordered.find((reference) => reference.maskUrl);
   let droppedForMask: ProviderImageReference[] = [];
   if (maskCarrier) {
     ordered = [maskCarrier, ...ordered.filter((reference) => reference !== maskCarrier)];
-    const extraImages = ordered
-      .filter((reference) => reference !== maskCarrier && reference.source === "image");
-    if (extraImages.length > 0) {
-      droppedForMask = extraImages;
-      ordered = ordered.filter(
-        (reference) => reference === maskCarrier || reference.source !== "image",
-      );
-    }
+    droppedForMask = ordered.filter(
+      (reference) => reference !== maskCarrier && reference.source === "image",
+    );
+    ordered = ordered.filter(
+      (reference) => reference === maskCarrier || reference.source !== "image",
+    );
   }
 
   const mapping = ordered
@@ -276,15 +275,11 @@ export function compileReferencePrompt(
   ].filter((constraint): constraint is string => Boolean(constraint));
   const maskConstraint = maskCarrier
     ? [
-        "MASK CONSTRAINT (HARD — must be obeyed exactly):",
-        `- An alpha-channel mask file is attached to this edit request alongside @${maskCarrier.alias}.`,
-        `- Mask convention: FULLY TRANSPARENT pixels (alpha = 0) mark the ONLY pixels you are allowed to modify. FULLY OPAQUE pixels (alpha = 255) mark pixels that MUST remain pixel-identical to @${maskCarrier.alias} in color, value, lighting, texture, and position.`,
-        `- The transparent region is small and precise. Treat it as a literal pixel-level boundary: do NOT expand the edit beyond the transparent area, do NOT bleed, do NOT feather the change into nearby pixels.`,
-        `- Do NOT interpret the mask as a rough guide. It is an exact selection. Any pixel you modify outside the transparent region is a failure.`,
-        `- Disregard any region-name words (e.g. "lol region", "u region", "collar region") in the prompt as positional guidance — the mask is the single source of truth for WHICH pixels to edit. Use those words only to understand WHAT to do (e.g. recolor, retexure) inside the mask.`,
-        `- Multiple named edit regions may be listed in the prompt (e.g. "collar region", "sleeve region", "logo region"). They are NOT separate selections. They are all satisfied by the SINGLE attached mask: the transparent area of that mask equals the union of all listed regions. Treat the transparent area as one combined editable selection.`,
-        `- If the prompt lists the same change for every region (e.g. "change texture to @X" repeated per region), apply that change uniformly across the entire transparent area. Do NOT apply the change to pixels outside the transparent area, and do NOT leave any transparent pixel unchanged.`,
-        `- Keep the rest of @${maskCarrier.alias} (the opaque area) bit-for-bit unchanged. Do not recolor it, do not relight it, do not alter the background or any other letter, shape, or pixel.`,
+        "MASK GUIDANCE (the attached mask marks the exact edit region):",
+        `- @${maskCarrier.alias} is the base image the user wants to edit.`,
+        `- An alpha mask is attached: transparent (alpha 0) = the region to edit, opaque = keep unchanged. Regenerate the pixels inside the transparent region only; keep every opaque pixel exactly as in @${maskCarrier.alias}. The transparent area may be a thin brush stroke — the user wants the change applied to the whole object that the stroke touches (e.g. the entire collar, the whole strap, the full waistband), following that object's silhouette, folds, and seams, so expand to that object within the mask's vicinity.`,
+        `- Identify the most relevant object overlapping the highlighted area and apply the requested change to that whole object. Do not restrict the edit to the literal thin stroke.`,
+        `- Keep the rest of @${maskCarrier.alias} unchanged: overall silhouette, background, framing, print, logos, and lighting outside the edited object.`,
       ].join("\n")
     : null;
 

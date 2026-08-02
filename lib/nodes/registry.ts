@@ -163,6 +163,34 @@ export const NODE_META: Record<NodeType, NodeMeta> = {
       catalogFilter: null,
     }),
   },
+  g2: {
+    type: "g2",
+    label: "G2 Edit",
+    description: "Upload image, mark regions, edit with GPT Image 2",
+    palette: true,
+    defaultData: () => ({
+      mainImageUrl: null,
+      mainImageStoragePath: null,
+      mainImageSourceNodeId: null,
+      mainImageAlias: null,
+      g2Regions: [],
+      undoStack: [],
+      redoStack: [],
+      references: [],
+      prompt: "",
+      systemPrompt: "",
+      // Preserve the G2 node's pre-redesign defaults (model gpt-image-2,
+      // 1024x1024, PNG, preview). These differ from the model toolkit defaults
+      // (which use webp), so they are spelled out here explicitly.
+      model: DEFAULT_IMAGE_GENERATION_MODEL,
+      size: "1024x1024" as const,
+      outputFormat: "png" as const,
+      resolution: "preview" as const,
+      matchSourceSize: true,
+      status: "idle",
+      resultUrl: null,
+    }),
+  },
 };
 
 /** Node types surfaced in the palette (excludes `generate` until M7). */
