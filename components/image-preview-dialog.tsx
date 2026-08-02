@@ -119,6 +119,13 @@ interface SelectionMapPreview {
   selectedPercent: number;
 }
 
+// Below this share of the source image's pixels, the selection is too small
+// for the model to produce a reliable material/color transfer — the recolor
+// either misses pixels inside the stroke or bleeds onto neighbours. Show a
+// soft warning in the preview card so the user can draw a thicker / larger
+// region instead of seeing a thin or empty result on generate.
+const MASK_COVERAGE_WARN_BELOW = 0.02;
+
 interface ImageSize {
   width: number;
   height: number;
@@ -521,6 +528,12 @@ function SelectionMapPreviewCard({ preview }: { preview: SelectionMapPreview | n
         className="w-full rounded border border-cyan-200/35 object-contain"
         draggable={false}
       />
+      {preview.selectedPercent > 0 && preview.selectedPercent < MASK_COVERAGE_WARN_BELOW ? (
+        <p className="text-[0.65rem] leading-snug text-amber-200">
+          Selection is small — draw a thicker stroke or pick a larger region
+          for better results.
+        </p>
+      ) : null}
     </div>
   );
 }

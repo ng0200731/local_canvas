@@ -796,9 +796,23 @@ async function runMaskedTextureTransfer(
   // new material blends with the surrounding garment.
   let finalBuffer: Buffer;
   if (baseWidth && baseHeight && maskPngBuffer.length > 0) {
+    // For a thin / small mask (bbox shorter side < ~24px) the default 2px
+    // dilate only rounds the seam a couple of pixels — too little to give
+    // the provider a usable paint area, so the recolor can come back thin or
+    // patchy. Bump dilate/feather for non-color-only edits to widen the seam
+    // round and blend the new material into the surrounding fabric. Color-
+    // only edits keep a tight edge so the original pattern is preserved.
+    // This only affects the LOCAL composite — the mask we send to the
+    // provider stays the user's literal selection.
+    const bboxShortSide = maskBboxBase
+      ? Math.min(maskBboxBase.width, maskBboxBase.height)
+      : 0;
+    const isThinMask = bboxShortSide > 0 && bboxShortSide < 24;
+    const dilate = isColorOnly ? 2 : isThinMask ? 6 : 2;
+    const feather = isColorOnly ? 3 : isThinMask ? 8 : 6;
     finalBuffer = await compositeAlphaShape(baseBuffer, result.buffer, maskPngBuffer, {
-      dilate: 2,
-      feather: isColorOnly ? 3 : 6,
+      dilate,
+      feather,
     });
   } else {
     finalBuffer = result.buffer;

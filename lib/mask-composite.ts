@@ -237,12 +237,29 @@ export async function alphaMapFromBuffer(
   // boundary — the default bilinear resampler would smear it into
   // mid-range values, and ALPHA_THRESHOLD (128) downstream would either
   // drop a thin stroke entirely or bloat it into a fat band.
-  const raw = await sharp(maskBuffer)
-    .ensureAlpha()
-    .resize(width, height, { fit: "fill", kernel: "nearest" })
-    .extractChannel(3)
-    .toFormat(sharp.format.raw)
-    .toBuffer();
+  //
+  // Fast path: if the mask's metadata dims already match the target, skip
+  // the resize entirely. On the generate path the mask has already been
+  // base-aligned in xiangsu.ts (kernel: "nearest") before reaching here,
+  // so this skip removes a redundant full-image nearest resample pass
+  // without changing pixel output. Read dims from metadata — no pixel
+  // decode — so this branch is cheap.
+  const meta = await sharp(maskBuffer).metadata();
+  const matchesTarget =
+    meta.width === width && meta.height === height && width > 0 && height > 0;
+
+  const raw = matchesTarget
+    ? await sharp(maskBuffer)
+        .ensureAlpha()
+        .extractChannel(3)
+        .toFormat(sharp.format.raw)
+        .toBuffer()
+    : await sharp(maskBuffer)
+        .ensureAlpha()
+        .resize(width, height, { fit: "fill", kernel: "nearest" })
+        .extractChannel(3)
+        .toFormat(sharp.format.raw)
+        .toBuffer();
   return { width, height, alpha: raw };
 }
 
@@ -414,3 +431,159 @@ export async function compositeAlphaShape(
 }
 
 const NEIGHBORS = [-1, 0, 1, 0, 0, -1, 0, 1];
+
+// ── Material swatch compositor ────────────────────────────────────────────
+// For a mask-attached material/image transfer (e.g. "@elastic"), the model
+// can only see `image[0]`. To give it real texture pixels to sample from we
+// bake a downsized copy of the material image as a visible swatch OUTSIDE
+// the mask's bbox. The swatch itself is outside the mask so the provider
+// keeps it as "input reference" — and the local composite uses the ORIGINAL
+// baseBuffer, so the swatch never reaches the final output.
+
+export interface SwatchRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface SwatchResult {
+  buffer: Buffer;
+  rect: SwatchRect | null;
+}
+
+interface AvoidBbox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+function rectsDisjoint(
+  aLeft: number,
+  aTop: number,
+  aRight: number,
+  aBottom: number,
+  bbox: AvoidBbox,
+): boolean {
+  // Treat the bbox as inclusive of minX/minY and inclusive of maxX/maxY
+  // (matching alphaMapBbox which records the last editable pixel index).
+  // Two rects are disjoint if one lies entirely to one side of the other.
+  return (
+    aRight <= bbox.minX ||
+    aLeft >= bbox.maxX + 1 ||
+    aBottom <= bbox.minY ||
+    aTop >= bbox.maxY + 1
+  );
+}
+
+function pickSwatchPlacement(
+  baseWidth: number,
+  baseHeight: number,
+  swatchSize: number,
+  margin: number,
+  avoidBbox: AvoidBbox | null,
+): SwatchRect | null {
+  if (swatchSize <= 0 || baseWidth <= 0 || baseHeight <= 0) return null;
+  if (swatchSize > baseWidth || swatchSize > baseHeight) return null;
+
+  const candidates: Array<{ left: number; top: number }> = [];
+  if (avoidBbox) {
+    // Right of bbox.
+    candidates.push({ left: avoidBbox.maxX + 1 + margin, top: avoidBbox.minY });
+    // Left of bbox.
+    candidates.push({
+      left: avoidBbox.minX - margin - 1 - swatchSize,
+      top: avoidBbox.minY,
+    });
+    // Below bbox.
+    candidates.push({ left: avoidBbox.minX, top: avoidBbox.maxY + 1 + margin });
+    // Above bbox.
+    candidates.push({
+      left: avoidBbox.minX,
+      top: avoidBbox.minY - margin - 1 - swatchSize,
+    });
+  }
+  // Corner fallbacks (always tried; useful when bbox is null or the side
+  // placements above already failed because the bbox hugs an edge).
+  candidates.push({
+    left: baseWidth - margin - swatchSize,
+    top: margin,
+  });
+  candidates.push({
+    left: baseWidth - margin - swatchSize,
+    top: baseHeight - margin - swatchSize,
+  });
+
+  for (const candidate of candidates) {
+    const left = Math.round(candidate.left);
+    const top = Math.round(candidate.top);
+    const right = left + swatchSize;
+    const bottom = top + swatchSize;
+    const within =
+      left >= margin && top >= margin && right <= baseWidth - margin && bottom <= baseHeight - margin;
+    if (!within) continue;
+    if (avoidBbox && !rectsDisjoint(left, top, right, bottom, avoidBbox)) continue;
+    return { left, top, width: swatchSize, height: swatchSize };
+  }
+  return null;
+}
+
+/**
+ * Bake a downsized copy of `materialBuffer` onto `baseBuffer` as a visible
+ * swatch placed OUTSIDE `avoidBbox` (the mask's editable bbox, in base-pixel
+ * space). The provider sees the real material texture as input pixels and
+ * can paint it into the masked region; the swatch itself is outside the
+ * mask so it survives the provider's mask clipping as visible reference.
+ *
+ * Returns the composited buffer and the swatch's rectangle (or null if no
+ * placement fits outside the bbox — the caller should fall back to a
+ * textual cue). The returned buffer is a fresh PNG; `baseBuffer` is not
+ * mutated.
+ */
+export async function composeMaterialSwatch(
+  baseBuffer: Buffer,
+  materialBuffer: Buffer,
+  avoidBbox: AvoidBbox | null,
+  baseWidth: number,
+  baseHeight: number,
+  options: { swatchSize?: number; margin?: number } = {},
+): Promise<SwatchResult> {
+  // Defaults: ~1/4 of the smaller base dimension, floored at 64px, capped
+  // at 1/3 of the smaller dimension so the swatch never dominates the photo.
+  const minDim = Math.max(1, Math.min(baseWidth, baseHeight));
+  const defaultSize = Math.max(64, Math.round(minDim * 0.25));
+  const maxSize = Math.max(64, Math.floor(minDim / 3));
+  const swatchSize = Math.max(
+    64,
+    Math.min(maxSize, Math.round(options.swatchSize ?? defaultSize)),
+  );
+  const margin = Math.max(8, Math.round(options.margin ?? minDim * 0.02));
+
+  const rect = pickSwatchPlacement(baseWidth, baseHeight, swatchSize, margin, avoidBbox);
+  if (!rect) {
+    // No room outside the bbox — caller falls back to a textual cue.
+    // Return a clean re-encode of the base (dimensions preserved) so the
+    // caller can still wire the buffer through without branching.
+    const fallback = await sharp(baseBuffer)
+      .resize(baseWidth, baseHeight, { fit: "fill" })
+      .png()
+      .toBuffer();
+    return { buffer: fallback, rect: null };
+  }
+
+  // Square swatch via cover-crop: a material sample is best shown as a full
+  // square of texture (no letterbox with transparent borders).
+  const swatch = await sharp(materialBuffer)
+    .resize(rect.width, rect.height, { fit: "cover" })
+    .png()
+    .toBuffer();
+
+  const composited = await sharp(baseBuffer)
+    .resize(baseWidth, baseHeight, { fit: "fill" })
+    .composite([{ input: swatch, left: rect.left, top: rect.top }])
+    .png()
+    .toBuffer();
+
+  return { buffer: composited, rect };
+}

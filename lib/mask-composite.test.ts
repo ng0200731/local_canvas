@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 
-import { compositeOutsideBbox, maskBbox, dilateAlpha, alphaMapBbox, alphaMapFromBuffer, compositeAlphaShape } from "@/lib/mask-composite";
+import { compositeOutsideBbox, maskBbox, dilateAlpha, alphaMapBbox, alphaMapFromBuffer, compositeAlphaShape, composeMaterialSwatch } from "@/lib/mask-composite";
 
 /** Build an RGBA PNG buffer of size wxh with a transparent rectangular region. */
 async function makeMaskPng(
@@ -331,6 +331,50 @@ describe("mask alpha resampler (regression for thin-stroke vanished/smeared)", (
     // A corner (outside the cross arms) stays preserved (black).
     const cornerIdx = (1 * width + 1) * 4;
     expect(data[cornerIdx]).toBe(0);
+  });
+});
+
+describe("alphaMapFromBuffer (skip redundant resize on same-size input)", () => {
+  // Guard for the fast path: when the mask's metadata dims already match the
+  // requested (width, height), alphaMapFromBuffer should skip the resize and
+  // still produce the same binary alpha. Both the skip-resize and the
+  // resize-with-nearest branches must agree on a same-size input, and the
+  // result must remain binary (no bilinear smear).
+  it("returns binary alpha when mask is already at target dims (no resize)", async () => {
+    const width = 24;
+    const height = 24;
+    const raw = Buffer.alloc(width * height * 4);
+    for (let i = 0; i < width * height; i += 1) {
+      const x = i % width;
+      const y = Math.floor(i / width);
+      const editable = x >= 8 && x <= 15 && y >= 8 && y <= 15; // 8x8 transparent square
+      raw[i * 4 + 0] = 255;
+      raw[i * 4 + 1] = 255;
+      raw[i * 4 + 2] = 255;
+      raw[i * 4 + 3] = editable ? 0 : 255;
+    }
+    const mask = await sharp(raw, { raw: { width, height, channels: 4 } }).png().toBuffer();
+
+    const map = await alphaMapFromBuffer(mask, width, height);
+    expect(map.width).toBe(width);
+    expect(map.height).toBe(height);
+    expect(map.alpha.length).toBe(width * height);
+
+    const distinct = new Set(Array.from(map.alpha));
+    // Binary values only — no mid-range smear.
+    for (const v of map.alpha) {
+      expect(v === 0 || v === 255).toBe(true);
+    }
+    // Editable square survives.
+    let editableCount = 0;
+    for (let y = 8; y <= 15; y += 1) {
+      for (let x = 8; x <= 15; x += 1) {
+        if (map.alpha[y * width + x] === 0) editableCount += 1;
+      }
+    }
+    expect(editableCount).toBe(8 * 8);
+    expect(distinct.has(0)).toBe(true);
+    expect(distinct.has(255)).toBe(true);
   });
 });
 
