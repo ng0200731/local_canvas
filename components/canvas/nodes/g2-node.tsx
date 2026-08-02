@@ -214,7 +214,12 @@ export function G2Node({ id, data, parentId, selected }: NodeProps<G2CanvasNode>
       void i;
     });
     g2Regions.forEach((r) => {
-      list.push({ id: `region-${r.id}`, alias: r.name, label: "Region", group: "Regions" });
+      list.push({
+        id: `region-${r.id}`,
+        alias: r.name,
+        label: `Region · ${r.name}`,
+        group: "Regions",
+      });
     });
     return list;
   }, [mainRef, mainImageAlias, references, g2Regions]);
@@ -285,13 +290,33 @@ export function G2Node({ id, data, parentId, selected }: NodeProps<G2CanvasNode>
         })),
       ];
 
+      // Regions are NOT provider image references — they are mask regions on the
+      // main image. Rewrite @region-name tokens in the prompt to refer to the
+      // main image's alias so the provider maps them correctly, and append a
+      // region-naming note so the model knows the mask region's name.
+      const regionNames = g2Regions
+        .map((r) => r.name)
+        .filter((name) => name && name.trim())
+        .map((name) => name.trim());
+      let resolvedPrompt = prompt;
+      if (regionNames.length > 0 && mainImageAlias) {
+        for (const name of regionNames) {
+          const token = new RegExp(`@${escapeRegExp(name)}\\b`, "g");
+          resolvedPrompt = resolvedPrompt.replace(token, `@${mainImageAlias}`);
+        }
+        const regionNote = `\n\nRegion names on @${mainImageAlias} (defined by the attached mask, transparent = edit): ${regionNames
+          .map((name) => `@${name}`)
+          .join(", ")}. Apply the instruction to the named region(s) inside the mask.`;
+        resolvedPrompt = `${resolvedPrompt}${regionNote}`;
+      }
+
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: run.signal,
         body: JSON.stringify({
           model,
-          prompt,
+          prompt: resolvedPrompt,
           systemPrompt: systemPrompt || undefined,
           size,
           outputFormat: isGptModel ? "png" : outputFormat,
@@ -354,7 +379,6 @@ export function G2Node({ id, data, parentId, selected }: NodeProps<G2CanvasNode>
     size, outputFormat, isGptModel, resolution, matchSourceSize, isGenerationRunCurrent,
     writeGeneratedImageToOutput,
   ]);
-
   function stopGeneration() {
     if (cancelGenerationRun(id)) {
       toast.info("Generation stopped.");
@@ -732,8 +756,16 @@ export function G2Node({ id, data, parentId, selected }: NodeProps<G2CanvasNode>
           undoStack={undoStack}
           redoStack={redoStack}
           onCommit={commitRegions}
+          hoveredRegionId={
+            hoveredAliasId?.startsWith("region-") ? hoveredAliasId.slice("region-".length) : null
+          }
         />
       )}
     </div>
   );
+}
+
+/** Escape a string for safe use in a RegExp body. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -177,14 +177,19 @@ function colorTransferConstraint(
   if (mentioned.length < 2) return null;
 
   const [target, source] = mentioned;
+  const hasMask = references.some((reference) => reference.maskUrl);
+  const maskClause = hasMask
+    ? `- Only recolor the pixels inside an attached alpha mask (transparent = edit) on @${target.alias}. The transparent region may be a thin brush stroke — the user wants the whole object the stroke touches recolored, following that object's silhouette, folds, and seams (e.g. the entire collar, the whole strap, the full waistband). Pixels outside the mask stay exactly as in @${target.alias}.`
+    : `- Recolor every visible surface of the subject in @${target.alias}.`;
   return [
     "Color-transfer constraint:",
     `- Provider image 1 / @${target.alias} is the target/base image and must remain the subject.`,
     `- Provider image 2 / @${source.alias} is only a color reference.`,
-    `- Recolor the existing subject in @${target.alias} to match @${source.alias}.`,
-    `- Preserve every detail from @${target.alias}: garment type, silhouette, collar, cuffs, hem, folds, knit/fabric texture, lighting, shadows, camera angle, framing, background, and all visible construction details.`,
+    `- Recolor the existing subject in @${target.alias} to match @${source.alias} (use its hue/saturation/value; preserve the original shading, folds, and material response to light).`,
+    `- Preserve every detail from @${target.alias} outside the recolored region: garment type, silhouette, collar, cuffs, hem, folds, knit/fabric texture, lighting, shadows, camera angle, framing, background, and all visible construction details.`,
     `- Do not replace @${target.alias} with a different product, sweatshirt, logo, pose, layout, or composition.`,
     `- Do not generate a standalone color card, Pantone label, or literal text for @${source.alias}.`,
+    maskClause,
   ].join("\n");
 }
 

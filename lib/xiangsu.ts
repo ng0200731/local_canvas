@@ -692,9 +692,14 @@ async function runMaskedTextureTransfer(
   // regardless of the uploaded format (e.g. WebP).
   const basePngBuffer = await sharp(baseBuffer).png().toBuffer();
 
-  // Re-encode the mask to a PNG with the same dimensions as the base so we
-  // can extract a pixel-aligned alpha map in the base's coordinate space.
-  // `sharp` preserves the mask's alpha channel.
+  // Re-encode the mask to a PNG with the same dimensions as the base so it
+  // aligns pixel-for-pixel with the base image (OpenAI images.edit requires
+  // mask dims == image dims) and so we can extract a pixel-aligned alpha map
+  // in the base's coordinate space for the local composite step.
+  //
+  // Mask convention (OpenAI images.edit, and this codebase): alpha = 0
+  // (transparent) = the region to edit; alpha = 255 (opaque) = keep. `sharp`
+  // preserves the mask's alpha channel.
   const maskPngBuffer =
     baseWidth && baseHeight
       ? await sharp(maskBuffer).resize(baseWidth, baseHeight, { fit: "fill" }).png().toBuffer()
@@ -743,7 +748,7 @@ async function runMaskedTextureTransfer(
   // provider `mask` field below.)
   const locationCue =
     maskBboxBase && baseWidth && baseHeight
-      ? `\n\nMask region (rough): bounding box (${maskBboxBase.minX},${maskBboxBase.minY})–(${maskBboxBase.maxX},${maskBboxBase.maxY}) on a ${baseWidth}×${baseHeight}px image. Edit the whole object the stroke touches, within and around that area.`
+      ? `\n\nMask region (rough): bounding box (${maskBboxBase.minX},${maskBboxBase.minY})–(${maskBboxBase.maxX},${maskBboxBase.maxY}) on a ${baseWidth}×${baseHeight}px image — the user's brush stroke marks this area. The stroke may be thin; recolor/re-render the whole object it touches within and around that area, following the object's silhouette, folds, and seams.`
       : "";
 
   const form = new FormData();
